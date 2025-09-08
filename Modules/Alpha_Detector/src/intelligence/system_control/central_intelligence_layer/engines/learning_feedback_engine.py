@@ -17,6 +17,7 @@ Vector Search Integration:
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Set
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.openrouter_client import OpenRouterClient
 from src.llm_integration.prompt_manager import PromptManager
 from src.llm_integration.database_driven_context_system import DatabaseDrivenContextSystem
+from .prediction_outcome_tracker import PredictionOutcomeTracker
+
+logger = logging.getLogger(__name__)
 
 
 class LessonType(Enum):
@@ -109,6 +113,7 @@ class LearningFeedbackEngine:
         self.llm_client = llm_client
         self.prompt_manager = PromptManager()
         self.context_system = DatabaseDrivenContextSystem(supabase_manager)
+        self.prediction_tracker = PredictionOutcomeTracker(supabase_manager, llm_client)
         
         # Learning configuration
         self.lesson_clustering_threshold = 0.7
@@ -133,6 +138,9 @@ class LearningFeedbackEngine:
             Dict containing learning and feedback results
         """
         try:
+            # Process prediction outcomes first
+            prediction_outcomes = await self.process_prediction_outcomes()
+            
             # Perform learning operations in parallel
             results = await asyncio.gather(
                 self.capture_all_outcomes(orchestration_results),
@@ -146,6 +154,7 @@ class LearningFeedbackEngine:
             
             # Structure learning results
             learning_results = {
+                'prediction_outcomes': prediction_outcomes,
                 'captured_outcomes': results[0] if not isinstance(results[0], Exception) else [],
                 'structured_lessons': results[1] if not isinstance(results[1], Exception) else [],
                 'updated_braids': results[2] if not isinstance(results[2], Exception) else [],
@@ -164,6 +173,82 @@ class LearningFeedbackEngine:
         except Exception as e:
             print(f"Error processing learning feedback: {e}")
             return {'error': str(e), 'learning_timestamp': datetime.now(timezone.utc)}
+    
+    async def process_prediction_outcomes(self) -> Dict[str, Any]:
+        """
+        Process prediction outcomes and integrate them into learning
+        
+        Returns:
+            Dict containing prediction outcome processing results
+        """
+        try:
+            # Get prediction accuracy statistics
+            prediction_stats = await self.prediction_tracker.get_prediction_accuracy_stats()
+            
+            # Process any pending predictions
+            await self.prediction_tracker._track_pending_predictions()
+            
+            # Create learning insights from prediction outcomes
+            prediction_insights = await self._generate_prediction_insights(prediction_stats)
+            
+            return {
+                'prediction_stats': prediction_stats,
+                'prediction_insights': prediction_insights,
+                'processed_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing prediction outcomes: {e}")
+            return {'error': str(e), 'processed_at': datetime.now(timezone.utc).isoformat()}
+    
+    async def _generate_prediction_insights(self, prediction_stats: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate insights from prediction statistics"""
+        insights = []
+        
+        try:
+            total_predictions = prediction_stats.get('total_predictions', 0)
+            avg_accuracy = prediction_stats.get('avg_accuracy', 0)
+            avg_confidence = prediction_stats.get('avg_confidence', 0)
+            high_accuracy_rate = prediction_stats.get('high_accuracy_rate', 0)
+            high_confidence_accuracy_rate = prediction_stats.get('high_confidence_accuracy_rate', 0)
+            
+            # Generate insights based on statistics
+            if total_predictions > 0:
+                if avg_accuracy > 0.7:
+                    insights.append({
+                        'type': 'success',
+                        'message': f"High prediction accuracy: {avg_accuracy:.3f}",
+                        'recommendation': 'Continue current prediction strategies',
+                        'confidence': 0.8
+                    })
+                elif avg_accuracy < 0.4:
+                    insights.append({
+                        'type': 'warning',
+                        'message': f"Low prediction accuracy: {avg_accuracy:.3f}",
+                        'recommendation': 'Review and improve prediction models',
+                        'confidence': 0.9
+                    })
+                
+                if high_confidence_accuracy_rate > 0.8:
+                    insights.append({
+                        'type': 'success',
+                        'message': f"Excellent confidence calibration: {high_confidence_accuracy_rate:.3f}",
+                        'recommendation': 'System is well-calibrated for risk management',
+                        'confidence': 0.8
+                    })
+                elif high_confidence_accuracy_rate < 0.5:
+                    insights.append({
+                        'type': 'warning',
+                        'message': f"Poor confidence calibration: {high_confidence_accuracy_rate:.3f}",
+                        'recommendation': 'Improve confidence estimation models',
+                        'confidence': 0.9
+                    })
+            
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Error generating prediction insights: {e}")
+            return []
     
     async def capture_all_outcomes(self, orchestration_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

@@ -23,7 +23,7 @@ class DatabaseDrivenContextSystem:
     Leverages database structure for intelligent context injection
     """
     
-    def __init__(self, db_manager: SupabaseManager, embedding_model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, db_manager: SupabaseManager, embedding_model_name: str = "text-embedding-3-large", dimensions: int = 1536):
         """
         Initialize the database-driven context system
         
@@ -32,7 +32,7 @@ class DatabaseDrivenContextSystem:
             embedding_model_name: Name of the embedding model to use
         """
         self.db_manager = db_manager
-        self.context_indexer = ContextIndexer(embedding_model_name)
+        self.context_indexer = ContextIndexer(embedding_model_name, dimensions)
         self.pattern_clusterer = PatternClusterer()
         self.vector_cache = {}  # Cache for frequently accessed vectors
         self.cache_ttl = timedelta(hours=1)  # Cache time-to-live

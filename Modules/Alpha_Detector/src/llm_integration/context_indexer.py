@@ -5,11 +5,16 @@ Converts database records into searchable context vectors
 
 import numpy as np
 import pandas as pd
-from sentence_transformers import SentenceTransformer
 from typing import Dict, List, Any, Optional
 import logging
 from datetime import datetime, timezone
 import json
+import openai
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -19,26 +24,35 @@ class ContextIndexer:
     Converts database records into searchable context vectors
     """
     
-    def __init__(self, embedding_model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, embedding_model_name: str = "text-embedding-3-large", dimensions: int = 1536):
         """
         Initialize the context indexer
         
         Args:
-            embedding_model_name: Name of the sentence transformer model to use
+            embedding_model_name: Name of the OpenAI embedding model to use
+            dimensions: Number of dimensions for the embedding (1536 for half, 1024 for smaller)
         """
         self.embedding_model_name = embedding_model_name
-        self.embedding_model = None
+        self.dimensions = dimensions
         self.column_categories = self._analyze_column_categories()
-        self._initialize_embedding_model()
+        self._initialize_openai_client()
     
-    def _initialize_embedding_model(self):
-        """Initialize the sentence transformer model"""
+    def _initialize_openai_client(self):
+        """Initialize the OpenAI client for embeddings"""
         try:
-            logger.info(f"Loading embedding model: {self.embedding_model_name}")
-            self.embedding_model = SentenceTransformer(self.embedding_model_name)
-            logger.info("Embedding model loaded successfully")
+            logger.info(f"Initializing OpenAI client for embedding model: {self.embedding_model_name}")
+            
+            # Get OpenAI API key from environment
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if not openai_api_key:
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
+            
+            # Initialize OpenAI client with the API key
+            openai.api_key = openai_api_key
+            
+            logger.info("OpenAI client initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
+            logger.error(f"Failed to initialize OpenAI client: {e}")
             raise
     
     def _analyze_column_categories(self) -> Dict[str, List[str]]:
@@ -53,9 +67,9 @@ class ContextIndexer:
             'learning_data': ['lesson', 'source_strands', 'clustering_columns', 'braid_level']
         }
     
-    def create_context_vector(self, analysis_data: Dict) -> np.ndarray:
+    async def create_context_vector(self, analysis_data: Dict) -> np.ndarray:
         """
-        Create vector embedding for current analysis
+        Create vector embedding for current analysis using OpenAI API
         
         Args:
             analysis_data: Dictionary containing analysis data
@@ -67,8 +81,15 @@ class ContextIndexer:
             # Convert analysis to context string
             context_string = self._create_context_string(analysis_data)
             
-            # Generate embedding
-            embedding = self.embedding_model.encode(context_string)
+            # Use OpenAI's embedding API
+            response = await openai.embeddings.acreate(
+                model=self.embedding_model_name,
+                input=context_string,
+                dimensions=self.dimensions
+            )
+            
+            # Extract embedding vector
+            embedding = np.array(response.data[0].embedding)
             
             return embedding
         except Exception as e:
@@ -247,7 +268,7 @@ class ContextIndexer:
             logger.error(f"Failed to calculate similarity: {e}")
             return 0.0
     
-    def batch_create_vectors(self, records: List[Dict], batch_size: int = 32) -> List[Dict]:
+    async def batch_create_vectors(self, records: List[Dict], batch_size: int = 32) -> List[Dict]:
         """
         Create context vectors for multiple records in batches
         
@@ -267,8 +288,15 @@ class ContextIndexer:
                 # Create context strings for batch
                 context_strings = [self._create_context_string(record) for record in batch]
                 
-                # Generate embeddings for batch
-                embeddings = self.embedding_model.encode(context_strings)
+                # Generate embeddings for batch using OpenAI API
+                embeddings = []
+                for context_string in context_strings:
+                    response = await openai.embeddings.acreate(
+                        model=self.embedding_model_name,
+                        input=context_string,
+                        dimensions=self.dimensions
+                    )
+                    embeddings.append(np.array(response.data[0].embedding))
                 
                 # Add vectors to records
                 for j, record in enumerate(batch):

@@ -52,8 +52,14 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     resonance_score FLOAT,                   -- Mathematical resonance score
     strategic_meta_type TEXT,                -- Type of strategic meta-signal
     cil_team_member TEXT,                    -- CIL team member that created this strand
+    agent_id TEXT,                           -- Agent team identifier: raw_data_intelligence|decision_maker|trader|central_intelligence_layer
     experiment_id TEXT,                      -- Experiment ID for tracking
     doctrine_status TEXT,                    -- Doctrine status: provisional|affirmed|retired|contraindicated
+    
+    -- OUTCOME TRACKING FIELDS
+    prediction_score FLOAT,                  -- How accurate was the prediction (0.0-1.0)
+    outcome_score FLOAT,                     -- How well was it executed (0.0-1.0)
+    content JSONB,                           -- Generic message content for communication
     
     -- RESONANCE SYSTEM FIELDS (Mathematical Resonance)
     phi FLOAT8,                              -- Mathematical resonance field strength (φ)
@@ -111,8 +117,14 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_direction ON AD_strands(sig_direction)
 CREATE INDEX IF NOT EXISTS idx_ad_strands_resonance ON AD_strands(resonance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_strategic_meta ON AD_strands(strategic_meta_type);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_cil_member ON AD_strands(cil_team_member);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_agent_id ON AD_strands(agent_id);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_experiment_id ON AD_strands(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_doctrine_status ON AD_strands(doctrine_status);
+
+-- Outcome Tracking indexes
+CREATE INDEX IF NOT EXISTS idx_ad_strands_prediction_score ON AD_strands(prediction_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_outcome_score ON AD_strands(outcome_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_content ON AD_strands USING GIN(content);
 
 -- CIL Core Functionality indexes
 CREATE INDEX IF NOT EXISTS idx_ad_strands_mechanism_hypothesis ON AD_strands(mechanism_hypothesis);
@@ -190,8 +202,14 @@ COMMENT ON COLUMN AD_strands.braid_level IS 'Learning hierarchy level: 1=strand,
 COMMENT ON COLUMN AD_strands.resonance_score IS 'Mathematical resonance score for organic growth (CIL)';
 COMMENT ON COLUMN AD_strands.strategic_meta_type IS 'Type of strategic meta-signal: confluence|experiment|doctrine|plan|warning';
 COMMENT ON COLUMN AD_strands.cil_team_member IS 'CIL team member that created this strand';
+COMMENT ON COLUMN AD_strands.agent_id IS 'Agent team identifier: raw_data_intelligence|decision_maker|trader|central_intelligence_layer';
 COMMENT ON COLUMN AD_strands.experiment_id IS 'Experiment ID for tracking strategic experiments';
 COMMENT ON COLUMN AD_strands.doctrine_status IS 'Doctrine status: provisional|affirmed|retired|contraindicated';
+
+-- Outcome Tracking column comments
+COMMENT ON COLUMN AD_strands.prediction_score IS 'How accurate was the prediction (0.0-1.0) - tracks prediction vs market outcome';
+COMMENT ON COLUMN AD_strands.outcome_score IS 'How well was it executed (0.0-1.0) - tracks execution quality for trades';
+COMMENT ON COLUMN AD_strands.content IS 'Generic message content for inter-agent communication';
 
 -- Resonance System column comments
 COMMENT ON COLUMN AD_strands.phi IS 'Mathematical resonance field strength (φ) - consciousness acceleration';
