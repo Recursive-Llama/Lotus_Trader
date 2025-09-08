@@ -1,0 +1,115 @@
+# LLM Integration Configuration
+
+# OpenRouter API Configuration
+openrouter:
+  api_key: "${OPENROUTER_API_KEY}"  # From environment variable
+  base_url: "https://openrouter.ai/api/v1"
+  default_model: "anthropic/claude-3.5-sonnet"
+  max_tokens: 4000
+  timeout: 30
+  
+  # Model-specific configurations
+  models:
+    "anthropic/claude-3.5-sonnet":
+      max_tokens: 4000
+      temperature: 0.7
+      top_p: 0.9
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+    
+    "anthropic/claude-3-haiku":
+      max_tokens: 2000
+      temperature: 0.7
+      top_p: 0.9
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+    
+    "openai/gpt-4o":
+      max_tokens: 4000
+      temperature: 0.7
+      top_p: 0.9
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+    
+    "openai/gpt-4o-mini":
+      max_tokens: 2000
+      temperature: 0.7
+      top_p: 0.9
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+
+# Retry Configuration
+retry:
+  max_retries: 3
+  backoff_factor: 1.0
+  retry_status_codes: [429, 500, 502, 503, 504]
+  retry_delay: 1.0
+
+# Rate Limiting
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  burst_limit: 10
+
+# Prompt Management
+prompt_management:
+  templates_directory: "src/llm_integration/prompt_templates"
+  cache_enabled: true
+  cache_ttl: 3600  # 1 hour
+  validation_enabled: true
+
+# Context Management
+context_management:
+  max_context_length: 8000
+  context_compression_enabled: true
+  context_priority: ["signal_data", "market_data", "performance_data"]
+  
+# Information Injection
+information_injection:
+  enabled: true
+  max_similar_situations: 10
+  similarity_threshold: 0.7
+  context_depth: "medium"  # low, medium, high
+  historical_lookback_days: 30
+
+# Learning System
+learning_system:
+  enabled: true
+  cluster_min_size: 3
+  lesson_generation_enabled: true
+  performance_tracking_enabled: true
+  adaptation_enabled: true
+  
+  # Strand-Braid Learning
+  strand_braid:
+    enabled: true
+    clustering_columns: ["symbol", "timeframe", "regime", "session_bucket"]
+    braid_threshold: 3.0
+    lesson_generation_threshold: 0.8
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_requests: true
+  log_responses: false  # Set to true for debugging
+  log_performance: true
+
+# Performance Monitoring
+performance_monitoring:
+  enabled: true
+  track_response_times: true
+  track_token_usage: true
+  track_error_rates: true
+  alert_thresholds:
+    response_time_ms: 5000
+    error_rate_percent: 5.0
+    token_usage_limit: 1000000
+
+# Security
+security:
+  api_key_rotation_enabled: false
+  request_validation_enabled: true
+  response_validation_enabled: true
+  sanitize_inputs: true
+  sanitize_outputs: true
+

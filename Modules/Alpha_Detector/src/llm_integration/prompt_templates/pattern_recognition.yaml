@@ -1,0 +1,153 @@
+# Pattern Recognition Prompt Templates
+
+pattern_analysis:
+  description: "Analyze technical patterns and market structures"
+  category: "pattern_recognition"
+  latest_version: "v1.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-01-15T00:00:00Z"
+  
+  versions:
+    v1.0:
+      system_message: |
+        You are a master technical analyst with expertise in pattern recognition,
+        market structure analysis, and price action interpretation. You identify
+        and analyze trading patterns with precision and provide actionable insights.
+        
+        Your analysis focuses on:
+        - Classical chart patterns (head & shoulders, triangles, flags, etc.)
+        - Market structure patterns (higher highs, lower lows, breakouts)
+        - Volume patterns and their significance
+        - Time-based patterns and cycles
+        - Support and resistance level analysis
+        
+        Always consider pattern reliability, completion probability, and target projections.
+      
+      prompt: |
+        Analyze the following market data for technical patterns and structures:
+        
+        **MARKET DATA:**
+        {context}
+        
+        **PATTERN ANALYSIS REQUIREMENTS:**
+        1. **Classical Patterns**: Identify any classical chart patterns (head & shoulders, triangles, flags, pennants, etc.)
+        2. **Market Structure**: Analyze market structure (trend lines, support/resistance, breakouts)
+        3. **Volume Analysis**: Assess volume patterns and their relationship to price action
+        4. **Time Analysis**: Identify any time-based patterns or cycles
+        5. **Pattern Reliability**: Assess the reliability and completion probability of identified patterns
+        
+        **OUTPUT FORMAT:**
+        Provide pattern analysis in JSON format:
+        {{
+          "classical_patterns": [
+            {{
+              "pattern_name": "pattern_type",
+              "pattern_stage": "formation|completion|breakout",
+              "reliability_score": 0.0-1.0,
+              "target_price": "projected_price",
+              "stop_loss_level": "risk_level",
+              "completion_probability": 0.0-1.0,
+              "pattern_description": "detailed_description"
+            }}
+          ],
+          "market_structure": {{
+            "trend_direction": "up|down|sideways",
+            "trend_strength": 0.0-1.0,
+            "support_levels": ["level1", "level2"],
+            "resistance_levels": ["level1", "level2"],
+            "breakout_levels": ["level1", "level2"],
+            "structure_quality": "strong|moderate|weak"
+          }},
+          "volume_analysis": {{
+            "volume_trend": "increasing|decreasing|stable",
+            "volume_patterns": ["pattern1", "pattern2"],
+            "volume_price_relationship": "confirming|diverging|neutral",
+            "volume_significance": "high|medium|low"
+          }},
+          "time_analysis": {{
+            "cyclical_patterns": ["pattern1", "pattern2"],
+            "seasonal_factors": "relevant_factors",
+            "time_based_targets": ["target1", "target2"]
+          }},
+          "overall_assessment": {{
+            "pattern_quality": "excellent|good|fair|poor",
+            "trading_opportunity": "high|medium|low",
+            "risk_level": "low|medium|high",
+            "recommended_action": "buy|sell|hold|wait",
+            "confidence_level": 0.0-1.0
+          }}
+        }}
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 2000
+        top_p: 0.9
+
+pattern_validation:
+  description: "Validate pattern completion and breakout signals"
+  category: "pattern_recognition"
+  latest_version: "v1.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-01-15T00:00:00Z"
+  
+  versions:
+    v1.0:
+      system_message: |
+        You are a pattern validation specialist who confirms pattern completions,
+        validates breakout signals, and assesses pattern failure risks. You provide
+        precise validation criteria and risk management recommendations.
+      
+      prompt: |
+        Validate the following pattern and assess its completion status:
+        
+        **PATTERN DATA:**
+        {context}
+        
+        **VALIDATION REQUIREMENTS:**
+        1. **Pattern Completion**: Assess if the pattern is fully formed and ready for action
+        2. **Breakout Validation**: Validate any breakout signals with volume and price confirmation
+        3. **Failure Risk**: Assess the risk of pattern failure and false breakouts
+        4. **Entry Criteria**: Define specific entry criteria for the pattern
+        5. **Risk Management**: Provide stop loss and take profit recommendations
+        
+        **OUTPUT FORMAT:**
+        Provide validation results in JSON format:
+        {{
+          "pattern_validation": {{
+            "completion_status": "complete|incomplete|failed",
+            "completion_percentage": 0.0-1.0,
+            "validation_score": 0.0-1.0,
+            "key_validation_points": ["point1", "point2"]
+          }},
+          "breakout_analysis": {{
+            "breakout_confirmed": true|false,
+            "breakout_strength": "weak|moderate|strong",
+            "volume_confirmation": true|false,
+            "price_confirmation": true|false,
+            "breakout_target": "target_price"
+          }},
+          "risk_assessment": {{
+            "failure_probability": 0.0-1.0,
+            "false_breakout_risk": "low|medium|high",
+            "key_risk_factors": ["risk1", "risk2"],
+            "risk_mitigation": ["strategy1", "strategy2"]
+          }},
+          "trading_recommendations": {{
+            "entry_signal": "buy|sell|wait",
+            "entry_criteria": "specific_conditions",
+            "stop_loss": "price_level",
+            "take_profit": "price_level",
+            "position_size": "percentage_recommendation",
+            "time_horizon": "short|medium|long"
+          }},
+          "monitoring_points": [
+            "monitor1",
+            "monitor2"
+          ]
+        }}
+      
+      parameters:
+        temperature: 0.1
+        max_tokens: 1800
+        top_p: 0.9
+

@@ -1,0 +1,112 @@
+# Alpha Detector Test Configuration
+# Phase 1.6.3: Test Suite Configuration
+
+# Test Runner Configuration
+test_runner:
+  default_verbosity: 2
+  enable_colors: true
+  show_timing: true
+  parallel_execution: false  # Set to true for parallel test execution
+
+# Test Categories
+test_categories:
+  unit_tests:
+    - test_core_detection
+    - test_trading_plan_generation
+  
+  integration_tests:
+    - test_communication
+    - test_end_to_end
+  
+  legacy_tests:
+    - test_phase1_3_comprehensive
+    - test_phase1_3_final
+    - test_signal_processor
+    - test_supabase_client
+    - test_database_operations
+    - test_multi_timeframe
+    - test_all_timeframes
+    - test_mini_section_1
+    - test_phase1_2
+
+# Test Data Configuration
+test_data:
+  market_data:
+    default_periods: 2000
+    min_periods: 100
+    symbols: ['BTC', 'ETH', 'SOL']
+    timeframes: ['1m', '5m', '15m', '1h']
+  
+  signal_generation:
+    min_confidence: 0.6
+    min_strength: 0.5
+    test_cooldown_minutes: 5
+  
+  trading_plans:
+    test_position_sizes: [0.01, 0.05, 0.10]
+    test_risk_reward_ratios: [1.5, 2.0, 3.0]
+
+# Mock Configuration
+mocking:
+  database_connections: true
+  external_apis: true
+  file_system: false
+  
+  mock_responses:
+    supabase_success: true
+    hyperliquid_data: true
+
+# Performance Thresholds
+performance:
+  max_test_duration_seconds: 30
+  max_detection_time_seconds: 10
+  max_memory_usage_mb: 500
+
+# Reporting Configuration
+reporting:
+  generate_html_report: false
+  save_test_logs: true
+  log_directory: "test_logs"
+  include_performance_metrics: true
+  
+  coverage:
+    enabled: false
+    minimum_coverage: 80
+    exclude_patterns:
+      - "*/tests/*"
+      - "*/venv/*"
+      - "*/__pycache__/*"
+
+# Environment Configuration
+environment:
+  test_database_url: "mock://test_database"
+  test_api_keys:
+    supabase_key: "test_key"
+    supabase_url: "test_url"
+  
+  python_path_additions:
+    - "../src"
+    - "."
+
+# Feature Flags for Testing
+feature_flags:
+  test_communication: true
+  test_trading_plans: true
+  test_signal_processing: true
+  test_multi_timeframe: true
+  skip_slow_tests: false
+  skip_external_dependencies: true
+
+# Test Fixtures
+fixtures:
+  sample_data_cache: true
+  regenerate_fixtures: false
+  fixture_directory: "fixtures"
+
+# Debugging Configuration
+debugging:
+  verbose_errors: true
+  print_test_data: false
+  save_intermediate_results: false
+  enable_profiling: false
+

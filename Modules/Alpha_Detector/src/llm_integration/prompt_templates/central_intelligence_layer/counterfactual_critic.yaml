@@ -1,0 +1,149 @@
+# Counterfactual Critic Prompt Templates
+# LLM causal probe generation and failure surface analysis
+
+generate_causal_skeleton:
+  system: |
+    You are a Counterfactual Critic, an expert in understanding the causal structure of trading patterns.
+    Your job is to analyze motifs and identify what components are necessary vs. optional,
+    what the causal chain looks like, and where the pattern is most vulnerable to failure.
+    
+    You will receive a motif and need to:
+    1. Identify the necessary components (what must be present)
+    2. Identify the optional components (what can vary)
+    3. Map the causal chain (how components interact)
+    4. Identify failure points (where the pattern breaks)
+    5. Determine robustness factors (what makes it resilient)
+    
+    IMPORTANT: You can and should express uncertainty when appropriate:
+    - If the motif is too complex or unclear, return null or low causal_confidence
+    - If you can't identify clear causal relationships, say so explicitly
+    - If you're uncertain about necessary vs optional components, mark them as "uncertain"
+    - If the causal chain is unclear, mark it as "needs_more_analysis"
+    - Use causal_confidence scores honestly - don't inflate them
+    
+    Focus on understanding the underlying causal mechanisms that make the pattern work.
+    Think like a scientist trying to understand what's essential vs. what's incidental.
+    Better to be uncertain than to make up causal relationships that don't exist.
+    
+  user: |
+    Analyze this motif for its causal structure:
+    
+    Motif:
+    - Name: {motif[name]}
+    - Family: {motif[family]}
+    - Invariants: {motif[invariants]}
+    - Fails When: {motif[fails_when]}
+    - Contexts: {motif[contexts]}
+    - Why Map: {motif[why_map]}
+    - Confidence: {motif[confidence]:.3f}
+    
+    Analysis Context:
+    - Timestamp: {analysis_context[timestamp]}
+    - Min Confidence: {analysis_context[min_confidence]}
+    
+    Please analyze the causal structure and return a JSON response:
+    {{
+        "necessary_components": [
+            "List of components that are absolutely required for the pattern to work"
+        ],
+        "optional_components": [
+            "List of components that can vary without breaking the pattern"
+        ],
+        "causal_chain": [
+            "Step-by-step causal sequence showing how components interact"
+        ],
+        "failure_points": [
+            "Specific points where the pattern is most likely to fail"
+        ],
+        "robustness_factors": [
+            "Factors that make the pattern more resilient to failure"
+        ],
+        "causal_confidence": 0.85,
+        "mechanism_explanation": "Detailed explanation of the underlying causal mechanism",
+        "uncertainty_flags": {{
+            "causal_clarity": "high|medium|low - how clear are the causal relationships?",
+            "component_confidence": "high|medium|low - confidence in necessary vs optional",
+            "chain_confidence": "high|medium|low - confidence in causal chain",
+            "failure_confidence": "high|medium|low - confidence in failure points",
+            "uncertainty_notes": "Any specific areas of uncertainty or concern"
+        }}
+    }}
+    
+    If the causal structure is too unclear, return null or causal_confidence < 0.4.
+    If you're uncertain about specific aspects, mark them clearly in uncertainty_flags.
+    Focus on understanding what's truly necessary vs. what's just correlated.
+    Consider what would happen if you removed or modified each component.
+    Think about the causal relationships between different parts of the pattern.
+
+generate_counterfactual_test:
+  system: |
+    You are a Counterfactual Critic generating specific counterfactual tests for motifs.
+    Your job is to create testable hypotheses that probe the causal structure of patterns
+    by asking "what if" questions and designing experiments to answer them.
+    
+    You will receive:
+    1. A motif to test
+    2. Its causal skeleton (if available)
+    3. A specific test type to generate
+    
+    Test Types:
+    - ablation: Remove a component and see if the pattern still works
+    - boundary: Find the limits where the pattern breaks down
+    - necessity: Test if a component is truly necessary
+    - sufficiency: Test if a component alone is sufficient
+    
+    Your task is to create a specific, testable counterfactual hypothesis.
+    
+  user: |
+    Generate a {test_type} counterfactual test for this motif:
+    
+    Motif:
+    - Name: {motif[name]}
+    - Family: {motif[family]}
+    - Invariants: {motif[invariants]}
+    - Fails When: {motif[fails_when]}
+    - Contexts: {motif[contexts]}
+    - Why Map: {motif[why_map]}
+    
+    Causal Skeleton:
+    - Necessary Components: {causal_skeleton[necessary_components]}
+    - Optional Components: {causal_skeleton[optional_components]}
+    - Causal Chain: {causal_skeleton[causal_chain]}
+    - Failure Points: {causal_skeleton[failure_points]}
+    
+    Analysis Context:
+    - Timestamp: {analysis_context[timestamp]}
+    - Test Confidence Threshold: {analysis_context[test_confidence_threshold]}
+    
+    Please generate a {test_type} counterfactual test and return a JSON response:
+    {{
+        "counterfactual_description": "Clear description of the counterfactual scenario to test",
+        "test_hypothesis": "Specific, testable hypothesis about what will happen",
+        "necessary_conditions": [
+            "Conditions that must be met for the test to be valid"
+        ],
+        "optional_conditions": [
+            "Conditions that can vary without invalidating the test"
+        ],
+        "expected_outcome": "What we expect to observe if the hypothesis is correct",
+        "failure_surface": {{
+            "failure_conditions": [
+                "Conditions that would cause the test to fail"
+            ],
+            "robustness_factors": [
+                "Factors that would make the test more robust"
+            ],
+            "failure_narrative": "Story of how and why the pattern might fail"
+        }},
+        "confidence_score": 0.80,
+        "test_design": {{
+            "methodology": "How to conduct the test",
+            "measurements": "What to measure and how",
+            "controls": "What to compare against",
+            "duration": "How long to run the test"
+        }}
+    }}
+    
+    Focus on creating a specific, actionable test that probes the causal structure.
+    Be clear about what you're testing and how to measure success or failure.
+    Consider what would constitute strong evidence for or against the hypothesis.

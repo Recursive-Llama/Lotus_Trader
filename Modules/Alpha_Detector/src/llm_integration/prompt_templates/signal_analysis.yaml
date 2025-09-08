@@ -1,0 +1,139 @@
+# Signal Analysis Prompt Templates
+
+signal_analysis:
+  description: "Analyze trading signals with market context and provide insights"
+  category: "signal_analysis"
+  latest_version: "v1.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-01-15T00:00:00Z"
+  
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert trading analyst with deep knowledge of technical analysis, 
+        market microstructure, and risk management. You analyze trading signals with 
+        precision and provide actionable insights for traders.
+        
+        Your analysis should be:
+        - Data-driven and objective
+        - Focused on risk-reward assessment
+        - Contextual to current market conditions
+        - Clear and actionable
+        
+        Always consider multiple timeframes and market regimes in your analysis.
+      
+      prompt: |
+        Analyze the following trading signal and provide a comprehensive assessment:
+        
+        **SIGNAL DATA:**
+        {context}
+        
+        **ANALYSIS REQUIREMENTS:**
+        1. **Signal Quality Assessment**: Evaluate the signal strength, confidence, and reliability
+        2. **Market Context Analysis**: Assess current market conditions and their impact on the signal
+        3. **Risk Assessment**: Identify potential risks and risk-reward ratio
+        4. **Pattern Recognition**: Identify any relevant technical patterns or market structures
+        5. **Recommendation**: Provide a clear recommendation with reasoning
+        
+        **OUTPUT FORMAT:**
+        Please provide your analysis in the following JSON format:
+        {{
+          "signal_quality": {{
+            "strength_score": 0.0-1.0,
+            "confidence_score": 0.0-1.0,
+            "reliability_factors": ["factor1", "factor2"],
+            "weakness_factors": ["weakness1", "weakness2"]
+          }},
+          "market_context": {{
+            "regime_analysis": "trending_up|trending_down|ranging|volatile",
+            "volatility_assessment": "low|medium|high",
+            "volume_analysis": "low|normal|high",
+            "market_sentiment": "bullish|bearish|neutral"
+          }},
+          "risk_assessment": {{
+            "risk_level": "low|medium|high",
+            "risk_reward_ratio": 1.0-5.0,
+            "key_risks": ["risk1", "risk2"],
+            "stop_loss_recommendation": "price_level",
+            "take_profit_recommendation": "price_level"
+          }},
+          "pattern_analysis": {{
+            "technical_patterns": ["pattern1", "pattern2"],
+            "support_resistance": "levels_identified",
+            "momentum_indicators": "bullish|bearish|neutral"
+          }},
+          "recommendation": {{
+            "action": "strong_buy|buy|hold|sell|strong_sell",
+            "confidence": 0.0-1.0,
+            "reasoning": "detailed_reasoning",
+            "time_horizon": "short|medium|long",
+            "position_size_suggestion": "percentage_of_portfolio"
+          }},
+          "additional_insights": [
+            "insight1",
+            "insight2"
+          ]
+        }}
+      
+      parameters:
+        temperature: 0.3
+        max_tokens: 2000
+        top_p: 0.9
+
+signal_enhancement:
+  description: "Enhance signal analysis with additional context and insights"
+  category: "signal_analysis"
+  latest_version: "v1.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-01-15T00:00:00Z"
+  
+  versions:
+    v1.0:
+      system_message: |
+        You are an advanced trading intelligence system that enhances signal analysis
+        with deep market insights and contextual understanding. You provide enhanced
+        analysis that goes beyond basic technical indicators.
+      
+      prompt: |
+        Enhance the following signal analysis with additional market intelligence:
+        
+        **ORIGINAL SIGNAL:**
+        {context}
+        
+        **ENHANCEMENT TASKS:**
+        1. **Market Microstructure Analysis**: Analyze order flow, bid-ask spreads, and market depth
+        2. **Cross-Asset Correlation**: Consider correlations with other assets and market sectors
+        3. **Economic Context**: Factor in relevant economic indicators and news events
+        4. **Seasonal Patterns**: Identify any seasonal or cyclical patterns
+        5. **Alternative Scenarios**: Consider alternative market scenarios and their probabilities
+        
+        **OUTPUT FORMAT:**
+        Provide enhanced analysis in JSON format:
+        {{
+          "enhanced_analysis": {{
+            "microstructure_insights": "detailed_analysis",
+            "correlation_analysis": "cross_asset_considerations",
+            "economic_context": "relevant_economic_factors",
+            "seasonal_factors": "time_based_patterns",
+            "scenario_analysis": {{
+              "bull_case": "probability_and_outcome",
+              "bear_case": "probability_and_outcome",
+              "base_case": "probability_and_outcome"
+            }}
+          }},
+          "confidence_adjustment": {{
+            "original_confidence": 0.0-1.0,
+            "adjusted_confidence": 0.0-1.0,
+            "adjustment_reasoning": "why_confidence_changed"
+          }},
+          "additional_recommendations": [
+            "recommendation1",
+            "recommendation2"
+          ]
+        }}
+      
+      parameters:
+        temperature: 0.4
+        max_tokens: 2500
+        top_p: 0.9
+

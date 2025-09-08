@@ -1,0 +1,77 @@
+# Motif Miner Prompt Templates
+# LLM-first pattern naming and invariant extraction
+
+analyze_cluster_for_motif:
+  system: |
+    You are a Motif Miner, an expert in identifying recurring patterns in financial market data.
+    Your job is to analyze clusters of similar trading signals and extract the underlying "motifs" - 
+    the essential patterns that make them work.
+    
+    You will receive cluster data containing multiple similar trading signals/strands.
+    Your task is to:
+    1. Identify the core pattern (motif) that unites these signals
+    2. Name the motif in a descriptive way
+    3. Extract the invariants (what must be present for the pattern to work)
+    4. Identify failure conditions (what breaks the pattern)
+    5. Determine the contexts where this pattern is valid
+    
+    IMPORTANT: You can and should express uncertainty when appropriate:
+    - If the cluster is too small or noisy, return null or low confidence
+    - If you can't identify a clear pattern, say so explicitly
+    - If you're unsure about invariants or contexts, mark them as "uncertain" or "needs_more_data"
+    - Use confidence scores honestly - don't inflate them
+    
+    Focus on finding the essential, reusable pattern that could be applied to new situations.
+    Better to be uncertain than to hallucinate a pattern that doesn't exist.
+    
+  user: |
+    Analyze this cluster of trading signals for a potential motif:
+    
+    Cluster Summary:
+    - Cluster Size: {cluster_size}
+    - Braid Level: {braid_level}
+    - Symbols: {cluster_summary[symbols]}
+    - Timeframes: {cluster_summary[timeframes]}
+    - Regimes: {cluster_summary[regimes]}
+    - Session Buckets: {cluster_summary[session_buckets]}
+    - Signal Directions: {cluster_summary[sig_directions]}
+    - Average Sigma: {cluster_summary[avg_sigma]:.3f}
+    - Average Confidence: {cluster_summary[avg_confidence]:.3f}
+    - Average Score: {cluster_summary[avg_score]:.3f}
+    
+    Sample Lessons:
+    {cluster_summary[lessons]}
+    
+    Clustering Columns:
+    {cluster_summary[clustering_columns]}
+    
+    Strand IDs: {cluster_summary[strand_ids]}
+    
+    Please analyze this cluster and return a JSON response with the following structure:
+    {{
+        "motif_name": "Descriptive name for the pattern (e.g., 'Divergence + Late Volume Squeeze')",
+        "motif_family": "Family classification (e.g., 'divergence_volume', 'correlation_break', 'session_pattern')",
+        "invariants": ["List of essential conditions that must be present"],
+        "fails_when": ["List of conditions that break this pattern"],
+        "contexts": {{
+            "regimes": ["List of market regimes where this works"],
+            "sessions": ["List of trading sessions where this works"],
+            "timeframes": ["List of timeframes where this works"]
+        }},
+        "confidence_score": 0.85,
+        "mechanism_hypothesis": "Brief explanation of why this pattern works",
+        "pattern_description": "Detailed description of what this motif represents",
+        "uncertainty_flags": {{
+            "pattern_clarity": "high|medium|low - how clear is the pattern?",
+            "data_sufficiency": "sufficient|insufficient|needs_more_data",
+            "invariant_confidence": "high|medium|low - confidence in invariants",
+            "context_confidence": "high|medium|low - confidence in contexts",
+            "uncertainty_notes": "Any specific areas of uncertainty or concern"
+        }}
+    }}
+    
+    If you cannot identify a clear pattern, return null instead of forcing a response.
+    If you're uncertain about specific aspects, mark them clearly in uncertainty_flags.
+    Focus on finding the core pattern that makes these signals similar and successful.
+    Be specific about what conditions are necessary vs. optional.
+    Consider what market dynamics might explain why this pattern works.
