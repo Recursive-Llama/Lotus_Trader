@@ -187,7 +187,21 @@ python main.py
 
 ## 📄 **License**
 
-[Add your license information here]
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
+
+### **Key Points:**
+- ✅ **Commercial use** - Use in commercial projects
+- ✅ **Modification** - Modify and distribute
+- ✅ **Distribution** - Distribute copies
+- ✅ **Patent use** - Use any patent claims
+- ✅ **Private use** - Use privately
+
+### **Requirements:**
+- 📋 **License and copyright notice** - Include license and copyright
+- 📋 **State changes** - Document any changes made
+- 📋 **Same license** - Distribute under same license
+
+**Full license text**: [LICENSE](LICENSE)
 
 ---
 
