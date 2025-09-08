@@ -286,7 +286,7 @@ class EnhancedTraderAgent:
         # Consume valuable CIL execution insights naturally
         # Contribute to execution motif creation
         # Handle execution uncertainty-driven exploration
-        # Publish execution results with resonance values
+        # Publish execution results to AD_strands with resonance values
         
     async def contribute_to_execution_motif(self, execution_pattern_data: Dict[str, Any]):
         """Contribute execution pattern data to motif creation for organic evolution"""
@@ -321,19 +321,19 @@ class ExecutionMotifIntegration:
         # Identify execution failure conditions
         # Create execution mechanism hypothesis
         # Generate execution lineage information
-        # Publish as execution motif strand with resonance values
+        # Publish as execution motif strand to AD_strands with resonance values
         
     async def enhance_existing_execution_motif(self, execution_motif_id: str, new_execution_evidence: Dict[str, Any]):
         """Enhance existing execution motif with new evidence for organic growth"""
-        # Find existing execution motif strand
+        # Find existing execution motif strand in AD_strands
         # Add new execution evidence references
         # Update execution invariants if needed
         # Update execution telemetry and resonance
-        # Publish execution enhancement strand
+        # Publish execution enhancement strand to AD_strands
         
     async def query_execution_motif_families(self, execution_type: str) -> List[Dict[str, Any]]:
         """Query relevant execution motif families for organic pattern discovery"""
-        # Search execution motif strands by family
+        # Search execution motif strands by family in AD_strands
         # Return relevant execution motifs with resonance scores
         # Include execution success rates and telemetry
         # Enable organic execution pattern evolution
@@ -351,7 +351,7 @@ class StrategicExecutionInsightConsumer:
     
     async def consume_cil_execution_insights(self, execution_type: str) -> List[Dict[str, Any]]:
         """Naturally consume valuable CIL execution insights for execution type"""
-        # Query CIL execution meta-signals
+        # Query CIL execution meta-signals from AD_strands
         # Find high-resonance strategic execution insights
         # Apply execution insights to analysis naturally
         # Benefit from CIL's panoramic execution view
@@ -368,7 +368,7 @@ class StrategicExecutionInsightConsumer:
         # Provide execution perspective
         # Contribute execution mechanism insights
         # Suggest valuable execution experiments
-        # Create strategic execution insight strand
+        # Create strategic execution insight strand in AD_strands
 ```
 
 #### **Step 2.3: Cross-Team Execution Awareness**
@@ -383,7 +383,7 @@ class CrossTeamExecutionIntegration:
     
     async def detect_cross_team_execution_confluence(self, time_window: str) -> List[Dict[str, Any]]:
         """Detect execution confluence patterns across teams for organic insights"""
-        # Query execution strands from all intelligence teams
+        # Query execution strands from all intelligence teams in AD_strands
         # Find temporal execution overlaps
         # Calculate execution confluence strength
         # Identify strategic execution significance
@@ -400,7 +400,7 @@ class CrossTeamExecutionIntegration:
         # Analyze execution perspective
         # Provide execution mechanism insights
         # Suggest follow-up execution experiments
-        # Create strategic execution insight strand
+        # Create strategic execution insight strand in AD_strands
 ```
 
 ### **Phase 3: Organic Execution Doctrine Integration (Days 7-9)**
@@ -417,7 +417,7 @@ class ExecutionDoctrineIntegration:
     
     async def query_relevant_execution_doctrine(self, execution_type: str) -> Dict[str, Any]:
         """Query relevant execution doctrine for execution type organically"""
-        # Search execution doctrine strands
+        # Search execution doctrine strands in AD_strands
         # Find applicable execution patterns
         # Check execution contraindications
         # Return execution doctrine guidance naturally
@@ -427,7 +427,7 @@ class ExecutionDoctrineIntegration:
         # Analyze execution pattern persistence
         # Assess execution pattern generality
         # Provide execution mechanism insights
-        # Create execution doctrine contribution strand
+        # Create execution doctrine contribution strand in AD_strands
         
     async def check_execution_doctrine_contraindications(self, proposed_execution_experiment: Dict[str, Any]) -> bool:
         """Check if proposed execution experiment is contraindicated organically"""
@@ -453,14 +453,14 @@ class EnhancedExecutionAgent(EnhancedTraderAgent):
         # Consume valuable CIL execution insights naturally
         # Contribute to execution motif creation
         # Handle execution uncertainty-driven exploration
-        # Publish execution results with resonance values
+        # Publish execution results to AD_strands with resonance values
         
     async def participate_in_organic_execution_experiments(self, execution_experiment_insights: Dict[str, Any]):
         """Participate in organic execution experiments driven by CIL insights"""
         # Execute execution experiments based on valuable insights
         # Track execution progress and results organically
         # Contribute to execution experiment learning
-        # Report back through natural strand system
+        # Report back through natural AD_strands system
 ```
 
 ## 🔧 **Technical Integration Points**
@@ -506,7 +506,7 @@ class EnhancedExecutionAgent(EnhancedTraderAgent):
 #### **Lesson Feedback Integration**:
 - **Real-Time Execution Lesson Application**: Execution lessons enhance decisions immediately
 - **Execution Curator Learning**: Execution lessons improve curator weights and thresholds
-- **Execution Performance Tracking**: Execution outcomes create new learning strands
+- **Execution Performance Tracking**: Execution outcomes create new learning strands in AD_strands
 - **Execution Continuous Improvement**: Execution system gets smarter over time
 
 #### **Strand-Braid Learning for Execution**:
