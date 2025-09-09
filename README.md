@@ -19,9 +19,9 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MARKET DATA (1-min heartbeat)            │
-│  • Real-time WebSocket   • Multi-timeframe Processing      │
-│  • 35+ Technical Indicators • Pattern Detection            │
+│                    DATA SOURCES (1-min heartbeat)           │
+│  • Market Data (WebSocket)      • Social Media Channels     │
+│  • User Input & Preferences     • Multi-timeframe Processing│
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
@@ -32,7 +32,23 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 │  • Raw Data Divergence Detector    • Raw Data Coordinator   │
 │  • Enhanced Agent Base with CIL Integration                 │
 └─────────────────────┬───────────────────────────────────────┘
-                      │ (immediate triggers)
+                      │
+┌─────────────────────┴───────────────────────────────────────┐
+│              SOCIAL DATA INTELLIGENCE TEAM 📋              │
+│  • Social Media Scanner          • Sentiment Analyzer       │
+│  • Chart Understanding Agent     • News Impact Analyzer     │
+│  • Social Pattern Detector       • Social Coordinator       │
+│  • Community Intelligence Agent  (Architecture Planned)     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+┌─────────────────────┴───────────────────────────────────────┐
+│              USER INTELLIGENCE TEAM 📋                     │
+│  • User Preference Analyzer      • Behavior Pattern Detector│
+│  • Custom Strategy Agent         • Risk Profile Analyzer    │
+│  • User Feedback Processor       • User Coordinator         │
+│  • Personalization Engine        (Architecture Planned)     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              CENTRAL INTELLIGENCE LAYER (CIL) ✅            │
@@ -86,6 +102,16 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 - **Comprehensive Testing Suite** - 80+ test files with unit, integration, and production tests
 - **Database Schema** - Complete PostgreSQL schema with all team-specific fields
 - **Production Data Flow** - Real-time WebSocket to database pipeline with full error handling
+
+### **📋 Planned Intelligence Teams**
+- **Social Data Intelligence Team** - Social media and sentiment analysis
+  - Social Media Scanner, Sentiment Analyzer, Chart Understanding Agent
+  - News Impact Analyzer, Social Pattern Detector, Community Intelligence Agent
+  - Social Coordinator (Architecture planned, not yet implemented)
+- **User Intelligence Team** - User preferences and behavior analysis
+  - User Preference Analyzer, Behavior Pattern Detector, Custom Strategy Agent
+  - Risk Profile Analyzer, User Feedback Processor, Personalization Engine
+  - User Coordinator (Architecture planned, not yet implemented)
 
 ### **🔄 Advanced Implementation (Phase 2)**
 - **Enhanced Agent Capabilities** - Organic intelligence integration with motif creation
@@ -230,11 +256,11 @@ python test_raw_data_statistical_focus.py
 - **Performance Monitoring** - Telemetry and system health tracking
 
 ### **Data Processing Pipeline**
-- **Real-time Data Flow** - WebSocket → Database → Intelligence Teams → CIL
+- **Multi-Source Data Flow** - Market Data, Social Media, User Input → Database → Intelligence Teams → CIL
 - **Multi-timeframe Processing** - Simultaneous analysis across all timeframes
-- **Pattern Synthesis** - Cross-timeframe pattern combination and validation
+- **Pattern Synthesis** - Cross-timeframe and cross-source pattern combination and validation
 - **Signal Generation** - Confidence-scored signals with risk assessment
-- **Learning Integration** - Continuous pattern learning and adaptation
+- **Learning Integration** - Continuous pattern learning and adaptation across all data sources
 
 ## 🎯 **Development Roadmap**
 
@@ -272,13 +298,31 @@ python test_raw_data_statistical_focus.py
 - 🚧 Trader Coordinator - Team coordination and CIL integration
 - **Status**: Architecture complete, implementation in progress
 
-### **📋 Phase 5: Event-Driven Triggers (PLANNED)**
+### **📋 Phase 5: Social Data Intelligence Team (PLANNED)**
+- 📋 Social Media Scanner - Real-time social media data collection
+- 📋 Sentiment Analyzer - Market sentiment analysis and scoring
+- 📋 Chart Understanding Agent - Social media chart analysis and interpretation
+- 📋 News Impact Analyzer - News event impact assessment
+- 📋 Social Pattern Detector - Social media pattern recognition
+- 📋 Community Intelligence Agent - Community behavior analysis
+- 📋 Social Coordinator - Team coordination and CIL integration
+
+### **📋 Phase 6: User Intelligence Team (PLANNED)**
+- 📋 User Preference Analyzer - User preference learning and adaptation
+- 📋 Behavior Pattern Detector - User behavior pattern recognition
+- 📋 Custom Strategy Agent - Personalized strategy generation
+- 📋 Risk Profile Analyzer - User risk tolerance analysis
+- 📋 User Feedback Processor - User feedback integration and learning
+- 📋 Personalization Engine - System personalization and adaptation
+- 📋 User Coordinator - Team coordination and CIL integration
+
+### **📋 Phase 7: Event-Driven Triggers (PLANNED)**
 - 📋 Immediate Team Activation - Event-driven trigger system
 - 📋 Cascading Effects - Cross-team influence and coordination
 - 📋 Organic Activation - Natural team coordination patterns
 - 📋 Fallback Intervals - Robust interval-based activation
 
-### **📋 Phase 6: Complete Organic Intelligence (PLANNED)**
+### **📋 Phase 8: Complete Organic Intelligence (PLANNED)**
 - 📋 Full Cross-Team Pattern Detection - Complete pattern sharing
 - 📋 Strategic Meta-Signal Generation - High-level intelligence synthesis
 - 📋 End-to-End Organic Flow - Complete system coordination
@@ -296,7 +340,8 @@ python test_raw_data_statistical_focus.py
 
 ### **Advanced Intelligence Systems**
 - **Central Intelligence Layer** - 8 specialized engines for strategic coordination
-- **Cross-Agent Learning** - Knowledge transfer and pattern sharing
+- **Multi-Source Intelligence Teams** - Raw Data, Social Data, and User Intelligence teams
+- **Cross-Agent Learning** - Knowledge transfer and pattern sharing between all teams
 - **Experiment Orchestration** - Automated hypothesis testing and validation
 - **Strategic Pattern Mining** - High-level pattern recognition and synthesis
 - **Organic Evolution** - System self-improvement through mathematical resonance
