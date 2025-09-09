@@ -445,7 +445,7 @@ class CILOrchestrator:
                 'ttl_hours': directive.ttl_hours,
                 'status': directive.status,
                 'response_deadline': directive.response_deadline.isoformat() if directive.response_deadline else None,
-                'cil_team_member': 'orchestrator'
+                'team_member': 'orchestrator'
             }
             
             # Insert into database

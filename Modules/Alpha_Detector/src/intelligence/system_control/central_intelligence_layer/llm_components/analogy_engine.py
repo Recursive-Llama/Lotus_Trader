@@ -483,7 +483,7 @@ class AnalogyEngine:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'analogy_engine',
+                'team_member': 'analogy_engine',
                 'strategic_meta_type': 'analogy_discovery',
                 'doctrine_status': 'provisional',
                 
@@ -534,7 +534,7 @@ class AnalogyEngine:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'analogy_engine',
+                'team_member': 'analogy_engine',
                 'strategic_meta_type': 'transfer_proposal',
                 'doctrine_status': 'provisional',
                 

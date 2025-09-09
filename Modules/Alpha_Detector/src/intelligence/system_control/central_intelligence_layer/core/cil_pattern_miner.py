@@ -431,7 +431,7 @@ class CILPatternMiner:
                 'tags': [f"agent:central_intelligence:pattern_miner:{signal_type}"],
                 'meta_signal_type': signal_type,
                 'meta_signal_data': signal_data,
-                'cil_team_member': 'pattern_miner'
+                'team_member': 'pattern_miner'
             }
             
             await self.supabase_manager.insert_strand(strand_data)

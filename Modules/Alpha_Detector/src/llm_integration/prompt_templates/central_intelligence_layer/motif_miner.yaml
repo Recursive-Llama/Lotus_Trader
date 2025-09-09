@@ -42,8 +42,8 @@ analyze_cluster_for_motif:
     Sample Lessons:
     {cluster_summary[lessons]}
     
-    Clustering Columns:
-    {cluster_summary[clustering_columns]}
+    Module Intelligence:
+    {cluster_summary[module_intelligence]}
     
     Strand IDs: {cluster_summary[strand_ids]}
     
@@ -51,15 +51,21 @@ analyze_cluster_for_motif:
     {{
         "motif_name": "Descriptive name for the pattern (e.g., 'Divergence + Late Volume Squeeze')",
         "motif_family": "Family classification (e.g., 'divergence_volume', 'correlation_break', 'session_pattern')",
-        "invariants": ["List of essential conditions that must be present"],
-        "fails_when": ["List of conditions that break this pattern"],
-        "contexts": {{
-            "regimes": ["List of market regimes where this works"],
-            "sessions": ["List of trading sessions where this works"],
-            "timeframes": ["List of timeframes where this works"]
+        "module_intelligence": {{
+            "invariants": ["List of essential conditions that must be present"],
+            "fails_when": ["List of conditions that break this pattern"],
+            "contexts": {{
+                "regimes": ["List of market regimes where this works"],
+                "sessions": ["List of trading sessions where this works"],
+                "timeframes": ["List of timeframes where this works"]
+            }},
+            "mechanism_hypothesis": "Brief explanation of why this pattern works",
+            "hypothesis_id": "Unique hypothesis identifier",
+            "evidence_refs": ["List of supporting strand IDs"],
+            "why_map": "Causal reasoning for pattern success",
+            "lineage": "How this pattern evolved from others"
         }},
         "confidence_score": 0.85,
-        "mechanism_hypothesis": "Brief explanation of why this pattern works",
         "pattern_description": "Detailed description of what this motif represents",
         "uncertainty_flags": {{
             "pattern_clarity": "high|medium|low - how clear is the pattern?",

@@ -248,7 +248,7 @@ doctrine_keeper:
         1. Monitoring all team experiments and outcomes
         2. Curating lessons into strategic doctrine
         3. Maintaining negative doctrine to prevent dead-end retesting
-        4. Tracking lineage of strategic approaches
+        4. Tracking lineage of strategic approaches (in module_intelligence)
         5. Promoting successful patterns into affirmed doctrine
         
         Focus on building a comprehensive strategic knowledge base.
@@ -303,7 +303,11 @@ doctrine_keeper:
               "parent_approaches": ["parent1", "parent2"],
               "current_approach": "current_version",
               "evolution_note": "how_approach_evolved",
-              "success_improvement": "how_success_improved"
+              "success_improvement": "how_success_improved",
+              "module_intelligence": {{
+                "lineage_parent_ids": ["parent1", "parent2"],
+                "lineage_mutation_note": "how_approach_evolved"
+              }}
             }}
           ],
           "strategic_insights": [

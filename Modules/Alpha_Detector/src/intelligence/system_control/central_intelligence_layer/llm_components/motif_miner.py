@@ -347,7 +347,7 @@ class MotifMiner:
                 'lineage': motif.lineage,
                 
                 # CIL fields
-                'cil_team_member': 'motif_miner',
+                'team_member': 'motif_miner',
                 'strategic_meta_type': 'motif_discovery',
                 'doctrine_status': 'provisional',
                 
@@ -539,7 +539,7 @@ class MotifMiner:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'motif_miner',
+                'team_member': 'motif_miner',
                 'strategic_meta_type': 'uncertainty_detection',
                 'doctrine_status': 'needs_resolution',
                 

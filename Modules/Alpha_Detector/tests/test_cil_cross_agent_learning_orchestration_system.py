@@ -534,7 +534,7 @@ class TestCrossAgentLearningOrchestrationSystem:
         assert 'content' in call_args
         assert call_args['kind'] == 'cil_cross_agent_learning_orchestration'
         assert call_args['agent_id'] == 'central_intelligence_layer'
-        assert call_args['cil_team_member'] == 'cross_agent_learning_orchestration_system'
+        assert call_args['team_member'] == 'cross_agent_learning_orchestration_system'
     
     def test_learning_type_enum(self):
         """Test LearningType enum values"""

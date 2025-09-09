@@ -285,7 +285,7 @@ class TestRawDataToCilFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'divergence_detector'
+            'team_member': 'divergence_detector'
         }
         
         # Publish test signal
@@ -368,7 +368,7 @@ class TestRawDataToCilFlow:
             'sig_confidence': 0.85,
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
-            'cil_team_member': 'volume_analyzer',
+            'team_member': 'volume_analyzer',
             'resonance_score': 0.0  # Will be updated by resonance system
         }
         

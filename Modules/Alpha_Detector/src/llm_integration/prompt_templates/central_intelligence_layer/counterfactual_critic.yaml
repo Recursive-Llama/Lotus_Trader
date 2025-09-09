@@ -31,10 +31,7 @@ generate_causal_skeleton:
     Motif:
     - Name: {motif[name]}
     - Family: {motif[family]}
-    - Invariants: {motif[invariants]}
-    - Fails When: {motif[fails_when]}
-    - Contexts: {motif[contexts]}
-    - Why Map: {motif[why_map]}
+    - Module Intelligence: {motif[module_intelligence]}
     - Confidence: {motif[confidence]:.3f}
     
     Analysis Context:
@@ -100,10 +97,7 @@ generate_counterfactual_test:
     Motif:
     - Name: {motif[name]}
     - Family: {motif[family]}
-    - Invariants: {motif[invariants]}
-    - Fails When: {motif[fails_when]}
-    - Contexts: {motif[contexts]}
-    - Why Map: {motif[why_map]}
+    - Module Intelligence: {motif[module_intelligence]}
     
     Causal Skeleton:
     - Necessary Components: {causal_skeleton[necessary_components]}

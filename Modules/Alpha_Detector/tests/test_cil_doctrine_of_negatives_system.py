@@ -622,7 +622,7 @@ class TestDoctrineOfNegativesSystem:
         call_args = mock_supabase_manager.insert_strand.call_args[0][0]
         assert call_args['kind'] == 'cil_doctrine_of_negatives'
         assert call_args['agent_id'] == 'central_intelligence_layer'
-        assert call_args['cil_team_member'] == 'doctrine_of_negatives_system'
+        assert call_args['team_member'] == 'doctrine_of_negatives_system'
         assert call_args['strategic_meta_type'] == 'doctrine_analysis'
         assert call_args['resonance_score'] == 0.9
 

@@ -485,7 +485,7 @@ class CounterfactualCritic:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'counterfactual_critic',
+                'team_member': 'counterfactual_critic',
                 'strategic_meta_type': 'causal_analysis',
                 'doctrine_status': 'provisional',
                 
@@ -538,7 +538,7 @@ class CounterfactualCritic:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'counterfactual_critic',
+                'team_member': 'counterfactual_critic',
                 'strategic_meta_type': 'counterfactual_test',
                 'doctrine_status': 'provisional',
                 

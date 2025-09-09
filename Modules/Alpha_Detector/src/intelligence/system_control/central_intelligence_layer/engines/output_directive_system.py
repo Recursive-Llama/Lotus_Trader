@@ -980,7 +980,7 @@ class OutputDirectiveSystem:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'central_intelligence_layer',
-                'cil_team_member': 'output_directive_system',
+                'team_member': 'output_directive_system',
                 'strategic_meta_type': 'directive_generation',
                 'resonance_score': 0.8
             }

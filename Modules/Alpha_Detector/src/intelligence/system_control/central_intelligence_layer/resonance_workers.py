@@ -514,16 +514,16 @@ class QueueOrdering:
         try:
             query = """
                 SELECT 
-                    h.hypothesis_id,
-                    h.hypothesis_text,
-                    h.experiment_shape,
+                    h.module_intelligence->>'hypothesis_id' as hypothesis_id,
+                    h.module_intelligence->>'mechanism_hypothesis' as hypothesis_text,
+                    h.module_intelligence->>'experiment_shape' as experiment_shape,
                     h.confidence,
                     m.motif_family,
                     m.phi,
                     m.rho,
                     m.telemetry
                 FROM AD_strands h
-                LEFT JOIN AD_strands m ON h.hypothesis_id = m.motif_id
+                LEFT JOIN AD_strands m ON h.module_intelligence->>'hypothesis_id' = m.motif_id
                 WHERE h.kind = 'hypothesis'
                     AND h.status = 'pending'
                 ORDER BY h.created_at DESC
@@ -597,7 +597,7 @@ class QueueOrdering:
                 """
                 
                 await self.supabase_manager.execute_query(query, [
-                    candidate['hypothesis_id'],
+                    candidate.get('hypothesis_id', ''),
                     candidate.get('motif_id', ''),
                     json.dumps(candidate),
                     resonance_score,

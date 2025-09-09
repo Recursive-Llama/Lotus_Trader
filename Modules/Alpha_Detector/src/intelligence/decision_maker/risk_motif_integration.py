@@ -42,10 +42,14 @@ class RiskMotifIntegration:
                 'risk_motif_id': risk_motif_id,
                 'type': risk_pattern_data.get('risk_type', 'general_risk_pattern'),
                 'description': f"Risk motif for {risk_pattern_data.get('risk_type', 'general_risk_pattern')} detected by {risk_pattern_data.get('agent', 'unknown')}",
-                'risk_invariants': risk_invariants,
-                'risk_failure_conditions': risk_failure_conditions,
-                'risk_mechanism_hypothesis': risk_mechanism_hypothesis,
-                'lineage': [risk_pattern_data.get('strand_id', 'initial_risk_detection')],  # Track origin
+                'module_intelligence': {
+                    'invariants': risk_invariants,
+                    'fails_when': risk_failure_conditions,
+                    'mechanism_hypothesis': risk_mechanism_hypothesis,
+                    'lineage': [risk_pattern_data.get('strand_id', 'initial_risk_detection')],  # Track origin
+                    'hypothesis_id': f"risk_hypothesis_{risk_motif_id}",
+                    'evidence_refs': [risk_pattern_data.get('strand_id', 'initial_risk_detection')]
+                },
                 'creation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'initial_risk_confidence': risk_pattern_data.get('risk_confidence', 0.0),
                 'telemetry': risk_pattern_data.get('risk_resonance', {}).get('telemetry', {})  # Include risk resonance telemetry

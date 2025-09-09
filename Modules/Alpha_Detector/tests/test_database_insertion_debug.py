@@ -24,7 +24,7 @@ class TestDatabaseInsertionDebug:
             'kind': 'test_simple',
             'module': 'alpha',
             'agent_id': 'test_agent',
-            'cil_team_member': 'test_member',
+            'team_member': 'test_member',
             'symbol': 'BTC',
             'timeframe': '1m',
             'session_bucket': 'GLOBAL',
@@ -81,7 +81,7 @@ class TestDatabaseInsertionDebug:
             'kind': 'raw_data_volume_spike',
             'module': 'alpha',
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'raw_data_intelligence_agent',
+            'team_member': 'raw_data_intelligence_agent',
             'symbol': 'BTC',
             'timeframe': '1m',
             'session_bucket': 'GLOBAL',
@@ -146,7 +146,7 @@ class TestDatabaseInsertionDebug:
             'kind': 'raw_data_test',
             'module': 'alpha',
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'raw_data_intelligence_agent',
+            'team_member': 'raw_data_intelligence_agent',
             'symbol': 'BTC',
             'timeframe': '1m',
             'session_bucket': 'GLOBAL',
@@ -169,7 +169,7 @@ class TestDatabaseInsertionDebug:
         }
         
         # Check required fields
-        required_fields = ['id', 'kind', 'module', 'agent_id', 'cil_team_member', 'symbol', 'timeframe', 'session_bucket', 'regime', 'tags', 'module_intelligence', 'sig_sigma', 'sig_confidence', 'sig_direction', 'outcome_score', 'created_at']
+        required_fields = ['id', 'kind', 'module', 'agent_id', 'team_member', 'symbol', 'timeframe', 'session_bucket', 'regime', 'tags', 'module_intelligence', 'sig_sigma', 'sig_confidence', 'sig_direction', 'outcome_score', 'created_at']
         
         print("📊 Schema validation:")
         for field in required_fields:

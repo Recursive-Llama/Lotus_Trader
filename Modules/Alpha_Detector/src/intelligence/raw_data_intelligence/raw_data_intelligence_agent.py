@@ -349,8 +349,8 @@ class RawDataIntelligenceAgent:
             llm_results = await self._llm_enhanced_analysis(market_data_1m, analysis_results)
             analysis_results['analysis_components']['llm_enhanced'] = llm_results
             
-            # 6. Identify significant patterns with enhanced filtering
-            significant_patterns = self._identify_significant_patterns_enhanced(analysis_results)
+            # 6. Identify significant patterns with enhanced filtering and historical context
+            significant_patterns = await self._identify_significant_patterns_enhanced(analysis_results)
             analysis_results['significant_patterns'] = significant_patterns
             
             # Store analysis history
@@ -880,7 +880,7 @@ class RawDataIntelligenceAgent:
         
         return significant_patterns
     
-    def _identify_significant_patterns_enhanced(self, analysis_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _identify_significant_patterns_enhanced(self, analysis_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Enhanced pattern identification with multi-timeframe validation
         
@@ -972,11 +972,34 @@ class RawDataIntelligenceAgent:
                         'team_member': 'divergence_detector'
                     })
             
+            # Add historical context validation to each pattern
+            validated_patterns = []
+            for pattern in significant_patterns:
+                # Get pattern details
+                pattern_type = pattern.get('type', 'unknown')
+                symbol = pattern.get('symbol', 'BTC')
+                timeframe = pattern.get('timeframe', '1m')
+                
+                # Validate pattern frequency
+                frequency_validation = await self._validate_pattern_frequency(pattern_type, symbol, timeframe)
+                
+                # Add historical context to pattern
+                pattern['historical_context'] = {
+                    'frequency_validation': frequency_validation,
+                    'is_historically_valid': frequency_validation.get('is_valid', True)
+                }
+                
+                # Only include patterns that pass historical validation
+                if frequency_validation.get('is_valid', True):
+                    validated_patterns.append(pattern)
+                else:
+                    self.logger.info(f"Filtered out {pattern_type} pattern for {symbol} {timeframe} - too frequent")
+            
             # Sort by pattern clarity (highest first)
-            significant_patterns.sort(key=lambda x: x.get('pattern_clarity', 0.0), reverse=True)
+            validated_patterns.sort(key=lambda x: x.get('pattern_clarity', 0.0), reverse=True)
             
             # Limit to top 3 most significant patterns to reduce noise
-            significant_patterns = significant_patterns[:3]
+            significant_patterns = validated_patterns[:3]
             
         except Exception as e:
             self.logger.error(f"Failed to identify significant patterns: {e}")
@@ -1033,7 +1056,7 @@ class RawDataIntelligenceAgent:
                     'kind': 'intelligence',  # Raw data creates intelligence strands, not signals
                     'module': 'alpha',
                     'agent_id': 'raw_data_intelligence',
-                    'cil_team_member': pattern.get('team_member', 'raw_data_intelligence_agent'),
+                    'team_member': pattern.get('team_member', 'raw_data_intelligence_agent'),
                     'symbol': pattern.get('symbol', 'BTC'),
                     'timeframe': pattern.get('timeframe', '1m'),
                     'session_bucket': 'GLOBAL',
@@ -1142,7 +1165,7 @@ class RawDataIntelligenceAgent:
                 'kind': 'intelligence',
                 'module': 'alpha',
                 'agent_id': 'raw_data_intelligence',
-                'cil_team_member': 'raw_data_intelligence_agent',
+                'team_member': 'raw_data_intelligence_agent',
                 'symbol': 'SYSTEM',
                 'timeframe': 'system',
                 'session_bucket': 'GLOBAL',
@@ -1176,6 +1199,229 @@ class RawDataIntelligenceAgent:
         except Exception as e:
             self.logger.error(f"Failed to publish compilation strand: {e}")
             raise
+    
+    # ===== HISTORICAL CONTEXT METHODS =====
+    
+    async def _get_historical_patterns(self, pattern_type: str, symbol: str, timeframe: str, lookback_days: int = 30) -> List[Dict[str, Any]]:
+        """
+        Get historical patterns for validation and context
+        
+        Args:
+            pattern_type: Type of pattern to search for
+            symbol: Symbol to search for
+            timeframe: Timeframe to search for
+            lookback_days: Number of days to look back
+            
+        Returns:
+            List of historical patterns
+        """
+        try:
+            lookback_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq(
+                'kind', 'intelligence'
+            ).eq('agent_id', 'raw_data_intelligence').eq('symbol', symbol).eq('timeframe', timeframe).eq(
+                'pattern_type', pattern_type
+            ).gte('created_at', lookback_date.isoformat()).order('created_at', desc=True).limit(100).execute()
+            
+            if result.data:
+                # Pattern type is now filtered at database level
+                historical_patterns = result.data
+                
+                self.logger.info(f"Found {len(historical_patterns)} historical {pattern_type} patterns for {symbol} {timeframe}")
+                return historical_patterns
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get historical patterns: {e}")
+            return []
+    
+    async def _validate_pattern_frequency(self, pattern_type: str, symbol: str, timeframe: str) -> Dict[str, Any]:
+        """
+        Validate pattern frequency to avoid false positives
+        Focus on rapid repetition rather than total count
+        
+        Args:
+            pattern_type: Type of pattern to validate
+            symbol: Symbol to validate
+            timeframe: Timeframe to validate
+            
+        Returns:
+            Validation results with frequency analysis
+        """
+        try:
+            # Get historical patterns from last 24 hours for rapid repetition check
+            historical_patterns_24h = await self._get_historical_patterns(pattern_type, symbol, timeframe, 1)
+            
+            if not historical_patterns_24h:
+                return {
+                    'is_valid': True,
+                    'frequency_analysis': {
+                        'recent_count': 0,
+                        'frequency_score': 1.0,
+                        'validation_reason': 'no_recent_patterns',
+                        'warning': None
+                    }
+                }
+            
+            # Calculate frequency metrics
+            recent_count_24h = len(historical_patterns_24h)
+            
+            # Check for rapid repetition (3+ patterns in 1 hour)
+            if recent_count_24h >= 3:
+                # Check if they're clustered in time
+                recent_times = []
+                for pattern in historical_patterns_24h[-3:]:  # Last 3 patterns
+                    try:
+                        if isinstance(pattern.get('created_at'), str):
+                            pattern_time = datetime.fromisoformat(pattern['created_at'].replace('Z', '+00:00'))
+                        else:
+                            pattern_time = pattern.get('created_at')
+                        recent_times.append(pattern_time)
+                    except:
+                        continue
+                
+                if len(recent_times) >= 3:
+                    time_span = (recent_times[-1] - recent_times[0]).total_seconds() / 3600  # hours
+                    
+                    if time_span < 1.0:  # 3+ patterns in less than 1 hour
+                        return {
+                            'is_valid': False,
+                            'frequency_analysis': {
+                                'recent_count': recent_count_24h,
+                                'time_span_hours': time_span,
+                                'frequency_score': 0.0,
+                                'validation_reason': 'rapid_repetition',
+                                'warning': f'3+ {pattern_type} patterns in {time_span:.1f} hours - possible noise'
+                            }
+                        }
+            
+            # Check for excessive frequency (30+ patterns in 1 day)
+            if recent_count_24h >= 30:
+                return {
+                    'is_valid': False,
+                    'frequency_analysis': {
+                        'recent_count': recent_count_24h,
+                        'frequency_score': 0.0,
+                        'validation_reason': 'excessive_frequency',
+                        'warning': f'30+ {pattern_type} patterns in 24 hours - excessive frequency'
+                    }
+                }
+            
+            # Calculate frequency score (penalize if more than 10 in 24 hours)
+            frequency_score = max(0.0, 1.0 - (recent_count_24h / 20.0))
+            
+            # Determine warning level
+            warning = None
+            if recent_count_24h >= 20:
+                warning = f'High frequency: {recent_count_24h} {pattern_type} patterns in 24 hours'
+            elif recent_count_24h >= 10:
+                warning = f'Moderate frequency: {recent_count_24h} {pattern_type} patterns in 24 hours'
+            
+            return {
+                'is_valid': True,
+                'frequency_analysis': {
+                    'recent_count': recent_count_24h,
+                    'frequency_score': frequency_score,
+                    'validation_reason': 'acceptable_frequency',
+                    'warning': warning
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to validate pattern frequency: {e}")
+            return {
+                'is_valid': True,
+                'frequency_analysis': {
+                    'recent_count': 0,
+                    'frequency_score': 1.0,
+                    'validation_reason': 'validation_error',
+                    'warning': f'Validation error: {str(e)}'
+                }
+            }
+    
+    async def _get_historical_baselines(self, symbol: str, timeframe: str, lookback_days: int = 90) -> Dict[str, Any]:
+        """
+        Get historical baselines for better statistical calculations
+        
+        Args:
+            symbol: Symbol to get baselines for
+            timeframe: Timeframe to get baselines for
+            lookback_days: Number of days to look back (default 90 for 3 months)
+            
+        Returns:
+            Historical baseline statistics
+        """
+        try:
+            lookback_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            
+            # Get historical patterns for baseline calculation
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq(
+                'kind', 'intelligence'
+            ).eq('agent_id', 'raw_data_intelligence').eq('symbol', symbol).eq('timeframe', timeframe).gte(
+                'created_at', lookback_date.isoformat()
+            ).order('created_at', desc=True).limit(500).execute()
+            
+            if not result.data:
+                return {
+                    'volume_baseline': None,
+                    'price_baseline': None,
+                    'correlation_baseline': None,
+                    'sample_size': 0,
+                    'baseline_quality': 'insufficient_data'
+                }
+            
+            # Extract statistical measurements from historical patterns
+            z_scores = []
+            volume_ratios = []
+            correlations = []
+            
+            for strand in result.data:
+                module_intelligence = strand.get('module_intelligence', {})
+                if isinstance(module_intelligence, dict):
+                    statistical_measurements = module_intelligence.get('statistical_measurements', {})
+                    if isinstance(statistical_measurements, dict):
+                        if 'z_score' in statistical_measurements:
+                            z_scores.append(statistical_measurements['z_score'])
+                        if 'volume_ratio' in statistical_measurements:
+                            volume_ratios.append(statistical_measurements['volume_ratio'])
+                        if 'correlation' in statistical_measurements:
+                            correlations.append(statistical_measurements['correlation'])
+            
+            # Calculate baselines
+            baselines = {
+                'volume_baseline': {
+                    'mean_ratio': np.mean(volume_ratios) if volume_ratios else 1.0,
+                    'std_ratio': np.std(volume_ratios) if volume_ratios else 0.0,
+                    'sample_size': len(volume_ratios)
+                } if volume_ratios else None,
+                'z_score_baseline': {
+                    'mean_z': np.mean(z_scores) if z_scores else 0.0,
+                    'std_z': np.std(z_scores) if z_scores else 1.0,
+                    'sample_size': len(z_scores)
+                } if z_scores else None,
+                'correlation_baseline': {
+                    'mean_correlation': np.mean(correlations) if correlations else 0.0,
+                    'std_correlation': np.std(correlations) if correlations else 0.0,
+                    'sample_size': len(correlations)
+                } if correlations else None,
+                'sample_size': len(result.data),
+                'baseline_quality': 'good' if len(result.data) >= 50 else 'moderate' if len(result.data) >= 20 else 'poor'
+            }
+            
+            self.logger.info(f"Calculated historical baselines for {symbol} {timeframe}: {baselines['sample_size']} samples, quality: {baselines['baseline_quality']}")
+            return baselines
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get historical baselines: {e}")
+            return {
+                'volume_baseline': None,
+                'price_baseline': None,
+                'correlation_baseline': None,
+                'sample_size': 0,
+                'baseline_quality': 'error'
+            }
     
     def _serialize_for_json(self, obj):
         """Serialize object for JSON compatibility"""

@@ -912,6 +912,7 @@ class GovernanceSystem:
         """
         Process lineage and provenance for new entities to track family trees
         and prevent circular rediscovery patterns.
+        Uses module_intelligence for lineage data storage.
         """
         logger.info("Processing lineage and provenance analysis.")
         
@@ -1047,24 +1048,27 @@ class GovernanceSystem:
     
     async def _update_family_trees(self, lineage_analyses: List[Dict[str, Any]],
                                  circular_detections: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Update family trees based on lineage analyses"""
+        """Update family trees based on lineage analyses using module_intelligence"""
         tree_updates = {}
         
         for analysis in lineage_analyses:
             entity_id = analysis['entity_id']
             lineage_analysis = analysis['lineage_analysis']
             
-            # Determine family from entity (simplified)
-            family = 'divergence'  # Default family
+            # Determine family from entity module_intelligence (simplified)
+            family = lineage_analysis.get('module_intelligence', {}).get('motif_family', 'divergence')
             
             if family in self.family_trees:
                 family_tree = self.family_trees[family]
                 
-                # Create lineage node
+                # Create lineage node with module_intelligence data
                 node = LineageNode(
                     node_id=entity_id,
                     node_type='experiment',
-                    content={'hypothesis': 'Test hypothesis'},
+                    content={
+                        'hypothesis': lineage_analysis.get('module_intelligence', {}).get('mechanism_hypothesis', 'Test hypothesis'),
+                        'module_intelligence': lineage_analysis.get('module_intelligence', {})
+                    },
                     metadata={'family': family},
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),
@@ -1411,7 +1415,7 @@ class GovernanceSystem:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'central_intelligence_layer',
-                'cil_team_member': 'governance_system',
+                'team_member': 'governance_system',
                 'strategic_meta_type': 'lineage_provenance',
                 'resonance_score': 0.9
             }
@@ -1441,7 +1445,7 @@ class GovernanceSystem:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'central_intelligence_layer',
-                'cil_team_member': 'governance_system',
+                'team_member': 'governance_system',
                 'strategic_meta_type': 'governance_decision',
                 'resonance_score': 0.9
             }

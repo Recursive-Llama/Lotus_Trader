@@ -134,7 +134,7 @@ class TestTraderToCilFeedbackFlow:
                 'outcome_score': lesson.get('performance_score', 0.0),
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'trader',
-                'cil_team_member': 'performance_analyzer'
+                'team_member': 'performance_analyzer'
             }
             
             await components['supabase_manager'].insert_strand(feedback_strand)
@@ -278,7 +278,7 @@ class TestTraderToCilFeedbackFlow:
             'outcome_score': 0.85,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'trader',
-            'cil_team_member': 'execution_agent'
+            'team_member': 'execution_agent'
         }
         
         # Create failed execution result
@@ -313,7 +313,7 @@ class TestTraderToCilFeedbackFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'trader',
-            'cil_team_member': 'execution_agent'
+            'team_member': 'execution_agent'
         }
         
         # Create partial execution result
@@ -348,7 +348,7 @@ class TestTraderToCilFeedbackFlow:
             'outcome_score': 0.6,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'trader',
-            'cil_team_member': 'execution_agent'
+            'team_member': 'execution_agent'
         }
         
         # Publish execution results

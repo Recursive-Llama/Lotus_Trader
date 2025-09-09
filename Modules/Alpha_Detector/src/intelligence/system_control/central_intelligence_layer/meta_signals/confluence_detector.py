@@ -482,7 +482,7 @@ class ConfluenceDetector:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'confluence_detector',
+                'team_member': 'confluence_detector',
                 'strategic_meta_type': 'confluence_event',
                 'doctrine_status': 'active',
                 

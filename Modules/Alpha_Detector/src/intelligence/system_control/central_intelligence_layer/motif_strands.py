@@ -279,7 +279,7 @@ class MotifStrandManager:
                 'sig_direction': motif.sig_direction,
                 'outcome_score': motif.outcome_score,
                 
-                'cil_team_member': 'motif_strand_manager'
+                'team_member': 'motif_strand_manager'
             }
             
             await self.supabase_manager.insert_strand(strand_data)
@@ -534,7 +534,7 @@ class MotifStrandManager:
                     'telemetry': motif.telemetry,
                     'resonance_threshold': self.resonance_threshold
                 },
-                'cil_team_member': 'motif_strand_manager'
+                'team_member': 'motif_strand_manager'
             }
             
             await self.supabase_manager.insert_strand(strand_data)

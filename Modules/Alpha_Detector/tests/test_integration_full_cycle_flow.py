@@ -208,7 +208,7 @@ class TestFullCycleIntegrationFlow:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'decision_maker',
-                'cil_team_member': 'decision_agent'
+                'team_member': 'decision_agent'
             }
             await components['supabase_manager'].insert_strand(directive)
             execution_directives.append(directive)
@@ -263,7 +263,7 @@ class TestFullCycleIntegrationFlow:
                 'outcome_score': 0.8,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'trader',
-                'cil_team_member': 'execution_agent'
+                'team_member': 'execution_agent'
             }
             await components['supabase_manager'].insert_strand(result)
             execution_results.append(result)

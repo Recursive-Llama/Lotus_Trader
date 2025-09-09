@@ -1022,7 +1022,7 @@ class SystemResonanceManager:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'central_intelligence_layer',
-                'cil_team_member': 'system_resonance_manager',
+                'team_member': 'system_resonance_manager',
                 'strategic_meta_type': 'resonance_prioritization',
                 'resonance_score': 0.9
             }

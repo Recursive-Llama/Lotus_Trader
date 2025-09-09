@@ -433,7 +433,7 @@ class CILTelemetryHub:
                 'module': 'alpha',
                 'tags': [f"agent:central_intelligence:telemetry_hub:dashboard_updated"],
                 'dashboard_data': dashboard_data,
-                'cil_team_member': 'telemetry_hub'
+                'team_member': 'telemetry_hub'
             }
             
             await self.supabase_manager.insert_strand(strand_data)

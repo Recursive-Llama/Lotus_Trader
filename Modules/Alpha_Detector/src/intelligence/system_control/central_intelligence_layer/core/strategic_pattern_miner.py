@@ -173,14 +173,14 @@ class StrategicPatternMiner:
                 "tags": [
                     f"agent:central_intelligence:strategic_pattern_miner:meta_signal_created",
                     f"meta_signal_type:{meta_signal_type}",
-                    f"cil_team_member:{self.team_member_id}"
+                    f"team_member:{self.team_member_id}"
                 ],
                 "content": pattern_data.get("description", ""),
                 "sig_sigma": pattern_data.get("strength", 0.5),
                 "sig_confidence": pattern_data.get("confidence", 0.5),
                 "outcome_score": 0.0,  # Will be updated based on results
                 "strategic_meta_type": meta_signal_type,
-                "cil_team_member": self.team_member_id,
+                "team_member": self.team_member_id,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             
@@ -414,7 +414,7 @@ class StrategicPatternMiner:
                         "regime": "multi",
                         "tags": [
                             f"agent:central_intelligence:strategic_pattern_miner:pattern_discovered",
-                            f"cil_team_member:{self.team_member_id}",
+                            f"team_member:{self.team_member_id}",
                             f"pattern_type:{pattern.get('pattern_type', 'unknown')}"
                         ],
                         "content": pattern.get("description", ""),
@@ -422,7 +422,7 @@ class StrategicPatternMiner:
                         "sig_confidence": pattern.get("confidence", 0.5),
                         "outcome_score": 0.0,
                         "strategic_meta_type": "strategic_pattern",
-                        "cil_team_member": self.team_member_id,
+                        "team_member": self.team_member_id,
                         "created_at": datetime.now(timezone.utc).isoformat()
                     }
                     

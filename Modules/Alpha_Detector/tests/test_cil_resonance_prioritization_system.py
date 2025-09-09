@@ -463,7 +463,7 @@ class TestResonancePrioritizationSystem:
         assert 'content' in call_args
         assert call_args['kind'] == 'cil_resonance_prioritization'
         assert call_args['agent_id'] == 'central_intelligence_layer'
-        assert call_args['cil_team_member'] == 'resonance_prioritization_system'
+        assert call_args['team_member'] == 'resonance_prioritization_system'
     
     def test_experiment_priority_enum(self):
         """Test ExperimentPriority enum values"""

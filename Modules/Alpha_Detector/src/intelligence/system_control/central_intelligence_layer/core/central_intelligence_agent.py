@@ -327,7 +327,7 @@ class CentralIntelligenceAgent:
                 "sig_confidence": 1.0,
                 "outcome_score": 0.0,
                 "strategic_meta_type": "team_startup",
-                "cil_team_member": self.agent_id,
+                "team_member": self.agent_id,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             
@@ -371,7 +371,7 @@ class CentralIntelligenceAgent:
                 "sig_confidence": successful_analyses / max(total_analyses, 1),
                 "outcome_score": 0.0,
                 "strategic_meta_type": "coordination",
-                "cil_team_member": self.agent_id,
+                "team_member": self.agent_id,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             

@@ -456,7 +456,7 @@ class TransferHitDetector:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'transfer_hit_detector',
+                'team_member': 'transfer_hit_detector',
                 'strategic_meta_type': 'transfer_hit',
                 'doctrine_status': 'active',
                 

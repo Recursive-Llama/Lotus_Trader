@@ -432,7 +432,7 @@ class CILPlanComposer:
                 'notes': plan.notes,
                 'confidence': plan.confidence,
                 'status': plan.status,
-                'cil_team_member': 'plan_composer'
+                'team_member': 'plan_composer'
             }
             
             await self.supabase_manager.insert_strand(strand_data)

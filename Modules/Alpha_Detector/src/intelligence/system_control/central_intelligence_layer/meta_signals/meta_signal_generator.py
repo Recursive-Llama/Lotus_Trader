@@ -588,7 +588,7 @@ class MetaSignalGenerator:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'meta_signal_generator',
+                'team_member': 'meta_signal_generator',
                 'strategic_meta_type': signal.signal_type,
                 'doctrine_status': 'active',
                 

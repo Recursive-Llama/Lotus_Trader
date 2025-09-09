@@ -30,19 +30,13 @@ analyze_motif_analogy:
     Motif A:
     - Name: {motif_a[name]}
     - Family: {motif_a[family]}
-    - Invariants: {motif_a[invariants]}
-    - Fails When: {motif_a[fails_when]}
-    - Contexts: {motif_a[contexts]}
-    - Why Map: {motif_a[why_map]}
+    - Module Intelligence: {motif_a[module_intelligence]}
     - Confidence: {motif_a[confidence]:.3f}
     
     Motif B:
     - Name: {motif_b[name]}
     - Family: {motif_b[family]}
-    - Invariants: {motif_b[invariants]}
-    - Fails When: {motif_b[fails_when]}
-    - Contexts: {motif_b[contexts]}
-    - Why Map: {motif_b[why_map]}
+    - Module Intelligence: {motif_b[module_intelligence]}
     - Confidence: {motif_b[confidence]:.3f}
     
     Analysis Context:
@@ -106,9 +100,7 @@ generate_transfer_candidate:
     Source Motif:
     - Name: {source_motif[motif_name]}
     - Family: {source_motif[motif_family]}
-    - Invariants: {source_motif[invariants]}
-    - Contexts: {source_motif[contexts]}
-    - Why Map: {source_motif[why_map]}
+    - Module Intelligence: {source_motif[module_intelligence]}
     
     Analogy Analysis:
     - Similarity Score: {analogy[similarity_score]:.3f}

@@ -404,7 +404,7 @@ class CILHypothesisWriter:
                 'context': hypothesis.context,
                 'confidence': hypothesis.confidence,
                 'status': hypothesis.status,
-                'cil_team_member': 'hypothesis_writer'
+                'team_member': 'hypothesis_writer'
             }
             
             await self.supabase_manager.insert_strand(strand_data)

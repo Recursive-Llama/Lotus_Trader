@@ -64,7 +64,7 @@ class ContextIndexer:
             'pattern_data': ['patterns', 'breakouts', 'divergences', 'support_levels', 'resistance_levels'],
             'performance_data': ['outcome', 'performance_score', 'execution_quality', 'accumulated_score'],
             'context_data': ['market_conditions', 'event_context', 'regime_context'],
-            'learning_data': ['lesson', 'source_strands', 'clustering_columns', 'braid_level']
+            'learning_data': ['lesson', 'braid_level', 'module_intelligence']
         }
     
     async def create_context_vector(self, analysis_data: Dict) -> np.ndarray:

@@ -330,7 +330,7 @@ class PredictionOutcomeTracker:
                 'kind': 'prediction_outcome',
                 'module': 'alpha',
                 'agent_id': 'central_intelligence_layer',
-                'cil_team_member': 'prediction_outcome_tracker',
+                'team_member': 'prediction_outcome_tracker',
                 'symbol': 'SYSTEM',
                 'timeframe': 'system',
                 'session_bucket': 'GLOBAL',

@@ -375,7 +375,7 @@ class LeadLagPredictor:
                 },
                 
                 # CIL fields
-                'cil_team_member': 'lead_lag_predictor',
+                'team_member': 'lead_lag_predictor',
                 'strategic_meta_type': 'lead_lag_predict',
                 'doctrine_status': 'active',
                 

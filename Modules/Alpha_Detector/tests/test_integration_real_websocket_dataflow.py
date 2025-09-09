@@ -284,7 +284,7 @@ class TestRealWebSocketDataflow:
                 'sig_confidence': 0.75,
                 'sig_direction': 'long',
                 'agent_id': 'raw_data_intelligence',
-                'cil_team_member': 'divergence_detector',
+                'team_member': 'divergence_detector',
                 'prediction_score': None,  # Will be updated by tracker
                 'outcome_score': None,
                 'content': {

@@ -360,7 +360,7 @@ class TestLineageProvenanceSystem:
         assert 'content' in call_args
         assert call_args['kind'] == 'cil_lineage_provenance'
         assert call_args['agent_id'] == 'central_intelligence_layer'
-        assert call_args['cil_team_member'] == 'lineage_provenance_system'
+        assert call_args['team_member'] == 'lineage_provenance_system'
     
     def test_lineage_type_enum(self):
         """Test LineageType enum values"""

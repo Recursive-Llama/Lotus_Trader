@@ -247,7 +247,7 @@ class TestCilToDecisionMakerFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'divergence_detector'
+            'team_member': 'divergence_detector'
         }
         
         # Create volume signal
@@ -275,7 +275,7 @@ class TestCilToDecisionMakerFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'volume_analyzer'
+            'team_member': 'volume_analyzer'
         }
         
         # Create cross-asset signal
@@ -303,7 +303,7 @@ class TestCilToDecisionMakerFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'raw_data_intelligence',
-            'cil_team_member': 'cross_asset_analyzer'
+            'team_member': 'cross_asset_analyzer'
         }
         
         # Publish signals
@@ -353,7 +353,7 @@ class TestCilToDecisionMakerFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'central_intelligence_layer',
-            'cil_team_member': 'output_directive_system',
+            'team_member': 'output_directive_system',
             'strategic_meta_type': 'strategic_directive'
         }
         
@@ -488,7 +488,7 @@ class TestCilToDecisionMakerFlow:
             'outcome_score': 0.8,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'decision_maker',
-            'cil_team_member': 'decision_agent'
+            'team_member': 'decision_agent'
         }
         
         # Publish outcome

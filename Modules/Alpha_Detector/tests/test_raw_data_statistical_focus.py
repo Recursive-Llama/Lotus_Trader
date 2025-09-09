@@ -127,7 +127,7 @@ class RawDataStatisticalFocusTester:
         logger.info("📋 Testing RMC compilation system...")
         
         # Check if compilation strands were created
-        result = self.db.client.table('ad_strands').select('*').eq('kind', 'intelligence').eq('agent_id', 'raw_data_intelligence').eq('cil_team_member', 'raw_data_intelligence_agent').execute()
+        result = self.db.client.table('ad_strands').select('*').eq('kind', 'intelligence').eq('agent_id', 'raw_data_intelligence').eq('team_member', 'raw_data_intelligence_agent').execute()
         
         compilation_strands = [strand for strand in result.data if 'compilation' in strand.get('tags', [])]
         

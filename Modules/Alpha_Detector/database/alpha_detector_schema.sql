@@ -44,15 +44,14 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     
     -- LEARNING FIELDS (Phase 4+)
     accumulated_score FLOAT8,                -- Accumulated performance score
-    source_strands JSONB,                    -- Source strands for learning
-    clustering_columns JSONB,                -- Columns for clustering
     lesson TEXT,                             -- LLM-generated lesson
     braid_level INTEGER DEFAULT 1,           -- Learning hierarchy level
+    -- Note: source_strands, clustering_columns moved to module_intelligence
     
     -- CIL (Central Intelligence Layer) FIELDS
     resonance_score FLOAT,                   -- Mathematical resonance score
     strategic_meta_type TEXT,                -- Type of strategic meta-signal
-    cil_team_member TEXT,                    -- CIL team member that created this strand
+    team_member TEXT,                        -- Team member that created this strand
     agent_id TEXT,                           -- Agent team identifier: raw_data_intelligence|decision_maker|trader|central_intelligence_layer
     experiment_id TEXT,                      -- Experiment ID for tracking
     doctrine_status TEXT,                    -- Doctrine status: provisional|affirmed|retired|contraindicated
@@ -69,34 +68,59 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     phi_updated_at TIMESTAMPTZ,              -- Timestamp for phi updates
     rho_updated_at TIMESTAMPTZ,              -- Timestamp for rho updates
     
-    -- MOTIF CARD FIELDS (Pattern Metadata)
+    -- MOTIF CARD FIELDS (Pattern Metadata) - High-level only
     motif_id TEXT,                           -- Motif identifier
     motif_name TEXT,                         -- Motif name
     motif_family TEXT,                       -- Motif family classification
-    hypothesis_id TEXT,                      -- Hypothesis identifier for experiments
-    invariants JSONB,                        -- Pattern invariants
-    fails_when JSONB,                        -- Failure conditions
-    contexts JSONB,                          -- Pattern contexts
-    evidence_refs JSONB,                     -- Evidence references
-    why_map JSONB,                           -- Why-map data
-    lineage JSONB,                           -- Pattern lineage
+    pattern_type TEXT,                       -- Pattern type classification
+    -- Note: hypothesis_id, invariants, fails_when, contexts, evidence_refs, why_map, lineage moved to module_intelligence
     
-    -- CIL CORE FUNCTIONALITY FIELDS
-    mechanism_hypothesis TEXT,               -- Why does this work? (Why-Map)
-    mechanism_supports JSONB,                -- Evidence motifs supporting hypothesis
-    mechanism_fails_when JSONB,              -- Counter-conditions when it fails
-    confluence_graph_data JSONB,             -- Cross-agent motif data
-    experiment_shape TEXT,                   -- Canonical experiment shape: durability|stack|lead_lag|ablation|boundary
-    experiment_grammar JSONB,                -- Experiment design parameters
-    lineage_parent_ids JSONB,                -- Parent strand IDs for lineage tracking
-    lineage_mutation_note TEXT,              -- How this variant was created
-    prioritization_score FLOAT,              -- Resonance-driven prioritization score
+    -- CIL CORE FUNCTIONALITY FIELDS - High-level only
     autonomy_level TEXT,                     -- Agent autonomy: strict|bounded|exploratory
     directive_type TEXT,                     -- CIL directive type: beacon|envelope|seed
-    directive_content JSONB,                 -- Directive content and parameters
-    feedback_request JSONB,                  -- Feedback requirements for agents
-    governance_boundary TEXT,                -- Governance boundary classification
-    human_override_data JSONB                -- Human override information
+    -- Note: mechanism_hypothesis, mechanism_supports, mechanism_fails_when, confluence_graph_data, 
+    -- experiment_shape, experiment_grammar, lineage_parent_ids, lineage_mutation_note, 
+    -- prioritization_score, directive_content, feedback_request, governance_boundary, 
+    -- human_override_data moved to module_intelligence
+    
+    -- UNIFIED CLUSTERING FIELDS
+    status VARCHAR(20) DEFAULT 'active',     -- Strand status: active|inactive|deprecated
+    feature_version SMALLINT DEFAULT 1,     -- Feature version for auditable clustering
+    derivation_spec_id VARCHAR(100),        -- Derivation spec ID for re-derivation
+    
+    -- LEARNING SYSTEM FIELDS
+    persistence_score DECIMAL(5,4),          -- How reliable/consistent is this pattern (0-1)
+    novelty_score DECIMAL(5,4),             -- How unique/new is this pattern (0-1)
+    surprise_rating DECIMAL(5,4),           -- How unexpected was this outcome (0-1)
+    cluster_key VARCHAR(100),               -- Clustering key for grouping similar strands
+    strength_range VARCHAR(20),             -- Pattern strength classification
+    rr_profile VARCHAR(20),                 -- Risk/reward profile classification
+    market_conditions VARCHAR(20),          -- Market conditions classification
+    prediction_data JSONB,                  -- Prediction tracking data
+    outcome_data JSONB,                     -- Outcome analysis data
+    max_drawdown DECIMAL(10,4),             -- Maximum drawdown for trading strands
+    tracking_status VARCHAR(20) DEFAULT 'active', -- Prediction tracking status
+    plan_version INT DEFAULT 1,             -- Plan version for evolution tracking
+    replaces_id VARCHAR(100),               -- ID of strand this replaces
+    replaced_by_id VARCHAR(100),            -- ID of strand that replaces this
+    context_vector VECTOR(1536)             -- Vector embedding for similarity search
+);
+
+-- =============================================
+-- PATTERN EVOLUTION TABLE
+-- =============================================
+
+-- Track pattern evolution over time for learning system
+CREATE TABLE IF NOT EXISTS pattern_evolution (
+    pattern_type VARCHAR(50),
+    cluster_key VARCHAR(100),
+    version INT,
+    success_rate DECIMAL(5,4),
+    avg_rr DECIMAL(10,4),
+    avg_mdd DECIMAL(10,4),
+    sample_size INT,
+    last_updated TIMESTAMPTZ,
+    PRIMARY KEY (pattern_type, cluster_key, version)
 );
 
 -- =============================================
@@ -118,7 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_direction ON AD_strands(sig_direction)
 -- CIL (Central Intelligence Layer) indexes
 CREATE INDEX IF NOT EXISTS idx_ad_strands_resonance ON AD_strands(resonance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_strategic_meta ON AD_strands(strategic_meta_type);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_cil_member ON AD_strands(cil_team_member);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_team_member ON AD_strands(team_member);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_agent_id ON AD_strands(agent_id);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_experiment_id ON AD_strands(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_doctrine_status ON AD_strands(doctrine_status);
@@ -128,15 +152,33 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_prediction_score ON AD_strands(predict
 CREATE INDEX IF NOT EXISTS idx_ad_strands_outcome_score ON AD_strands(outcome_score DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_content ON AD_strands USING GIN(content);
 
--- CIL Core Functionality indexes
-CREATE INDEX IF NOT EXISTS idx_ad_strands_mechanism_hypothesis ON AD_strands(mechanism_hypothesis);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_experiment_shape ON AD_strands(experiment_shape);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_prioritization_score ON AD_strands(prioritization_score DESC);
+-- CIL Core Functionality indexes (high-level only)
 CREATE INDEX IF NOT EXISTS idx_ad_strands_autonomy_level ON AD_strands(autonomy_level);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_directive_type ON AD_strands(directive_type);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_governance_boundary ON AD_strands(governance_boundary);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_confluence_graph ON AD_strands USING GIN(confluence_graph_data);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_lineage_parents ON AD_strands USING GIN(lineage_parent_ids);
+
+-- Unified Clustering indexes
+CREATE INDEX IF NOT EXISTS idx_ad_strands_status ON AD_strands(status);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_feature_version ON AD_strands(feature_version);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_derivation_spec ON AD_strands(derivation_spec_id);
+
+-- Learning System indexes
+CREATE INDEX IF NOT EXISTS idx_ad_strands_persistence_score ON AD_strands(persistence_score);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_novelty_score ON AD_strands(novelty_score);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_surprise_rating ON AD_strands(surprise_rating);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_cluster_key ON AD_strands(cluster_key);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_strength_range ON AD_strands(strength_range);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_rr_profile ON AD_strands(rr_profile);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_market_conditions ON AD_strands(market_conditions);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_tracking_status ON AD_strands(tracking_status);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_plan_version ON AD_strands(plan_version);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_prediction_tracking ON AD_strands(kind, tracking_status) WHERE kind = 'prediction';
+CREATE INDEX IF NOT EXISTS idx_ad_strands_context_vector ON AD_strands USING ivfflat (context_vector vector_cosine_ops);
+
+-- Pattern Evolution indexes
+CREATE INDEX IF NOT EXISTS idx_pattern_evolution_pattern_type ON pattern_evolution(pattern_type);
+CREATE INDEX IF NOT EXISTS idx_pattern_evolution_cluster_key ON pattern_evolution(cluster_key);
+CREATE INDEX IF NOT EXISTS idx_pattern_evolution_success_rate ON pattern_evolution(success_rate DESC);
+CREATE INDEX IF NOT EXISTS idx_pattern_evolution_last_updated ON pattern_evolution(last_updated DESC);
 
 -- Resonance System indexes
 CREATE INDEX IF NOT EXISTS idx_ad_strands_phi ON AD_strands(phi DESC);
@@ -145,17 +187,11 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_telemetry ON AD_strands USING GIN(tele
 CREATE INDEX IF NOT EXISTS idx_ad_strands_phi_updated ON AD_strands(phi_updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_rho_updated ON AD_strands(rho_updated_at DESC);
 
--- Motif Card indexes
+-- Motif Card indexes (high-level only)
 CREATE INDEX IF NOT EXISTS idx_ad_strands_motif_id ON AD_strands(motif_id);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_motif_name ON AD_strands(motif_name);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_motif_family ON AD_strands(motif_family);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_hypothesis_id ON AD_strands(hypothesis_id);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_invariants ON AD_strands USING GIN(invariants);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_fails_when ON AD_strands USING GIN(fails_when);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_contexts ON AD_strands USING GIN(contexts);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_evidence_refs ON AD_strands USING GIN(evidence_refs);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_why_map ON AD_strands USING GIN(why_map);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_lineage ON AD_strands USING GIN(lineage);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_pattern_type ON AD_strands(pattern_type);
 
 -- =============================================
 -- TRIGGERS FOR COMMUNICATION
@@ -204,7 +240,7 @@ COMMENT ON COLUMN AD_strands.accumulated_score IS 'Accumulated performance score
 COMMENT ON COLUMN AD_strands.braid_level IS 'Learning hierarchy level: 1=strand, 2=braid, 3=meta-braid, 4=meta2-braid';
 COMMENT ON COLUMN AD_strands.resonance_score IS 'Mathematical resonance score for organic growth (CIL)';
 COMMENT ON COLUMN AD_strands.strategic_meta_type IS 'Type of strategic meta-signal: confluence|experiment|doctrine|plan|warning';
-COMMENT ON COLUMN AD_strands.cil_team_member IS 'CIL team member that created this strand';
+COMMENT ON COLUMN AD_strands.team_member IS 'Team member that created this strand';
 COMMENT ON COLUMN AD_strands.agent_id IS 'Agent team identifier: raw_data_intelligence|decision_maker|trader|central_intelligence_layer';
 COMMENT ON COLUMN AD_strands.experiment_id IS 'Experiment ID for tracking strategic experiments';
 COMMENT ON COLUMN AD_strands.doctrine_status IS 'Doctrine status: provisional|affirmed|retired|contraindicated';
@@ -221,14 +257,42 @@ COMMENT ON COLUMN AD_strands.telemetry IS 'Resonance metrics: sr (success rate),
 COMMENT ON COLUMN AD_strands.phi_updated_at IS 'Timestamp for phi updates - tracks resonance field changes';
 COMMENT ON COLUMN AD_strands.rho_updated_at IS 'Timestamp for rho updates - tracks resonance density changes';
 
--- Motif Card column comments
+-- Motif Card column comments (high-level only)
 COMMENT ON COLUMN AD_strands.motif_id IS 'Motif identifier - unique pattern identifier';
 COMMENT ON COLUMN AD_strands.motif_name IS 'Motif name - human-readable pattern name';
 COMMENT ON COLUMN AD_strands.motif_family IS 'Motif family classification - divergence|volume|correlation|session';
-COMMENT ON COLUMN AD_strands.hypothesis_id IS 'Hypothesis identifier for experiment tracking';
-COMMENT ON COLUMN AD_strands.invariants IS 'Pattern invariants - what stays the same across contexts';
-COMMENT ON COLUMN AD_strands.fails_when IS 'Failure conditions - when this pattern breaks down';
-COMMENT ON COLUMN AD_strands.contexts IS 'Pattern contexts - market conditions where this works';
-COMMENT ON COLUMN AD_strands.evidence_refs IS 'Evidence references - supporting strand IDs';
-COMMENT ON COLUMN AD_strands.why_map IS 'Why-map data - causal reasoning for pattern success';
-COMMENT ON COLUMN AD_strands.lineage IS 'Pattern lineage - how this pattern evolved from others';
+COMMENT ON COLUMN AD_strands.pattern_type IS 'Pattern type classification - volume_spike|divergence|correlation_break|anomaly|session_pattern';
+-- Note: hypothesis_id, invariants, fails_when, contexts, evidence_refs, why_map, lineage moved to module_intelligence
+
+-- Unified Clustering column comments
+COMMENT ON COLUMN AD_strands.status IS 'Strand status: active|inactive|deprecated - for unified clustering';
+COMMENT ON COLUMN AD_strands.feature_version IS 'Feature version for auditable clustering - tracks derivation changes';
+COMMENT ON COLUMN AD_strands.derivation_spec_id IS 'Derivation spec ID for re-derivation - enables reproducible clustering';
+
+-- Learning System column comments
+COMMENT ON COLUMN AD_strands.persistence_score IS 'How reliable/consistent is this pattern (0-1) - calculated for all strands';
+COMMENT ON COLUMN AD_strands.novelty_score IS 'How unique/new is this pattern (0-1) - calculated for all strands';
+COMMENT ON COLUMN AD_strands.surprise_rating IS 'How unexpected was this outcome (0-1) - calculated for all strands';
+COMMENT ON COLUMN AD_strands.cluster_key IS 'Clustering key for grouping similar strands - used in two-tier clustering';
+COMMENT ON COLUMN AD_strands.strength_range IS 'Pattern strength classification - weak|moderate|strong|extreme|anomalous';
+COMMENT ON COLUMN AD_strands.rr_profile IS 'Risk/reward profile classification - conservative|moderate|aggressive';
+COMMENT ON COLUMN AD_strands.market_conditions IS 'Market conditions classification - bull|bear|sideways|transition|anomaly';
+COMMENT ON COLUMN AD_strands.prediction_data IS 'Prediction tracking data - entry_price, target_price, stop_loss, max_time';
+COMMENT ON COLUMN AD_strands.outcome_data IS 'Outcome analysis data - final_outcome, max_drawdown, time_to_outcome';
+COMMENT ON COLUMN AD_strands.max_drawdown IS 'Maximum drawdown for trading strands - used in R/R optimization';
+COMMENT ON COLUMN AD_strands.tracking_status IS 'Prediction tracking status - active|completed|expired|cancelled';
+COMMENT ON COLUMN AD_strands.plan_version IS 'Plan version for evolution tracking - enables version control';
+COMMENT ON COLUMN AD_strands.replaces_id IS 'ID of strand this replaces - tracks evolution lineage';
+COMMENT ON COLUMN AD_strands.replaced_by_id IS 'ID of strand that replaces this - tracks evolution lineage';
+COMMENT ON COLUMN AD_strands.context_vector IS 'Vector embedding for similarity search - 1536 dimensions for OpenAI embeddings';
+
+-- Pattern Evolution table comments
+COMMENT ON TABLE pattern_evolution IS 'Track pattern evolution over time for learning system - success rates, R/R ratios, drawdowns';
+COMMENT ON COLUMN pattern_evolution.pattern_type IS 'Type of pattern being tracked - volume_spike|divergence|correlation_break';
+COMMENT ON COLUMN pattern_evolution.cluster_key IS 'Clustering key for this pattern group - enables pattern-specific evolution';
+COMMENT ON COLUMN pattern_evolution.version IS 'Version number for this pattern evolution - tracks improvements over time';
+COMMENT ON COLUMN pattern_evolution.success_rate IS 'Success rate for this pattern version (0-1) - tracks prediction accuracy';
+COMMENT ON COLUMN pattern_evolution.avg_rr IS 'Average risk/reward ratio for this pattern version - tracks profitability';
+COMMENT ON COLUMN pattern_evolution.avg_mdd IS 'Average maximum drawdown for this pattern version - tracks risk';
+COMMENT ON COLUMN pattern_evolution.sample_size IS 'Number of samples used to calculate these metrics - tracks statistical significance';
+COMMENT ON COLUMN pattern_evolution.last_updated IS 'When this pattern version was last updated - tracks evolution timeline';

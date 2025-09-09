@@ -148,7 +148,7 @@ class TestDecisionMakerToTraderFlow:
                 'outcome_score': 0.0,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent_id': 'decision_maker',
-                'cil_team_member': 'decision_agent'
+                'team_member': 'decision_agent'
             }
             
             await components['supabase_manager'].insert_strand(directive)
@@ -308,7 +308,7 @@ class TestDecisionMakerToTraderFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'decision_maker',
-            'cil_team_member': 'decision_agent'
+            'team_member': 'decision_agent'
         }
         
         # Create sell recommendation
@@ -340,7 +340,7 @@ class TestDecisionMakerToTraderFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'decision_maker',
-            'cil_team_member': 'decision_agent'
+            'team_member': 'decision_agent'
         }
         
         # Create hold recommendation
@@ -372,7 +372,7 @@ class TestDecisionMakerToTraderFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'decision_maker',
-            'cil_team_member': 'decision_agent'
+            'team_member': 'decision_agent'
         }
         
         # Publish recommendations
@@ -424,7 +424,7 @@ class TestDecisionMakerToTraderFlow:
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'agent_id': 'decision_maker',
-            'cil_team_member': 'decision_agent'
+            'team_member': 'decision_agent'
         }
         
         # Publish directive

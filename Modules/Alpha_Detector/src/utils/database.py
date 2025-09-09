@@ -130,12 +130,12 @@ class AlphaDetectorDB:
                 id, module, kind, symbol, timeframe, session_bucket, regime, tags,
                 sig_sigma, sig_confidence, sig_direction, trading_plan, signal_pack,
                 dsi_evidence, regime_context, event_context, module_intelligence, curator_feedback,
-                accumulated_score, source_strands, clustering_columns, lesson, braid_level
+                accumulated_score, lesson, braid_level
             ) VALUES (
                 %(id)s, %(module)s, %(kind)s, %(symbol)s, %(timeframe)s, %(session_bucket)s, %(regime)s, %(tags)s,
                 %(sig_sigma)s, %(sig_confidence)s, %(sig_direction)s, %(trading_plan)s, %(signal_pack)s,
                 %(dsi_evidence)s, %(regime_context)s, %(event_context)s, %(module_intelligence)s, %(curator_feedback)s,
-                %(accumulated_score)s, %(source_strands)s, %(clustering_columns)s, %(lesson)s, %(braid_level)s
+                %(accumulated_score)s, %(lesson)s, %(braid_level)s
             ) RETURNING id
         """
         return self.db.execute_insert(query, strand_data)
