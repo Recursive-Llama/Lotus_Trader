@@ -33,22 +33,6 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 │  • Enhanced Agent Base with CIL Integration                 │
 └─────────────────────┬───────────────────────────────────────┘
                       │
-┌─────────────────────┴───────────────────────────────────────┐
-│              SOCIAL DATA INTELLIGENCE TEAM 📋              │
-│  • Social Media Scanner          • Sentiment Analyzer       │
-│  • Chart Understanding Agent     • News Impact Analyzer     │
-│  • Social Pattern Detector       • Social Coordinator       │
-│  • Community Intelligence Agent  (Architecture Planned)     │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────┴───────────────────────────────────────┐
-│              USER INTELLIGENCE TEAM 📋                     │
-│  • User Preference Analyzer      • Behavior Pattern Detector│
-│  • Custom Strategy Agent         • Risk Profile Analyzer    │
-│  • User Feedback Processor       • User Coordinator         │
-│  • Personalization Engine        (Architecture Planned)     │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              CENTRAL INTELLIGENCE LAYER (CIL) ✅            │
@@ -75,14 +59,35 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 │  • Venue Fallback Manager        • Trader Coordinator       │
 │  • CIL Integration               (Architecture Complete)    │
 └─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              PLANNED INTELLIGENCE TEAMS                     │
+│                                                             │
+│  📋 SOCIAL DATA INTELLIGENCE TEAM                          │
+│  • Social Media Scanner          • Sentiment Analyzer       │
+│  • Chart Understanding Agent     • News Impact Analyzer     │
+│  • Social Pattern Detector       • Social Coordinator       │
+│  • Community Intelligence Agent  (Architecture Planned)     │
+│                                                             │
+│  📋 USER INTELLIGENCE TEAM                                 │
+│  • User Preference Analyzer      • Behavior Pattern Detector│
+│  • Custom Strategy Agent         • Risk Profile Analyzer    │
+│  • User Feedback Processor       • User Coordinator         │
+│  • Personalization Engine        (Architecture Planned)     │
+│                                                             │
+│  Note: These teams will feed directly into CIL,            │
+│  not through the Raw Data team.                            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### **How Teams Coordinate**
 
+- **Parallel intelligence teams** - Raw Data, Social Data, and User Intelligence teams all feed directly into CIL
 - **Event-driven activation** - Teams activate immediately when triggered by other teams
 - **Fallback intervals** - Teams activate on intervals only if no triggers received
 - **Shared communication** - All teams use the same `AD_strands` database table
 - **Resonance enhancement** - High-resonance patterns naturally strengthen across teams
+- **CIL synthesis** - Central Intelligence Layer synthesizes insights from all intelligence teams
 
 ## 📊 **Current System Status**
 
