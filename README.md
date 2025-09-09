@@ -45,7 +45,7 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
           │                    │                    │
           └────────────────────┼────────────────────┘
                                │
-                      ▼
+                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              CENTRAL INTELLIGENCE LAYER (CIL) ✅            │
 │  • Global Synthesis Engine         • Experiment Orchestrator│
