@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     -- SIGNAL DATA
     sig_sigma FLOAT8,                        -- Signal strength (0-1)
     sig_confidence FLOAT8,                   -- Signal confidence (0-1)
+    confidence FLOAT8,                       -- Generic confidence score (0-1) - for patterns, intelligence, etc.
     sig_direction TEXT,                      -- 'long'|'short'|'neutral'
     
     -- TRADING PLAN DATA
@@ -110,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_sigma ON AD_strands(sig_sigma);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_braid_level ON AD_strands((trading_plan->>'braid_level'));
 CREATE INDEX IF NOT EXISTS idx_ad_strands_tags ON AD_strands USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_confidence ON AD_strands(sig_confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_generic_confidence ON AD_strands(confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_created_at ON AD_strands(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_direction ON AD_strands(sig_direction);
 
@@ -191,6 +193,7 @@ CREATE TRIGGER ad_strands_notify_trigger
 COMMENT ON TABLE AD_strands IS 'Alpha Detector main data table - stores trading plans, signals, and learning strands';
 COMMENT ON COLUMN AD_strands.tags IS 'Communication tags - used to notify other modules';
 COMMENT ON COLUMN AD_strands.kind IS 'Strand type: signal|trading_plan|intelligence|braid|meta_braid|meta2_braid';
+COMMENT ON COLUMN AD_strands.confidence IS 'Generic confidence score (0-1) - used for patterns, intelligence, and other non-signal confidence measures';
 COMMENT ON COLUMN AD_strands.lifecycle_id IS 'Thread identifier for grouping related strands';
 COMMENT ON COLUMN AD_strands.parent_id IS 'Linkage to parent strand for hierarchy';
 COMMENT ON COLUMN AD_strands.trading_plan IS 'Complete trading plan OR braid lesson';

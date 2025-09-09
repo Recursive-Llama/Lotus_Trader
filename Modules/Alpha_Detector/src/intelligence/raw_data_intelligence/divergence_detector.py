@@ -86,8 +86,8 @@ class RawDataDivergenceDetector:
             analysis_results['divergences_detected'] = len(significant_divergences)
             analysis_results['divergence_details'] = significant_divergences
             
-            # 7. Calculate overall confidence
-            analysis_results['confidence'] = self._calculate_divergence_analysis_confidence(analysis_results)
+            # 7. Calculate pattern clarity (not prediction confidence)
+            analysis_results['pattern_clarity'] = self._calculate_divergence_pattern_clarity(analysis_results)
             
             return analysis_results
             
@@ -600,54 +600,54 @@ class RawDataDivergenceDetector:
         
         return significant_divergences
     
-    def _calculate_divergence_analysis_confidence(self, analysis_results: Dict[str, Any]) -> float:
+    def _calculate_divergence_pattern_clarity(self, analysis_results: Dict[str, Any]) -> float:
         """
-        Calculate confidence in the divergence analysis results
+        Calculate pattern clarity (statistical strength) of divergence patterns
         
         Args:
             analysis_results: Complete divergence analysis results
             
         Returns:
-            Confidence score between 0.0 and 1.0
+            Pattern clarity score between 0.0 and 1.0
         """
         try:
-            confidence_factors = []
+            clarity_factors = []
             
             # Data quality factor
             data_points = analysis_results.get('data_points', 0)
             if data_points > 100:
-                confidence_factors.append(0.9)
+                clarity_factors.append(0.9)
             elif data_points > 50:
-                confidence_factors.append(0.7)
+                clarity_factors.append(0.7)
             elif data_points > 20:
-                confidence_factors.append(0.5)
+                clarity_factors.append(0.5)
             else:
-                confidence_factors.append(0.3)
+                clarity_factors.append(0.3)
             
             # Analysis completeness factor
             analysis_components = ['price_volume_divergences', 'price_momentum_divergences', 
                                  'cross_asset_divergences', 'time_based_divergences', 'microstructure_divergences']
             completed_analyses = sum(1 for component in analysis_components if component in analysis_results)
-            completeness_confidence = completed_analyses / len(analysis_components)
-            confidence_factors.append(completeness_confidence)
+            completeness_clarity = completed_analyses / len(analysis_components)
+            clarity_factors.append(completeness_clarity)
             
             # Divergence consistency factor
             significant_divergences = analysis_results.get('divergence_details', [])
             if len(significant_divergences) > 0:
-                # Higher confidence if divergences are consistent across different types
+                # Higher clarity if divergences are consistent across different types
                 divergence_types = [div.get('type', '') for div in significant_divergences]
                 unique_types = len(set(divergence_types))
-                consistency_confidence = min(0.9, 0.5 + (len(significant_divergences) - unique_types) * 0.1)
-                confidence_factors.append(consistency_confidence)
+                consistency_clarity = min(0.9, 0.5 + (len(significant_divergences) - unique_types) * 0.1)
+                clarity_factors.append(consistency_clarity)
             else:
-                confidence_factors.append(0.8)  # High confidence in "no significant divergences" result
+                clarity_factors.append(0.8)  # High clarity in "no significant divergences" result
             
             # Calculate weighted average
-            return sum(confidence_factors) / len(confidence_factors)
+            return sum(clarity_factors) / len(clarity_factors)
             
         except Exception as e:
-            self.logger.error(f"Divergence analysis confidence calculation failed: {e}")
-            return 0.5  # Default confidence
+            self.logger.error(f"Divergence pattern clarity calculation failed: {e}")
+            return 0.5  # Default clarity
     
     async def configure(self, configuration: Dict[str, Any]) -> bool:
         """

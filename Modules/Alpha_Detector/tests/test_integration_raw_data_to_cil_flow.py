@@ -284,17 +284,18 @@ class TestRawDataToCilFlow:
             'sig_confidence': 0.75,
             'outcome_score': 0.0,
             'created_at': datetime.now(timezone.utc).isoformat(),
+            'agent_id': 'raw_data_intelligence',
             'cil_team_member': 'divergence_detector'
         }
         
         # Publish test signal
-        await components['supabase_manager'].insert_strand(test_signal)
+        result = components['supabase_manager'].insert_strand(test_signal)
         
         # Wait for signal to be processed
         await asyncio.sleep(2)
         
         # Verify signal was published
-        published_signal = await components['supabase_manager'].get_strand_by_id(test_signal['id'])
+        published_signal = components['supabase_manager'].get_strand_by_id(test_signal['id'])
         assert published_signal is not None, "Test signal was not published"
         
         # Verify tags are correct
@@ -312,9 +313,9 @@ class TestRawDataToCilFlow:
                 f"Required tag not found: {required_tag}"
         
         # Test CIL can find and process this signal
-        recent_strands = await components['supabase_manager'].get_recent_strands(
+        recent_strands = components['supabase_manager'].get_recent_strands(
             limit=10,
-            since=datetime.now(timezone.utc) - timedelta(minutes=5)
+            days=1
         )
         
         # Filter for our test signal
@@ -322,13 +323,18 @@ class TestRawDataToCilFlow:
         assert len(test_strands) > 0, "CIL cannot find the test signal"
         
         # Process through CIL Input Processor
-        input_results = await components['input_processor'].process_agent_outputs(
-            test_strands,
-            {'market_context': {'symbol': 'BTC', 'timeframe': '1h'}}
-        )
+        input_results = await components['input_processor'].process_agent_outputs()
         
         assert input_results is not None, "CIL failed to process tagged signal"
-        assert len(input_results['processed_signals']) > 0, "CIL processed no signals"
+        assert len(input_results) > 0, "CIL processed no signals"
+        
+        # Verify our test signal was processed
+        test_signal_processed = any(
+            output.agent_id == 'raw_data_intelligence' and 
+            'divergence' in output.detection_type.lower()
+            for output in input_results
+        )
+        assert test_signal_processed, "CIL did not process our test signal"
         
         logger.info("✅ Tag-based communication flow verified!")
     

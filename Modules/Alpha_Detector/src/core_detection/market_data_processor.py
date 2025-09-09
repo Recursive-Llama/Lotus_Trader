@@ -84,15 +84,19 @@ class MarketDataProcessor:
             return None
     
     def store_market_data(self, db_data: Dict) -> bool:
-        """Store market data in market_data_1m table"""
+        """Store market data in alpha_market_data_1m table with duplicate handling"""
         try:
-            # Use Supabase client to insert data
-            result = self.db_manager.client.table('market_data_1m').insert(db_data).execute()
+            # Use upsert to handle duplicates gracefully
+            # This will insert new data or update existing data if the same symbol+timestamp exists
+            result = self.db_manager.client.table('alpha_market_data_1m').upsert(
+                db_data,
+                on_conflict='symbol,timestamp'
+            ).execute()
             
             if result.data:
                 return True
             else:
-                logger.error(f"Failed to insert market data. Result: {result}")
+                logger.error(f"Failed to upsert market data. Result: {result}")
                 return False
                 
         except Exception as e:
@@ -102,7 +106,7 @@ class MarketDataProcessor:
     def get_recent_market_data(self, symbol: str, limit: int = 10) -> list:
         """Get recent market data for a symbol"""
         try:
-            result = self.db_manager.client.table('market_data_1m')\
+            result = self.db_manager.client.table('alpha_market_data_1m')\
                 .select('*')\
                 .eq('symbol', symbol)\
                 .order('timestamp', desc=True)\
@@ -119,7 +123,7 @@ class MarketDataProcessor:
         """Get total count of market data records"""
         try:
             # Use a simple select with limit to get count
-            result = self.db_manager.client.table('market_data_1m')\
+            result = self.db_manager.client.table('alpha_market_data_1m')\
                 .select('symbol')\
                 .execute()
             

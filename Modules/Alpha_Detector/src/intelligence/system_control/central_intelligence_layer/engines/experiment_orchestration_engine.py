@@ -46,6 +46,33 @@ class ExperimentStatus(Enum):
     CANCELLED = "cancelled"
 
 
+# Advanced Experiment Grammar System Integration
+class ExperimentComplexity(Enum):
+    """Experiment complexity levels"""
+    SIMPLE = "simple"
+    MODERATE = "moderate"
+    COMPLEX = "complex"
+    ADVANCED = "advanced"
+
+
+class ValidationStatus(Enum):
+    """Experiment validation status"""
+    PENDING = "pending"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    NEEDS_REVISION = "needs_revision"
+
+
+class ExperimentPhase(Enum):
+    """Experiment execution phases"""
+    DESIGN = "design"
+    SETUP = "setup"
+    EXECUTION = "execution"
+    MONITORING = "monitoring"
+    ANALYSIS = "analysis"
+    COMPLETION = "completion"
+
+
 @dataclass
 class ExperimentHypothesis:
     """Experiment hypothesis"""
@@ -99,6 +126,58 @@ class ExperimentResult:
     completion_time: datetime
 
 
+# Advanced Experiment Grammar System Integration
+@dataclass
+class ExperimentGrammar:
+    """Experiment grammar rules and constraints"""
+    grammar_id: str
+    experiment_shape: ExperimentShape
+    complexity_level: ExperimentComplexity
+    grammar_rules: List[Dict[str, Any]]
+    validation_criteria: List[Dict[str, Any]]
+    template_structure: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class ExperimentValidation:
+    """Experiment validation result"""
+    validation_id: str
+    experiment_id: str
+    validation_status: ValidationStatus
+    validation_score: float
+    compliance_issues: List[str]
+    recommendations: List[str]
+    validated_at: datetime
+    validator_id: str
+
+
+@dataclass
+class ExperimentTemplate:
+    """Experiment template based on grammar"""
+    template_id: str
+    experiment_shape: ExperimentShape
+    complexity_level: ExperimentComplexity
+    template_structure: Dict[str, Any]
+    parameter_definitions: List[Dict[str, Any]]
+    execution_phases: List[ExperimentPhase]
+    success_criteria: Dict[str, Any]
+    created_at: datetime
+
+
+@dataclass
+class GrammarCompliance:
+    """Grammar compliance tracking"""
+    compliance_id: str
+    experiment_id: str
+    grammar_id: str
+    compliance_score: float
+    rule_violations: List[str]
+    compliance_trend: List[Dict[str, Any]]
+    last_updated: datetime
+
+
 class ExperimentOrchestrationEngine:
     """
     CIL Experiment Orchestration Engine
@@ -132,6 +211,13 @@ class ExperimentOrchestrationEngine:
             'pattern_intelligence': ['composite_patterns', 'multi_timeframe', 'pattern_strength'],
             'system_control': ['parameter_optimization', 'threshold_management', 'performance_monitoring']
         }
+        
+        # Advanced Experiment Grammar System configuration
+        self.experiment_grammars = {}
+        self.experiment_templates = {}
+        self.grammar_compliance_tracking = {}
+        self.validation_threshold = 0.8
+        self.compliance_tracking_window_days = 30
         
     async def orchestrate_experiments(self, global_view: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -811,6 +897,471 @@ class ExperimentOrchestrationEngine:
             
         except Exception as e:
             print(f"Error marking experiment as failed: {e}")
+    
+    # Advanced Experiment Grammar System Methods
+    async def process_experiment_grammar_analysis(self, experiment_designs: List[Dict[str, Any]],
+                                                validation_requests: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Process experiment grammar analysis and validation"""
+        try:
+            # Analyze experiment designs against grammar rules
+            grammar_analyses = await self._analyze_experiment_designs(experiment_designs)
+            
+            # Validate experiment designs against canonical shapes
+            experiment_validations = await self._validate_experiment_designs(validation_requests)
+            
+            # Generate experiment templates based on designs
+            template_generations = await self._generate_experiment_templates(experiment_designs)
+            
+            # Update grammar compliance tracking
+            compliance_updates = await self._update_grammar_compliance(grammar_analyses)
+            
+            # Compile results
+            results = {
+                'grammar_analyses': len(grammar_analyses),
+                'experiment_validations': len(experiment_validations),
+                'template_generations': len(template_generations),
+                'compliance_updates': len(compliance_updates),
+                'grammar_insights': self._compile_grammar_insights(grammar_analyses, experiment_validations)
+            }
+            
+            # Publish grammar results
+            await self._publish_grammar_results(results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in experiment grammar analysis: {e}")
+            return {'error': str(e)}
+    
+    async def _analyze_experiment_designs(self, experiment_designs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Analyze experiment designs against grammar rules"""
+        analyses = []
+        
+        for design in experiment_designs:
+            # Determine experiment shape and complexity
+            experiment_shape = self._determine_experiment_shape(design)
+            complexity_level = self._determine_complexity_level(design)
+            
+            # Get or create grammar for this shape/complexity
+            grammar = await self._get_or_create_grammar(experiment_shape, complexity_level)
+            
+            # Generate grammar analysis
+            analysis = await self._generate_grammar_analysis(design, grammar)
+            if analysis:
+                analyses.append(analysis)
+        
+        return analyses
+    
+    async def _validate_experiment_designs(self, validation_requests: List[Dict[str, Any]]) -> List[ExperimentValidation]:
+        """Validate experiment designs against canonical shapes"""
+        validations = []
+        
+        for request in validation_requests:
+            # Generate validation analysis
+            validation_analysis = await self._generate_validation_analysis(request)
+            
+            if validation_analysis:
+                # Create validation result
+                validation = ExperimentValidation(
+                    validation_id=f"val_{int(datetime.now().timestamp())}_{request.get('experiment_id', 'unknown')}",
+                    experiment_id=request.get('experiment_id', 'unknown'),
+                    validation_status=ValidationStatus(validation_analysis.get('status', 'pending')),
+                    validation_score=validation_analysis.get('validation_score', 0.0),
+                    compliance_issues=validation_analysis.get('compliance_issues', []),
+                    recommendations=validation_analysis.get('recommendations', []),
+                    validated_at=datetime.now(timezone.utc),
+                    validator_id='experiment_orchestration_engine'
+                )
+                validations.append(validation)
+        
+        return validations
+    
+    async def _generate_experiment_templates(self, experiment_designs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generate experiment templates based on designs"""
+        template_generations = []
+        
+        for design in experiment_designs:
+            # Determine experiment shape and complexity
+            experiment_shape = self._determine_experiment_shape(design)
+            complexity_level = self._determine_complexity_level(design)
+            
+            # Generate template
+            template = await self._generate_template(experiment_shape, complexity_level, design)
+            if template:
+                template_generations.append(template)
+        
+        return template_generations
+    
+    async def _update_grammar_compliance(self, grammar_analyses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Update grammar compliance tracking"""
+        compliance_updates = []
+        
+        for analysis in grammar_analyses:
+            experiment_id = analysis.get('experiment_id')
+            compliance_score = analysis.get('compliance_score', 0.0)
+            
+            if experiment_id:
+                # Update compliance tracking
+                if experiment_id not in self.grammar_compliance_tracking:
+                    self.grammar_compliance_tracking[experiment_id] = []
+                
+                compliance_entry = {
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'compliance_score': compliance_score,
+                    'rule_violations': analysis.get('rule_violations', []),
+                    'recommendations': analysis.get('recommendations', [])
+                }
+                
+                self.grammar_compliance_tracking[experiment_id].append(compliance_entry)
+                
+                # Keep only recent entries
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.compliance_tracking_window_days)
+                self.grammar_compliance_tracking[experiment_id] = [
+                    entry for entry in self.grammar_compliance_tracking[experiment_id]
+                    if datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00')) > cutoff_date
+                ]
+                
+                compliance_updates.append({
+                    'experiment_id': experiment_id,
+                    'compliance_score': compliance_score,
+                    'compliance_trend': len(self.grammar_compliance_tracking[experiment_id])
+                })
+        
+        return compliance_updates
+    
+    def _determine_experiment_shape(self, design: Dict[str, Any]) -> ExperimentShape:
+        """Determine experiment shape from design"""
+        design_type = design.get('type', '').lower()
+        
+        if 'durability' in design_type or 'persistence' in design_type:
+            return ExperimentShape.DURABILITY
+        elif 'stack' in design_type or 'confluence' in design_type:
+            return ExperimentShape.STACK
+        elif 'lead' in design_type or 'lag' in design_type or 'causal' in design_type:
+            return ExperimentShape.LEAD_LAG
+        elif 'ablation' in design_type or 'removal' in design_type:
+            return ExperimentShape.ABLATION
+        elif 'boundary' in design_type or 'failure' in design_type:
+            return ExperimentShape.BOUNDARY
+        else:
+            return ExperimentShape.DURABILITY  # Default
+    
+    def _determine_complexity_level(self, design: Dict[str, Any]) -> ExperimentComplexity:
+        """Determine experiment complexity level from design"""
+        parameter_count = len(design.get('parameters', {}))
+        agent_count = len(design.get('assigned_agents', []))
+        duration_hours = design.get('duration_hours', 1)
+        
+        complexity_score = (parameter_count * 0.3) + (agent_count * 0.4) + (min(duration_hours / 24, 1) * 0.3)
+        
+        if complexity_score >= 0.8:
+            return ExperimentComplexity.ADVANCED
+        elif complexity_score >= 0.6:
+            return ExperimentComplexity.COMPLEX
+        elif complexity_score >= 0.3:
+            return ExperimentComplexity.MODERATE
+        else:
+            return ExperimentComplexity.SIMPLE
+    
+    async def _get_or_create_grammar(self, experiment_shape: ExperimentShape, complexity_level: ExperimentComplexity) -> ExperimentGrammar:
+        """Get or create grammar for experiment shape and complexity"""
+        grammar_key = f"{experiment_shape.value}_{complexity_level.value}"
+        
+        if grammar_key not in self.experiment_grammars:
+            # Create new grammar
+            grammar = ExperimentGrammar(
+                grammar_id=f"grammar_{grammar_key}_{int(datetime.now().timestamp())}",
+                experiment_shape=experiment_shape,
+                complexity_level=complexity_level,
+                grammar_rules=self._get_default_grammar_rules(experiment_shape, complexity_level),
+                validation_criteria=self._get_default_validation_criteria(experiment_shape, complexity_level),
+                template_structure=self._get_default_template_structure(experiment_shape, complexity_level),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            self.experiment_grammars[grammar_key] = grammar
+        
+        return self.experiment_grammars[grammar_key]
+    
+    def _get_default_grammar_rules(self, experiment_shape: ExperimentShape, complexity_level: ExperimentComplexity) -> List[Dict[str, Any]]:
+        """Get default grammar rules for experiment shape and complexity"""
+        base_rules = [
+            {'rule': 'has_hypothesis', 'required': True, 'weight': 1.0},
+            {'rule': 'has_success_criteria', 'required': True, 'weight': 1.0},
+            {'rule': 'has_assigned_agents', 'required': True, 'weight': 1.0},
+            {'rule': 'has_timeframe', 'required': True, 'weight': 0.8}
+        ]
+        
+        # Add shape-specific rules
+        if experiment_shape == ExperimentShape.DURABILITY:
+            base_rules.append({'rule': 'has_regime_spanning', 'required': True, 'weight': 0.9})
+        elif experiment_shape == ExperimentShape.STACK:
+            base_rules.append({'rule': 'has_confluence_conditions', 'required': True, 'weight': 0.9})
+        elif experiment_shape == ExperimentShape.LEAD_LAG:
+            base_rules.append({'rule': 'has_timing_analysis', 'required': True, 'weight': 0.9})
+        
+        # Add complexity-specific rules
+        if complexity_level in [ExperimentComplexity.COMPLEX, ExperimentComplexity.ADVANCED]:
+            base_rules.append({'rule': 'has_parameter_sweep', 'required': True, 'weight': 0.7})
+            base_rules.append({'rule': 'has_guardrails', 'required': True, 'weight': 0.8})
+        
+        return base_rules
+    
+    def _get_default_validation_criteria(self, experiment_shape: ExperimentShape, complexity_level: ExperimentComplexity) -> List[Dict[str, Any]]:
+        """Get default validation criteria for experiment shape and complexity"""
+        criteria = [
+            {'criterion': 'hypothesis_clarity', 'threshold': 0.8, 'weight': 1.0},
+            {'criterion': 'success_metrics_defined', 'threshold': 0.9, 'weight': 1.0},
+            {'criterion': 'agent_capability_match', 'threshold': 0.7, 'weight': 0.8}
+        ]
+        
+        if complexity_level in [ExperimentComplexity.COMPLEX, ExperimentComplexity.ADVANCED]:
+            criteria.append({'criterion': 'parameter_validation', 'threshold': 0.8, 'weight': 0.9})
+            criteria.append({'criterion': 'guardrail_effectiveness', 'threshold': 0.7, 'weight': 0.8})
+        
+        return criteria
+    
+    def _get_default_template_structure(self, experiment_shape: ExperimentShape, complexity_level: ExperimentComplexity) -> Dict[str, Any]:
+        """Get default template structure for experiment shape and complexity"""
+        structure = {
+            'phases': [phase.value for phase in ExperimentPhase],
+            'required_sections': ['hypothesis', 'methodology', 'success_criteria', 'agent_assignment'],
+            'optional_sections': ['parameter_sweep', 'guardrails', 'monitoring_plan']
+        }
+        
+        if complexity_level in [ExperimentComplexity.COMPLEX, ExperimentComplexity.ADVANCED]:
+            structure['required_sections'].extend(['parameter_sweep', 'guardrails'])
+            structure['optional_sections'].append('advanced_monitoring')
+        
+        return structure
+    
+    async def _generate_grammar_analysis(self, design: Dict[str, Any], grammar: ExperimentGrammar) -> Optional[Dict[str, Any]]:
+        """Generate grammar analysis using LLM"""
+        try:
+            # Prepare data for LLM analysis
+            analysis_data = {
+                'experiment_design': design,
+                'grammar_rules': grammar.grammar_rules,
+                'validation_criteria': grammar.validation_criteria
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_grammar_analysis_prompt(), analysis_data)
+            
+            if llm_analysis:
+                return {
+                    'experiment_id': design.get('experiment_id', 'unknown'),
+                    'grammar_id': grammar.grammar_id,
+                    'compliance_score': llm_analysis.get('compliance_score', 0.0),
+                    'rule_violations': llm_analysis.get('rule_violations', []),
+                    'recommendations': llm_analysis.get('recommendations', []),
+                    'analysis_details': llm_analysis
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating grammar analysis: {e}")
+            return None
+    
+    async def _generate_validation_analysis(self, design: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate validation analysis using LLM"""
+        try:
+            # Prepare data for LLM analysis
+            analysis_data = {
+                'experiment_design': design,
+                'validation_criteria': self._get_default_validation_criteria(
+                    self._determine_experiment_shape(design),
+                    self._determine_complexity_level(design)
+                )
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_validation_analysis_prompt(), analysis_data)
+            
+            return llm_analysis
+            
+        except Exception as e:
+            print(f"Error generating validation analysis: {e}")
+            return None
+    
+    async def _generate_template(self, experiment_shape: ExperimentShape, complexity_level: ExperimentComplexity,
+                               design: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate experiment template using LLM"""
+        try:
+            # Prepare data for LLM analysis
+            template_data = {
+                'experiment_shape': experiment_shape.value,
+                'complexity_level': complexity_level.value,
+                'design_requirements': design,
+                'template_structure': self._get_default_template_structure(experiment_shape, complexity_level)
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_template_generation_prompt(), template_data)
+            
+            if llm_analysis:
+                return {
+                    'template_id': f"template_{experiment_shape.value}_{complexity_level.value}_{int(datetime.now().timestamp())}",
+                    'experiment_shape': experiment_shape.value,
+                    'complexity_level': complexity_level.value,
+                    'template_structure': llm_analysis.get('template_structure', {}),
+                    'parameter_definitions': llm_analysis.get('parameter_definitions', []),
+                    'execution_phases': llm_analysis.get('execution_phases', []),
+                    'success_criteria': llm_analysis.get('success_criteria', {})
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating template: {e}")
+            return None
+    
+    async def _generate_llm_analysis(self, prompt_template: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate LLM analysis using prompt template"""
+        try:
+            # Format prompt with data
+            formatted_prompt = prompt_template.format(**data)
+            
+            # Get LLM response
+            response = await self.llm_client.generate_response(
+                prompt=formatted_prompt,
+                max_tokens=1500,
+                temperature=0.3
+            )
+            
+            # Parse JSON response
+            if response and response.strip():
+                return json.loads(response)
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating LLM analysis: {e}")
+            return None
+    
+    def _compile_grammar_insights(self, grammar_analyses: List[Dict[str, Any]], 
+                                experiment_validations: List[ExperimentValidation]) -> List[Dict[str, Any]]:
+        """Compile grammar insights from analyses and validations"""
+        insights = []
+        
+        # Insights from grammar analyses
+        for analysis in grammar_analyses:
+            insight = {
+                'type': 'grammar_analysis',
+                'experiment_id': analysis.get('experiment_id'),
+                'compliance_score': analysis.get('compliance_score', 0.0),
+                'rule_violations_count': len(analysis.get('rule_violations', [])),
+                'recommendations_count': len(analysis.get('recommendations', []))
+            }
+            insights.append(insight)
+        
+        # Insights from experiment validations
+        for validation in experiment_validations:
+            insight = {
+                'type': 'experiment_validation',
+                'experiment_id': validation.experiment_id,
+                'validation_status': validation.validation_status.value,
+                'validation_score': validation.validation_score,
+                'compliance_issues_count': len(validation.compliance_issues)
+            }
+            insights.append(insight)
+        
+        return insights
+    
+    async def _publish_grammar_results(self, results: Dict[str, Any]):
+        """Publish grammar results as CIL strand"""
+        try:
+            # Create CIL strand with grammar results
+            strand_data = {
+                'id': f"cil_grammar_{int(datetime.now().timestamp())}",
+                'kind': 'cil_grammar_analysis',
+                'module': 'alpha',
+                'agent_id': 'central_intelligence_layer',
+                'cil_team_member': 'experiment_orchestration_engine',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['agent:central_intelligence:experiment_orchestration_engine:grammar_analysis'],
+                'module_intelligence': {
+                    'analysis_type': 'grammar_analysis',
+                    'grammar_analyses': results.get('grammar_analyses', 0),
+                    'experiment_validations': results.get('experiment_validations', 0),
+                    'template_generations': results.get('template_generations', 0),
+                    'compliance_updates': results.get('compliance_updates', 0),
+                    'grammar_insights': results.get('grammar_insights', [])
+                },
+                'sig_sigma': 1.0,
+                'sig_confidence': 0.8,
+                'sig_direction': 'neutral',
+                'outcome_score': 0.0,
+                'created_at': datetime.now(timezone.utc)
+            }
+            
+            # Insert into database
+            await self.supabase_manager.insert_strand(strand_data)
+            
+        except Exception as e:
+            print(f"Error publishing grammar results: {e}")
+    
+    def _get_grammar_analysis_prompt(self) -> str:
+        """Get grammar analysis prompt template"""
+        return """
+        Analyze the following experiment design against the provided grammar rules and validation criteria.
+        
+        Experiment Design: {experiment_design}
+        Grammar Rules: {grammar_rules}
+        Validation Criteria: {validation_criteria}
+        
+        Provide analysis in JSON format:
+        {{
+            "compliance_score": 0.0-1.0,
+            "rule_violations": ["list of violated rules"],
+            "recommendations": ["list of improvement recommendations"],
+            "analysis_details": {{
+                "rule_compliance": {{"rule_name": compliance_score}},
+                "validation_results": {{"criterion": validation_score}},
+                "overall_assessment": "detailed assessment"
+            }}
+        }}
+        """
+    
+    def _get_validation_analysis_prompt(self) -> str:
+        """Get validation analysis prompt template"""
+        return """
+        Validate the following experiment design against the validation criteria.
+        
+        Experiment Design: {experiment_design}
+        Validation Criteria: {validation_criteria}
+        
+        Provide validation in JSON format:
+        {{
+            "status": "validated|rejected|needs_revision",
+            "validation_score": 0.0-1.0,
+            "compliance_issues": ["list of compliance issues"],
+            "recommendations": ["list of recommendations"]
+        }}
+        """
+    
+    def _get_template_generation_prompt(self) -> str:
+        """Get template generation prompt template"""
+        return """
+        Generate an experiment template based on the following requirements.
+        
+        Experiment Shape: {experiment_shape}
+        Complexity Level: {complexity_level}
+        Design Requirements: {design_requirements}
+        Template Structure: {template_structure}
+        
+        Provide template in JSON format:
+        {{
+            "template_structure": {{"phases": [], "sections": []}},
+            "parameter_definitions": [{{"name": "param_name", "type": "param_type", "constraints": []}}],
+            "execution_phases": ["list of execution phases"],
+            "success_criteria": {{"metric": threshold_value}}
+        }}
+        """
     
     async def _publish_orchestration_results(self, orchestration_results: Dict[str, Any]):
         """Publish orchestration results as CIL strand"""

@@ -50,6 +50,42 @@ class DoctrineStatus(Enum):
     CONTRAINDICATED = "contraindicated"
 
 
+# Doctrine of Negatives System Integration
+class NegativeType(Enum):
+    """Types of negative patterns"""
+    CONTRAINDICATED = "contraindicated"
+    FAILURE_MODE = "failure_mode"
+    ANTI_PATTERN = "anti_pattern"
+    TOXIC_COMBINATION = "toxic_combination"
+    REGIME_INCOMPATIBLE = "regime_incompatible"
+    TIMING_INAPPROPRIATE = "timing_inappropriate"
+
+
+class NegativeSeverity(Enum):
+    """Severity levels for negative patterns"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class NegativeStatus(Enum):
+    """Status of negative pattern entries"""
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    RETIRED = "retired"
+    INVESTIGATING = "investigating"
+
+
+class NegativeSource(Enum):
+    """Source of negative pattern identification"""
+    EXPERIMENTAL_FAILURE = "experimental_failure"
+    HISTORICAL_ANALYSIS = "historical_analysis"
+    LLM_INSIGHT = "llm_insight"
+    HUMAN_INPUT = "human_input"
+    SYSTEM_DETECTION = "system_detection"
+
+
 @dataclass
 class Lesson:
     """Structured lesson"""
@@ -95,6 +131,61 @@ class DoctrineUpdate:
     created_at: datetime
 
 
+# Doctrine of Negatives System Integration
+@dataclass
+class NegativePattern:
+    """Negative pattern entry"""
+    pattern_id: str
+    negative_type: NegativeType
+    pattern_description: str
+    contraindicated_conditions: List[str]
+    severity_level: NegativeSeverity
+    status: NegativeStatus
+    source: NegativeSource
+    evidence_count: int
+    confidence_score: float
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class NegativeAnalysis:
+    """Analysis of negative patterns"""
+    analysis_id: str
+    pattern_combinations: List[str]
+    negative_type: NegativeType
+    severity_assessment: NegativeSeverity
+    risk_factors: List[str]
+    mitigation_strategies: List[str]
+    confidence_level: float
+    analysis_timestamp: datetime
+
+
+@dataclass
+class NegativeViolation:
+    """Violation of negative doctrine"""
+    violation_id: str
+    experiment_id: str
+    violated_patterns: List[str]
+    violation_type: NegativeType
+    severity_level: NegativeSeverity
+    violation_description: str
+    detected_at: datetime
+    recommended_action: str
+
+
+@dataclass
+class DoctrineEvolution:
+    """Evolution of negative doctrine"""
+    evolution_id: str
+    evolution_type: str  # "addition", "modification", "retirement"
+    affected_patterns: List[str]
+    evolution_rationale: str
+    evidence_supporting: List[str]
+    confidence_level: float
+    evolved_at: datetime
+
+
 class LearningFeedbackEngine:
     """
     CIL Learning & Feedback Engine
@@ -126,6 +217,13 @@ class LearningFeedbackEngine:
         self.min_lessons_per_braid = 3
         self.max_lessons_per_braid = 20
         self.braid_consolidation_threshold = 0.8
+        
+        # Doctrine of Negatives System configuration
+        self.negative_patterns = {}
+        self.negative_doctrine = {}
+        self.violation_detection_threshold = 0.8
+        self.negative_evolution_threshold = 0.7
+        self.doctrine_evolution_window_days = 30
         
     async def process_learning_feedback(self, orchestration_results: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -955,6 +1053,444 @@ class LearningFeedbackEngine:
         
         return recommendations
     
+    # Doctrine of Negatives System Methods
+    async def process_doctrine_of_negatives_analysis(self, experiment_designs: List[Dict[str, Any]],
+                                                   pattern_conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Process doctrine of negatives analysis"""
+        try:
+            # Analyze patterns for negative combinations
+            negative_analyses = await self._analyze_negative_patterns(experiment_designs, pattern_conditions)
+            
+            # Detect violations of negative doctrine
+            negative_violations = await self._detect_negative_violations(experiment_designs)
+            
+            # Evolve negative doctrine based on new evidence
+            doctrine_evolution = await self._evolve_negative_doctrine(negative_analyses, negative_violations)
+            
+            # Update negative patterns based on analysis and evolution
+            pattern_updates = await self._update_negative_patterns(negative_analyses, doctrine_evolution)
+            
+            # Compile results
+            results = {
+                'negative_analyses': len(negative_analyses),
+                'negative_violations': len(negative_violations),
+                'doctrine_evolution': len(doctrine_evolution),
+                'pattern_updates': len(pattern_updates),
+                'doctrine_insights': self._compile_doctrine_insights(negative_analyses, negative_violations, doctrine_evolution)
+            }
+            
+            # Publish doctrine results
+            await self._publish_doctrine_results(results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in doctrine of negatives analysis: {e}")
+            return {'error': str(e)}
+    
+    async def _analyze_negative_patterns(self, experiment_designs: List[Dict[str, Any]],
+                                       pattern_conditions: List[Dict[str, Any]]) -> List[NegativeAnalysis]:
+        """Analyze patterns for negative combinations"""
+        analyses = []
+        
+        for design in experiment_designs:
+            # Check for negative pattern combinations
+            pattern_combinations = self._extract_pattern_combinations(design)
+            
+            if len(pattern_combinations) > 1:  # Only analyze if multiple patterns
+                # Generate negative analysis
+                analysis_data = {
+                    'pattern_combinations': pattern_combinations,
+                    'experiment_context': design.get('context', {}),
+                    'historical_evidence': self._get_historical_evidence(pattern_combinations)
+                }
+                
+                analysis = await self._generate_negative_analysis(analysis_data)
+                if analysis:
+                    analyses.append(analysis)
+        
+        return analyses
+    
+    async def _detect_negative_violations(self, experiment_designs: List[Dict[str, Any]]) -> List[NegativeViolation]:
+        """Detect violations of negative doctrine"""
+        violations = []
+        
+        for design in experiment_designs:
+            # Check against known negative patterns
+            violated_patterns = self._check_negative_violations(design)
+            
+            if violated_patterns:
+                # Generate violation detection
+                detection_data = {
+                    'experiment_design': design,
+                    'violated_patterns': violated_patterns,
+                    'negative_doctrine': self.negative_doctrine
+                }
+                
+                violation_analysis = await self._generate_violation_detection(detection_data)
+                if violation_analysis:
+                    # Create violation record
+                    violation = NegativeViolation(
+                        violation_id=f"violation_{design.get('experiment_id', 'unknown')}_{int(datetime.now().timestamp())}",
+                        experiment_id=design.get('experiment_id', 'unknown'),
+                        violated_patterns=violated_patterns,
+                        violation_type=NegativeType(violation_analysis.get('violation_type', 'contraindicated')),
+                        severity_level=NegativeSeverity(violation_analysis.get('severity_level', 'medium')),
+                        violation_description=violation_analysis.get('violation_description', ''),
+                        detected_at=datetime.now(timezone.utc),
+                        recommended_action=violation_analysis.get('recommended_action', '')
+                    )
+                    violations.append(violation)
+        
+        return violations
+    
+    async def _evolve_negative_doctrine(self, negative_analyses: List[NegativeAnalysis],
+                                      violation_detections: List[NegativeViolation]) -> List[Dict[str, Any]]:
+        """Evolve negative doctrine based on new evidence"""
+        evolution_updates = []
+        
+        # Analyze patterns for doctrine evolution
+        for analysis in negative_analyses:
+            if analysis.confidence_level >= self.negative_evolution_threshold:
+                # Generate doctrine evolution
+                evolution_data = {
+                    'negative_analysis': analysis,
+                    'existing_doctrine': self.negative_doctrine,
+                    'violation_evidence': [v for v in violation_detections if v.violation_type == analysis.negative_type]
+                }
+                
+                evolution = await self._generate_doctrine_evolution(evolution_data)
+                if evolution:
+                    evolution_updates.append(evolution)
+        
+        return evolution_updates
+    
+    async def _update_negative_patterns(self, negative_analyses: List[NegativeAnalysis],
+                                      doctrine_evolution: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Update negative patterns based on analysis and evolution"""
+        pattern_updates = []
+        
+        # Update patterns based on analyses
+        for analysis in negative_analyses:
+            pattern_id = f"negative_{analysis.negative_type.value}_{int(datetime.now().timestamp())}"
+            
+            # Create or update negative pattern
+            negative_pattern = NegativePattern(
+                pattern_id=pattern_id,
+                negative_type=analysis.negative_type,
+                pattern_description=f"Negative pattern: {', '.join(analysis.pattern_combinations)}",
+                contraindicated_conditions=analysis.risk_factors,
+                severity_level=analysis.severity_assessment,
+                status=NegativeStatus.ACTIVE,
+                source=NegativeSource.SYSTEM_DETECTION,
+                evidence_count=1,
+                confidence_score=analysis.confidence_level,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            
+            self.negative_patterns[pattern_id] = negative_pattern
+            
+            pattern_updates.append({
+                'pattern_id': pattern_id,
+                'update_type': 'created',
+                'negative_type': analysis.negative_type.value,
+                'severity_level': analysis.severity_assessment.value
+            })
+        
+        # Update doctrine based on evolution
+        for evolution in doctrine_evolution:
+            evolution_type = evolution.get('evolution_type', 'addition')
+            affected_patterns = evolution.get('affected_patterns', [])
+            
+            if evolution_type == 'addition':
+                # Add new negative patterns to doctrine
+                for pattern_id in affected_patterns:
+                    if pattern_id in self.negative_patterns:
+                        self.negative_doctrine[pattern_id] = self.negative_patterns[pattern_id]
+            
+            elif evolution_type == 'modification':
+                # Modify existing patterns
+                for pattern_id in affected_patterns:
+                    if pattern_id in self.negative_patterns:
+                        self.negative_patterns[pattern_id].updated_at = datetime.now(timezone.utc)
+            
+            elif evolution_type == 'retirement':
+                # Retire patterns
+                for pattern_id in affected_patterns:
+                    if pattern_id in self.negative_patterns:
+                        self.negative_patterns[pattern_id].status = NegativeStatus.RETIRED
+                        if pattern_id in self.negative_doctrine:
+                            del self.negative_doctrine[pattern_id]
+            
+            pattern_updates.append({
+                'evolution_type': evolution_type,
+                'affected_patterns': affected_patterns,
+                'confidence_level': evolution.get('confidence_level', 0.0)
+            })
+        
+        return pattern_updates
+    
+    def _extract_pattern_combinations(self, design: Dict[str, Any]) -> List[str]:
+        """Extract pattern combinations from experiment design"""
+        combinations = []
+        
+        # Extract patterns from design
+        patterns = design.get('patterns', [])
+        if isinstance(patterns, list):
+            combinations.extend(patterns)
+        elif isinstance(patterns, dict):
+            combinations.extend(patterns.keys())
+        
+        # Extract from context
+        context = design.get('context', {})
+        if 'pattern_types' in context:
+            combinations.extend(context['pattern_types'])
+        
+        return list(set(combinations))  # Remove duplicates
+    
+    def _get_historical_evidence(self, pattern_combinations: List[str]) -> List[Dict[str, Any]]:
+        """Get historical evidence for pattern combinations"""
+        evidence = []
+        
+        # Simple historical evidence lookup
+        for combination in pattern_combinations:
+            # Check if we have historical data for this combination
+            if combination in self.negative_patterns:
+                pattern = self.negative_patterns[combination]
+                evidence.append({
+                    'pattern': combination,
+                    'negative_type': pattern.negative_type.value,
+                    'severity': pattern.severity_level.value,
+                    'evidence_count': pattern.evidence_count,
+                    'confidence': pattern.confidence_score
+                })
+        
+        return evidence
+    
+    def _check_negative_violations(self, design: Dict[str, Any]) -> List[str]:
+        """Check experiment design against negative doctrine"""
+        violations = []
+        
+        # Extract patterns from design
+        pattern_combinations = self._extract_pattern_combinations(design)
+        
+        # Check against negative doctrine
+        for pattern_id, negative_pattern in self.negative_doctrine.items():
+            if negative_pattern.status == NegativeStatus.ACTIVE:
+                # Check if design violates this negative pattern
+                for condition in negative_pattern.contraindicated_conditions:
+                    if any(condition.lower() in combo.lower() for combo in pattern_combinations):
+                        violations.append(pattern_id)
+                        break
+        
+        return violations
+    
+    async def _generate_negative_analysis(self, analysis_data: Dict[str, Any]) -> Optional[NegativeAnalysis]:
+        """Generate negative analysis using LLM"""
+        try:
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_negative_analysis_prompt(), analysis_data)
+            
+            if llm_analysis:
+                return NegativeAnalysis(
+                    analysis_id=f"analysis_{int(datetime.now().timestamp())}",
+                    pattern_combinations=analysis_data.get('pattern_combinations', []),
+                    negative_type=NegativeType(llm_analysis.get('negative_type', 'contraindicated')),
+                    severity_assessment=NegativeSeverity(llm_analysis.get('severity_level', 'medium')),
+                    risk_factors=llm_analysis.get('risk_factors', []),
+                    mitigation_strategies=llm_analysis.get('mitigation_strategies', []),
+                    confidence_level=llm_analysis.get('confidence_level', 0.5),
+                    analysis_timestamp=datetime.now(timezone.utc)
+                )
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating negative analysis: {e}")
+            return None
+    
+    async def _generate_violation_detection(self, detection_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate violation detection using LLM"""
+        try:
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_violation_detection_prompt(), detection_data)
+            
+            return llm_analysis
+            
+        except Exception as e:
+            print(f"Error generating violation detection: {e}")
+            return None
+    
+    async def _generate_doctrine_evolution(self, evolution_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate doctrine evolution using LLM"""
+        try:
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_doctrine_evolution_prompt(), evolution_data)
+            
+            return llm_analysis
+            
+        except Exception as e:
+            print(f"Error generating doctrine evolution: {e}")
+            return None
+    
+    async def _generate_llm_analysis(self, prompt_template: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate LLM analysis using prompt template"""
+        try:
+            # Format prompt with data
+            formatted_prompt = prompt_template.format(**data)
+            
+            # Get LLM response
+            response = await self.llm_client.generate_response(
+                prompt=formatted_prompt,
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            # Parse JSON response
+            if response and response.strip():
+                return json.loads(response)
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating LLM analysis: {e}")
+            return None
+    
+    def _compile_doctrine_insights(self, negative_analyses: List[NegativeAnalysis], 
+                                 negative_violations: List[NegativeViolation],
+                                 doctrine_evolution: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compile doctrine insights from analyses, violations, and evolution"""
+        insights = []
+        
+        # Insights from negative analyses
+        for analysis in negative_analyses:
+            insight = {
+                'type': 'negative_analysis',
+                'negative_type': analysis.negative_type.value,
+                'severity': analysis.severity_assessment.value,
+                'pattern_combinations': analysis.pattern_combinations,
+                'confidence_level': analysis.confidence_level,
+                'risk_factors_count': len(analysis.risk_factors)
+            }
+            insights.append(insight)
+        
+        # Insights from violations
+        for violation in negative_violations:
+            insight = {
+                'type': 'negative_violation',
+                'violation_type': violation.violation_type.value,
+                'severity': violation.severity_level.value,
+                'violated_patterns': violation.violated_patterns,
+                'experiment_id': violation.experiment_id,
+                'recommended_action': violation.recommended_action
+            }
+            insights.append(insight)
+        
+        # Insights from doctrine evolution
+        for evolution in doctrine_evolution:
+            insight = {
+                'type': 'doctrine_evolution',
+                'evolution_type': evolution.get('evolution_type', 'unknown'),
+                'affected_patterns': evolution.get('affected_patterns', []),
+                'confidence_level': evolution.get('confidence_level', 0.0)
+            }
+            insights.append(insight)
+        
+        return insights
+    
+    async def _publish_doctrine_results(self, results: Dict[str, Any]):
+        """Publish doctrine results as CIL strand"""
+        try:
+            # Create CIL strand with doctrine results
+            strand_data = {
+                'id': f"cil_doctrine_{int(datetime.now().timestamp())}",
+                'kind': 'cil_doctrine_analysis',
+                'module': 'alpha',
+                'agent_id': 'central_intelligence_layer',
+                'cil_team_member': 'learning_feedback_engine',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['agent:central_intelligence:learning_feedback_engine:doctrine_analysis'],
+                'module_intelligence': {
+                    'analysis_type': 'doctrine_analysis',
+                    'negative_analyses': results.get('negative_analyses', 0),
+                    'negative_violations': results.get('negative_violations', 0),
+                    'doctrine_evolution': results.get('doctrine_evolution', 0),
+                    'pattern_updates': results.get('pattern_updates', 0),
+                    'doctrine_insights': results.get('doctrine_insights', [])
+                },
+                'sig_sigma': 1.0,
+                'sig_confidence': 0.8,
+                'sig_direction': 'neutral',
+                'outcome_score': 0.0,
+                'created_at': datetime.now(timezone.utc)
+            }
+            
+            # Insert into database
+            await self.supabase_manager.insert_strand(strand_data)
+            
+        except Exception as e:
+            print(f"Error publishing doctrine results: {e}")
+    
+    def _get_negative_analysis_prompt(self) -> str:
+        """Get negative analysis prompt template"""
+        return """
+        Analyze the following pattern combinations for potential negative interactions.
+        
+        Pattern Combinations: {pattern_combinations}
+        Experiment Context: {experiment_context}
+        Historical Evidence: {historical_evidence}
+        
+        Provide analysis in JSON format:
+        {{
+            "negative_type": "one of: contraindicated, failure_mode, anti_pattern, toxic_combination, regime_incompatible, timing_inappropriate",
+            "severity_level": "one of: low, medium, high, critical",
+            "risk_factors": ["list of risk factors"],
+            "mitigation_strategies": ["list of mitigation strategies"],
+            "confidence_level": 0.0-1.0,
+            "analysis_rationale": "detailed explanation"
+        }}
+        """
+    
+    def _get_violation_detection_prompt(self) -> str:
+        """Get violation detection prompt template"""
+        return """
+        Detect violations of negative doctrine in the following experiment design.
+        
+        Experiment Design: {experiment_design}
+        Violated Patterns: {violated_patterns}
+        Negative Doctrine: {negative_doctrine}
+        
+        Provide detection in JSON format:
+        {{
+            "violation_type": "one of: contraindicated, failure_mode, anti_pattern, toxic_combination, regime_incompatible, timing_inappropriate",
+            "severity_level": "one of: low, medium, high, critical",
+            "violation_description": "detailed description of the violation",
+            "recommended_action": "recommended action to address the violation"
+        }}
+        """
+    
+    def _get_doctrine_evolution_prompt(self) -> str:
+        """Get doctrine evolution prompt template"""
+        return """
+        Evolve the negative doctrine based on new evidence and analysis.
+        
+        Negative Analysis: {negative_analysis}
+        Existing Doctrine: {existing_doctrine}
+        Violation Evidence: {violation_evidence}
+        
+        Provide evolution in JSON format:
+        {{
+            "evolution_type": "one of: addition, modification, retirement",
+            "affected_patterns": ["list of affected pattern IDs"],
+            "evolution_rationale": "detailed rationale for the evolution",
+            "confidence_level": 0.0-1.0
+        }}
+        """
+    
     async def _publish_learning_results(self, learning_results: Dict[str, Any]):
         """Publish learning results as CIL strand"""
         try:
@@ -976,21 +1512,34 @@ class LearningFeedbackEngine:
                     'lessons_structured': len(learning_results.get('structured_lessons', [])),
                     'braids_updated': len(learning_results.get('updated_braids', [])),
                     'doctrine_updates_generated': len(learning_results.get('doctrine_updates', [])),
-                    'improvement_metrics': learning_results.get('improvement_assessment', {}).get('improvement_metrics', {}),
+                    'improvement_metrics': self._serialize_for_json(learning_results.get('improvement_assessment', {}).get('improvement_metrics', {})),
                     'learning_errors': learning_results.get('learning_errors', [])
                 },
                 'sig_sigma': 1.0,
                 'sig_confidence': 1.0,
                 'sig_direction': 'neutral',
                 'outcome_score': 1.0,
-                'created_at': datetime.now(timezone.utc)
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             # Insert into database
-            await self.supabase_manager.insert_strand(cil_strand)
+            self.supabase_manager.insert_strand(cil_strand)
             
         except Exception as e:
             print(f"Error publishing learning results: {e}")
+    
+    def _serialize_for_json(self, obj):
+        """Serialize object for JSON compatibility"""
+        if isinstance(obj, dict):
+            return {k: self._serialize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._serialize_for_json(item) for item in obj]
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, '__dict__'):
+            return self._serialize_for_json(obj.__dict__)
+        else:
+            return obj
 
 
 # Example usage and testing

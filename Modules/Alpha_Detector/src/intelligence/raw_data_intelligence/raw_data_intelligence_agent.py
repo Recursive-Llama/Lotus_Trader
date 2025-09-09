@@ -8,7 +8,7 @@ level of market data analysis.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Union
 import pandas as pd
 import numpy as np
@@ -25,6 +25,7 @@ from .volume_analyzer import VolumePatternAnalyzer
 from .time_based_patterns import TimeBasedPatternDetector
 from .cross_asset_analyzer import CrossAssetPatternAnalyzer
 from .divergence_detector import RawDataDivergenceDetector
+from src.core_detection.multi_timeframe_processor import MultiTimeframeProcessor
 
 
 class RawDataIntelligenceAgent:
@@ -79,6 +80,41 @@ class RawDataIntelligenceAgent:
         self.time_pattern_detector = TimeBasedPatternDetector()
         self.cross_asset_analyzer = CrossAssetPatternAnalyzer()
         self.divergence_detector = RawDataDivergenceDetector()
+        
+        # Multi-timeframe processor
+        self.multi_timeframe_processor = MultiTimeframeProcessor()
+        
+        # Timeframe-dependent analysis windows
+        self.timeframe_windows = {
+            '1m': timedelta(hours=4),    # 240 candles
+            '5m': timedelta(hours=20),   # 240 candles  
+            '15m': timedelta(hours=60),  # 240 candles
+            '1h': timedelta(days=10)     # 240 candles
+        }
+        
+        # Enhanced thresholds for different timeframes
+        self.timeframe_thresholds = {
+            '1m': {
+                'divergence_threshold': 0.25,  # 25%
+                'volume_spike_threshold': 4.0,  # 4x average
+                'confidence_threshold': 0.85   # 85%
+            },
+            '5m': {
+                'divergence_threshold': 0.20,  # 20%
+                'volume_spike_threshold': 3.5,  # 3.5x average
+                'confidence_threshold': 0.80   # 80%
+            },
+            '15m': {
+                'divergence_threshold': 0.15,  # 15%
+                'volume_spike_threshold': 3.0,  # 3x average
+                'confidence_threshold': 0.75   # 75%
+            },
+            '1h': {
+                'divergence_threshold': 0.10,  # 10%
+                'volume_spike_threshold': 2.5,  # 2.5x average
+                'confidence_threshold': 0.70   # 70%
+            }
+        }
         
         # Tool registry for LLM control
         self.available_tools = {
@@ -204,8 +240,8 @@ class RawDataIntelligenceAgent:
                     if analysis_results.get('significant_patterns'):
                         await self._publish_findings(analysis_results)
                 
-                # Sleep for 60 seconds before next analysis
-                await asyncio.sleep(60)
+                # Sleep for 5 minutes before next analysis (less frequent)
+                await asyncio.sleep(300)
                 
             except asyncio.CancelledError:
                 self.logger.info("Raw data analysis loop cancelled")
@@ -216,22 +252,27 @@ class RawDataIntelligenceAgent:
     
     async def _get_recent_market_data(self) -> Optional[pd.DataFrame]:
         """
-        Get recent market data from the database
+        Get recent market data from the database with extended window for multi-timeframe analysis
         
         Returns:
             DataFrame with recent OHLCV data or None if no data
         """
         try:
-            # Get data from last 2 hours
-            two_hours_ago = datetime.now(timezone.utc).timestamp() - 7200
+            # Get data from last 4 hours (extended window for multi-timeframe analysis)
+            four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=4)
             
             result = self.supabase_manager.client.table('alpha_market_data_1m').select('*').gte(
-                'timestamp', two_hours_ago
-            ).order('timestamp', desc=True).limit(1000).execute()
+                'timestamp', four_hours_ago.isoformat()
+            ).order('timestamp', desc=True).limit(2000).execute()  # More data for rollup
             
             if result.data:
                 df = pd.DataFrame(result.data)
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                # Handle timestamp conversion with proper format handling
+                try:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
+                except:
+                    # Fallback to mixed format parsing
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
                 return df
             else:
                 return None
@@ -242,7 +283,7 @@ class RawDataIntelligenceAgent:
     
     async def _analyze_raw_data(self, market_data: pd.DataFrame) -> Dict[str, Any]:
         """
-        Perform comprehensive raw data analysis
+        Perform enhanced multi-timeframe raw data analysis
         
         Args:
             market_data: DataFrame with OHLCV data
@@ -251,40 +292,65 @@ class RawDataIntelligenceAgent:
             Dictionary with analysis results
         """
         try:
+            # Use enhanced multi-timeframe analysis
+            return await self._analyze_raw_data_enhanced(market_data)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to analyze raw data: {e}")
+            return {'error': str(e), 'timestamp': datetime.now(timezone.utc).isoformat()}
+    
+    async def _analyze_raw_data_enhanced(self, market_data_1m: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Enhanced multi-timeframe raw data analysis
+        
+        Args:
+            market_data_1m: DataFrame with 1-minute OHLCV data
+            
+        Returns:
+            Dictionary with enhanced analysis results
+        """
+        try:
+            # 1. Roll up to multiple timeframes
+            multi_timeframe_data = self.multi_timeframe_processor.process_multi_timeframe(market_data_1m)
+            
             analysis_results = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
-                'data_points': len(market_data),
-                'symbols': market_data['symbol'].unique().tolist() if 'symbol' in market_data.columns else [],
+                'data_points': len(market_data_1m),
+                'symbols': market_data_1m['symbol'].unique().tolist() if 'symbol' in market_data_1m.columns else [],
                 'significant_patterns': [],
+                'timeframe_analysis': {},
+                'cross_timeframe_patterns': [],
                 'analysis_components': {}
             }
             
-            # 1. Market Microstructure Analysis
-            microstructure_results = await self._analyze_market_microstructure(market_data)
-            analysis_results['analysis_components']['microstructure'] = microstructure_results
+            # 2. Analyze each timeframe
+            for timeframe, data in multi_timeframe_data.items():
+                timeframe_analysis = await self._analyze_timeframe_enhanced(
+                    data['ohlc'], timeframe, multi_timeframe_data
+                )
+                analysis_results['timeframe_analysis'][timeframe] = timeframe_analysis
             
-            # 2. Volume Pattern Analysis
-            volume_results = await self._analyze_volume_patterns(market_data)
-            analysis_results['analysis_components']['volume'] = volume_results
+            # 3. Cross-timeframe pattern detection
+            cross_timeframe_patterns = await self._detect_cross_timeframe_patterns(
+                analysis_results['timeframe_analysis']
+            )
+            analysis_results['cross_timeframe_patterns'] = cross_timeframe_patterns
             
-            # 3. Time-based Pattern Analysis
-            time_results = await self._analyze_time_based_patterns(market_data)
-            analysis_results['analysis_components']['time_based'] = time_results
+            # 4. Legacy analysis components for backward compatibility
+            analysis_results['analysis_components'] = {
+                'microstructure': analysis_results['timeframe_analysis'].get('1m', {}).get('microstructure_analysis', {}),
+                'volume': analysis_results['timeframe_analysis'].get('1m', {}).get('volume_analysis', {}),
+                'time_based': analysis_results['timeframe_analysis'].get('1m', {}).get('time_based_analysis', {}),
+                'cross_asset': analysis_results['timeframe_analysis'].get('1m', {}).get('cross_asset_analysis', {}),
+                'divergences': analysis_results['timeframe_analysis'].get('1m', {}).get('divergence_analysis', {})
+            }
             
-            # 4. Cross-asset Analysis
-            cross_asset_results = await self._analyze_cross_asset_patterns(market_data)
-            analysis_results['analysis_components']['cross_asset'] = cross_asset_results
-            
-            # 5. Raw Data Divergence Analysis
-            divergence_results = await self._analyze_raw_data_divergences(market_data)
-            analysis_results['analysis_components']['divergences'] = divergence_results
-            
-            # 6. LLM-Enhanced Pattern Detection
-            llm_results = await self._llm_enhanced_analysis(market_data, analysis_results)
+            # 5. LLM-Enhanced Pattern Detection
+            llm_results = await self._llm_enhanced_analysis(market_data_1m, analysis_results)
             analysis_results['analysis_components']['llm_enhanced'] = llm_results
             
-            # 7. Identify significant patterns
-            significant_patterns = self._identify_significant_patterns(analysis_results)
+            # 6. Identify significant patterns with enhanced filtering
+            significant_patterns = self._identify_significant_patterns_enhanced(analysis_results)
             analysis_results['significant_patterns'] = significant_patterns
             
             # Store analysis history
@@ -297,8 +363,347 @@ class RawDataIntelligenceAgent:
             return analysis_results
             
         except Exception as e:
-            self.logger.error(f"Failed to analyze raw data: {e}")
+            self.logger.error(f"Enhanced raw data analysis failed: {e}")
             return {'error': str(e), 'timestamp': datetime.now(timezone.utc).isoformat()}
+    
+    async def _analyze_timeframe_enhanced(self, market_data: pd.DataFrame, 
+                                        timeframe: str, 
+                                        all_timeframes: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze single timeframe with cross-timeframe context"""
+        try:
+            # Get thresholds for this timeframe
+            thresholds = self.timeframe_thresholds.get(timeframe, self.timeframe_thresholds['1m'])
+            
+            # Calculate baselines for this timeframe
+            baselines = self._calculate_timeframe_baselines(market_data, timeframe)
+            
+            # Calculate cross-timeframe baselines
+            cross_timeframe_baselines = self._calculate_cross_timeframe_baselines(
+                market_data, timeframe, all_timeframes
+            )
+            
+            analysis = {
+                'timeframe': timeframe,
+                'data_points': len(market_data),
+                'baselines': baselines,
+                'cross_timeframe_baselines': cross_timeframe_baselines,
+                'volume_analysis': await self._analyze_volume_enhanced(market_data, baselines, cross_timeframe_baselines, thresholds),
+                'microstructure_analysis': await self._analyze_microstructure_enhanced(market_data, baselines, thresholds),
+                'institutional_flow_analysis': await self._analyze_institutional_flow_enhanced(market_data, baselines, thresholds),
+                'divergence_analysis': await self._analyze_divergences_enhanced(market_data, baselines, thresholds)
+            }
+            
+            return analysis
+            
+        except Exception as e:
+            self.logger.error(f"Timeframe analysis failed for {timeframe}: {e}")
+            return {'error': str(e), 'timeframe': timeframe}
+    
+    def _calculate_timeframe_baselines(self, market_data: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
+        """Calculate proper statistical baselines for pattern detection"""
+        try:
+            baselines = {
+                'timeframe': timeframe,
+                'volume': {},
+                'price': {},
+                'volatility': {}
+            }
+            
+            # Volume baselines
+            if 'volume' in market_data.columns and len(market_data) > 0:
+                volume = market_data['volume']
+                baselines['volume'] = {
+                    'mean': volume.mean(),
+                    'std': volume.std(),
+                    'median': volume.median(),
+                    'percentile_95': volume.quantile(0.95),
+                    'rolling_mean_20': volume.rolling(20).mean().iloc[-1] if len(volume) >= 20 else volume.mean(),
+                    'rolling_std_20': volume.rolling(20).std().iloc[-1] if len(volume) >= 20 else volume.std(),
+                    'current': volume.iloc[-1] if len(volume) > 0 else 0
+                }
+            
+            # Price baselines
+            if 'close' in market_data.columns and len(market_data) > 0:
+                close = market_data['close']
+                price_change = close.pct_change()
+                baselines['price'] = {
+                    'current': close.iloc[-1],
+                    'mean': close.mean(),
+                    'volatility': price_change.std(),
+                    'rolling_volatility_20': price_change.rolling(20).std().iloc[-1] if len(price_change) >= 20 else price_change.std(),
+                    'current_change': price_change.iloc[-1] if len(price_change) > 0 else 0
+                }
+            
+            return baselines
+            
+        except Exception as e:
+            self.logger.error(f"Failed to calculate baselines for {timeframe}: {e}")
+            return {}
+    
+    def _calculate_cross_timeframe_baselines(self, current_data: pd.DataFrame, 
+                                           current_timeframe: str, 
+                                           all_timeframes: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate baselines across multiple timeframes"""
+        try:
+            cross_baselines = {}
+            
+            # Get current timeframe metrics
+            current_volume = current_data['volume'].iloc[-1] if len(current_data) > 0 and 'volume' in current_data.columns else 0
+            current_price = current_data['close'].iloc[-1] if len(current_data) > 0 and 'close' in current_data.columns else 0
+            
+            # Compare against other timeframes
+            for tf_name, tf_data in all_timeframes.items():
+                if tf_name == current_timeframe:
+                    continue
+                
+                tf_ohlc = tf_data['ohlc']
+                if len(tf_ohlc) > 0 and 'volume' in tf_ohlc.columns and 'close' in tf_ohlc.columns:
+                    # Volume comparison
+                    tf_volume_avg = tf_ohlc['volume'].mean()
+                    tf_volume_std = tf_ohlc['volume'].std()
+                    
+                    # Price comparison
+                    tf_price_avg = tf_ohlc['close'].mean()
+                    tf_price_std = tf_ohlc['close'].std()
+                    
+                    cross_baselines[tf_name] = {
+                        'volume_ratio': current_volume / tf_volume_avg if tf_volume_avg > 0 else 0,
+                        'volume_z_score': (current_volume - tf_volume_avg) / tf_volume_std if tf_volume_std > 0 else 0,
+                        'price_ratio': current_price / tf_price_avg if tf_price_avg > 0 else 0,
+                        'price_z_score': (current_price - tf_price_avg) / tf_price_std if tf_price_std > 0 else 0
+                    }
+            
+            return cross_baselines
+            
+        except Exception as e:
+            self.logger.error(f"Failed to calculate cross-timeframe baselines: {e}")
+            return {}
+    
+    async def _detect_cross_timeframe_patterns(self, timeframe_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Detect patterns that span multiple timeframes"""
+        try:
+            cross_timeframe_patterns = []
+            
+            # Look for volume patterns across timeframes
+            volume_patterns = {}
+            for tf, analysis in timeframe_analysis.items():
+                if 'volume_analysis' in analysis and analysis['volume_analysis'].get('significant_volume_spike'):
+                    volume_patterns[tf] = analysis['volume_analysis']
+            
+            # If volume spikes detected across multiple timeframes, it's significant
+            if len(volume_patterns) >= 2:
+                cross_timeframe_patterns.append({
+                    'type': 'cross_timeframe_volume_spike',
+                    'timeframes': list(volume_patterns.keys()),
+                    'confidence': min(1.0, len(volume_patterns) * 0.3),
+                    'details': volume_patterns
+                })
+            
+            # Look for institutional flow across timeframes
+            institutional_patterns = {}
+            for tf, analysis in timeframe_analysis.items():
+                if 'institutional_flow_analysis' in analysis and analysis['institutional_flow_analysis'].get('detected'):
+                    institutional_patterns[tf] = analysis['institutional_flow_analysis']
+            
+            if len(institutional_patterns) >= 2:
+                cross_timeframe_patterns.append({
+                    'type': 'cross_timeframe_institutional_flow',
+                    'timeframes': list(institutional_patterns.keys()),
+                    'confidence': min(1.0, len(institutional_patterns) * 0.4),
+                    'details': institutional_patterns
+                })
+            
+            return cross_timeframe_patterns
+            
+        except Exception as e:
+            self.logger.error(f"Failed to detect cross-timeframe patterns: {e}")
+            return []
+    
+    async def _analyze_volume_enhanced(self, market_data: pd.DataFrame, 
+                                     baselines: Dict[str, Any], 
+                                     cross_timeframe_baselines: Dict[str, Any],
+                                     thresholds: Dict[str, float]) -> Dict[str, Any]:
+        """Enhanced volume analysis with proper baselines"""
+        try:
+            volume_analysis = {
+                'significant_volume_spike': False,
+                'confidence': 0.0,
+                'details': {},
+                'cross_timeframe_confirmation': False
+            }
+            
+            if 'volume' not in baselines or not baselines['volume']:
+                return volume_analysis
+            
+            volume_baseline = baselines['volume']
+            current_volume = volume_baseline.get('current', 0)
+            volume_avg = volume_baseline.get('rolling_mean_20', volume_baseline.get('mean', 0))
+            volume_std = volume_baseline.get('rolling_std_20', volume_baseline.get('std', 0))
+            
+            # Calculate volume spike ratio
+            volume_ratio = current_volume / volume_avg if volume_avg > 0 else 0
+            volume_z_score = (current_volume - volume_avg) / volume_std if volume_std > 0 else 0
+            
+            # Check if volume spike meets threshold
+            volume_spike_threshold = thresholds.get('volume_spike_threshold', 4.0)
+            if volume_ratio >= volume_spike_threshold:
+                volume_analysis['significant_volume_spike'] = True
+                volume_analysis['confidence'] = min(1.0, (volume_ratio - volume_spike_threshold) / volume_spike_threshold)
+                volume_analysis['details'] = {
+                    'volume_ratio': volume_ratio,
+                    'volume_z_score': volume_z_score,
+                    'current_volume': current_volume,
+                    'baseline_volume': volume_avg
+                }
+                
+                # Check cross-timeframe confirmation
+                cross_timeframe_confirmations = 0
+                for tf, cross_baseline in cross_timeframe_baselines.items():
+                    if cross_baseline.get('volume_ratio', 0) >= 1.5:  # 50% above other timeframes
+                        cross_timeframe_confirmations += 1
+                
+                if cross_timeframe_confirmations >= 1:
+                    volume_analysis['cross_timeframe_confirmation'] = True
+                    volume_analysis['confidence'] = min(1.0, volume_analysis['confidence'] + 0.2)
+            
+            return volume_analysis
+            
+        except Exception as e:
+            self.logger.error(f"Enhanced volume analysis failed: {e}")
+            return {'significant_volume_spike': False, 'confidence': 0.0}
+    
+    async def _analyze_microstructure_enhanced(self, market_data: pd.DataFrame, 
+                                             baselines: Dict[str, Any],
+                                             thresholds: Dict[str, float]) -> Dict[str, Any]:
+        """Enhanced microstructure analysis"""
+        try:
+            microstructure_analysis = {
+                'anomalies_detected': False,
+                'confidence': 0.0,
+                'details': {}
+            }
+            
+            if len(market_data) < 10:
+                return microstructure_analysis
+            
+            # Analyze order flow patterns
+            market_data_copy = market_data.copy()
+            market_data_copy['price_change'] = market_data_copy['close'].pct_change()
+            
+            # Calculate buying vs selling pressure
+            positive_changes = market_data_copy[market_data_copy['price_change'] > 0]
+            negative_changes = market_data_copy[market_data_copy['price_change'] < 0]
+            
+            buying_pressure = positive_changes['volume'].sum() if not positive_changes.empty else 0
+            selling_pressure = negative_changes['volume'].sum() if not negative_changes.empty else 0
+            total_volume = market_data_copy['volume'].sum()
+            
+            if total_volume > 0:
+                net_flow = (buying_pressure - selling_pressure) / total_volume
+                flow_imbalance = abs(net_flow)
+                
+                # Detect significant flow imbalance
+                if flow_imbalance > 0.3:  # 30% imbalance
+                    microstructure_analysis['anomalies_detected'] = True
+                    microstructure_analysis['confidence'] = min(1.0, (flow_imbalance - 0.3) / 0.4)
+                    microstructure_analysis['details'] = {
+                        'flow_imbalance': flow_imbalance,
+                        'net_flow': net_flow,
+                        'direction': 'buying' if net_flow > 0 else 'selling',
+                        'buying_pressure': buying_pressure,
+                        'selling_pressure': selling_pressure
+                    }
+            
+            return microstructure_analysis
+            
+        except Exception as e:
+            self.logger.error(f"Enhanced microstructure analysis failed: {e}")
+            return {'anomalies_detected': False, 'confidence': 0.0}
+    
+    async def _analyze_institutional_flow_enhanced(self, market_data: pd.DataFrame, 
+                                                 baselines: Dict[str, Any],
+                                                 thresholds: Dict[str, float]) -> Dict[str, Any]:
+        """Enhanced institutional flow detection"""
+        try:
+            institutional_flow = {
+                'detected': False,
+                'confidence': 0.0,
+                'flow_type': 'unknown',
+                'details': {}
+            }
+            
+            if len(market_data) < 20 or 'volume' not in baselines or not baselines['volume']:
+                return institutional_flow
+            
+            # Get current metrics
+            current_volume = baselines['volume'].get('current', 0)
+            volume_avg = baselines['volume'].get('rolling_mean_20', baselines['volume'].get('mean', 0))
+            volume_std = baselines['volume'].get('rolling_std_20', baselines['volume'].get('std', 0))
+            
+            # Calculate price impact
+            price_changes = market_data['close'].pct_change().dropna()
+            recent_price_impact = abs(price_changes.iloc[-1]) if len(price_changes) > 0 else 0
+            
+            # Institutional flow criteria: Large volume with price impact
+            volume_z_score = (current_volume - volume_avg) / volume_std if volume_std > 0 else 0
+            
+            # Require 3+ standard deviations volume with 0.5%+ price impact
+            if volume_z_score > 3.0 and recent_price_impact > 0.005:
+                institutional_flow['detected'] = True
+                institutional_flow['confidence'] = min(1.0, (volume_z_score - 3.0) / 2.0 + (recent_price_impact - 0.005) / 0.01)
+                institutional_flow['flow_type'] = 'large_institutional'
+                institutional_flow['details'] = {
+                    'volume_z_score': volume_z_score,
+                    'price_impact': recent_price_impact,
+                    'volume_magnitude': current_volume / volume_avg if volume_avg > 0 else 0,
+                    'current_volume': current_volume,
+                    'baseline_volume': volume_avg
+                }
+            
+            return institutional_flow
+            
+        except Exception as e:
+            self.logger.error(f"Institutional flow analysis failed: {e}")
+            return {'detected': False, 'confidence': 0.0}
+    
+    async def _analyze_divergences_enhanced(self, market_data: pd.DataFrame, 
+                                          baselines: Dict[str, Any],
+                                          thresholds: Dict[str, float]) -> Dict[str, Any]:
+        """Enhanced divergence analysis"""
+        try:
+            divergence_analysis = {
+                'divergences_detected': 0,
+                'confidence': 0.0,
+                'details': []
+            }
+            
+            if len(market_data) < 20:
+                return divergence_analysis
+            
+            # Price-volume divergence analysis
+            price_changes = market_data['close'].pct_change().dropna()
+            volume_changes = market_data['volume'].pct_change().dropna()
+            
+            if len(price_changes) > 0 and len(volume_changes) > 0:
+                # Calculate correlation between price and volume changes
+                correlation = price_changes.corr(volume_changes)
+                
+                # Detect divergence (negative correlation with significant magnitude)
+                divergence_threshold = thresholds.get('divergence_threshold', 0.25)
+                if correlation < -divergence_threshold:
+                    divergence_analysis['divergences_detected'] += 1
+                    divergence_analysis['confidence'] = min(1.0, abs(correlation) / divergence_threshold)
+                    divergence_analysis['details'].append({
+                        'type': 'price_volume_divergence',
+                        'correlation': correlation,
+                        'severity': 'high' if abs(correlation) > 0.5 else 'medium'
+                    })
+            
+            return divergence_analysis
+            
+        except Exception as e:
+            self.logger.error(f"Enhanced divergence analysis failed: {e}")
+            return {'divergences_detected': 0, 'confidence': 0.0}
     
     async def _analyze_market_microstructure(self, market_data: pd.DataFrame) -> Dict[str, Any]:
         """Analyze market microstructure patterns"""
@@ -475,6 +880,109 @@ class RawDataIntelligenceAgent:
         
         return significant_patterns
     
+    def _identify_significant_patterns_enhanced(self, analysis_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Enhanced pattern identification with multi-timeframe validation
+        
+        Args:
+            analysis_results: Complete enhanced analysis results
+            
+        Returns:
+            List of significant patterns with enhanced filtering
+        """
+        significant_patterns = []
+        
+        try:
+            # Get cross-timeframe patterns first (highest priority)
+            cross_timeframe_patterns = analysis_results.get('cross_timeframe_patterns', [])
+            for pattern in cross_timeframe_patterns:
+                if pattern.get('pattern_clarity', 0.0) >= 0.7:  # High clarity threshold for cross-timeframe
+                    significant_patterns.append({
+                        'type': pattern['type'],
+                        'timeframe': 'multi',
+                        'severity': 'high',
+                        'details': pattern['details'],
+                        'pattern_clarity': pattern['pattern_clarity'],
+                        'z_score': pattern.get('z_score', 0.0),
+                        'statistical_significance': pattern.get('statistical_significance', 0.0),
+                        'cross_timeframe': True,
+                        'team_member': pattern.get('team_member', 'raw_data_intelligence_agent')
+                    })
+            
+            # Check individual timeframe patterns
+            timeframe_analysis = analysis_results.get('timeframe_analysis', {})
+            for timeframe, analysis in timeframe_analysis.items():
+                thresholds = self.timeframe_thresholds.get(timeframe, self.timeframe_thresholds['1m'])
+                confidence_threshold = thresholds['confidence_threshold']
+                
+                # Check volume patterns
+                volume_analysis = analysis.get('volume_analysis', {})
+                if volume_analysis.get('pattern_clarity', 0.0) >= confidence_threshold:
+                    significant_patterns.append({
+                        'type': 'volume_spike',
+                        'timeframe': timeframe,
+                        'severity': 'high' if volume_analysis.get('pattern_clarity', 0.0) >= 0.9 else 'medium',
+                        'details': volume_analysis,
+                        'pattern_clarity': volume_analysis.get('pattern_clarity', 0.0),
+                        'z_score': volume_analysis.get('z_score', 0.0),
+                        'statistical_significance': volume_analysis.get('statistical_significance', 0.0),
+                        'cross_timeframe_confirmation': volume_analysis.get('cross_timeframe_confirmation', False),
+                        'team_member': 'volume_analyzer'
+                    })
+                
+                # Check microstructure patterns
+                microstructure_analysis = analysis.get('microstructure_analysis', {})
+                if microstructure_analysis.get('pattern_clarity', 0.0) >= confidence_threshold:
+                    significant_patterns.append({
+                        'type': 'microstructure_anomaly',
+                        'timeframe': timeframe,
+                        'severity': 'high' if microstructure_analysis.get('pattern_clarity', 0.0) >= 0.9 else 'medium',
+                        'details': microstructure_analysis,
+                        'pattern_clarity': microstructure_analysis.get('pattern_clarity', 0.0),
+                        'z_score': microstructure_analysis.get('z_score', 0.0),
+                        'statistical_significance': microstructure_analysis.get('statistical_significance', 0.0),
+                        'team_member': 'microstructure_analyzer'
+                    })
+                
+                # Check institutional flow patterns
+                institutional_flow = analysis.get('institutional_flow_analysis', {})
+                if institutional_flow.get('pattern_clarity', 0.0) >= confidence_threshold:
+                    significant_patterns.append({
+                        'type': 'institutional_flow',
+                        'timeframe': timeframe,
+                        'severity': 'high' if institutional_flow.get('pattern_clarity', 0.0) >= 0.9 else 'medium',
+                        'details': institutional_flow,
+                        'pattern_clarity': institutional_flow.get('pattern_clarity', 0.0),
+                        'z_score': institutional_flow.get('z_score', 0.0),
+                        'statistical_significance': institutional_flow.get('statistical_significance', 0.0),
+                        'team_member': 'institutional_flow_analyzer'
+                    })
+                
+                # Check divergence patterns
+                divergence_analysis = analysis.get('divergence_analysis', {})
+                if divergence_analysis.get('pattern_clarity', 0.0) >= confidence_threshold:
+                    significant_patterns.append({
+                        'type': 'divergence',
+                        'timeframe': timeframe,
+                        'severity': 'high' if divergence_analysis.get('pattern_clarity', 0.0) >= 0.9 else 'medium',
+                        'details': divergence_analysis,
+                        'pattern_clarity': divergence_analysis.get('pattern_clarity', 0.0),
+                        'z_score': divergence_analysis.get('z_score', 0.0),
+                        'statistical_significance': divergence_analysis.get('statistical_significance', 0.0),
+                        'team_member': 'divergence_detector'
+                    })
+            
+            # Sort by pattern clarity (highest first)
+            significant_patterns.sort(key=lambda x: x.get('pattern_clarity', 0.0), reverse=True)
+            
+            # Limit to top 3 most significant patterns to reduce noise
+            significant_patterns = significant_patterns[:3]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to identify significant patterns: {e}")
+        
+        return significant_patterns
+    
     def _parse_llm_insights(self, llm_response: str) -> Optional[Dict[str, Any]]:
         """
         Parse LLM response for significant insights
@@ -501,40 +1009,192 @@ class RawDataIntelligenceAgent:
     
     async def _publish_findings(self, analysis_results: Dict[str, Any]):
         """
-        Publish significant findings to other agents
+        Publish significant findings to the database as strands
         
         Args:
             analysis_results: Analysis results with significant patterns
         """
         try:
             significant_patterns = analysis_results.get('significant_patterns', [])
+            self.logger.info(f"Publishing {len(significant_patterns)} significant patterns")
             
-            for pattern in significant_patterns:
-                # Create content for publication
-                content = {
-                    'pattern_type': pattern['type'],
-                    'severity': pattern['severity'],
-                    'confidence': pattern['confidence'],
-                    'details': pattern['details'],
-                    'analysis_timestamp': analysis_results['timestamp'],
-                    'agent': self.agent_name,
-                    'data_points': analysis_results['data_points'],
-                    'symbols': analysis_results['symbols']
+            # Create individual pattern strands for each team member
+            pattern_strands = []
+            
+            for i, pattern in enumerate(significant_patterns):
+                self.logger.info(f"Publishing pattern {i+1}: {pattern.get('type', 'unknown')}")
+                
+                # Extract statistical measurements
+                statistical_measurements = self._extract_statistical_measurements(pattern)
+                
+                # Create individual pattern strand
+                pattern_strand = {
+                    'id': f"raw_data_{pattern['type']}_{int(datetime.now().timestamp())}_{i}",
+                    'kind': 'intelligence',  # Raw data creates intelligence strands, not signals
+                    'module': 'alpha',
+                    'agent_id': 'raw_data_intelligence',
+                    'cil_team_member': pattern.get('team_member', 'raw_data_intelligence_agent'),
+                    'symbol': pattern.get('symbol', 'BTC'),
+                    'timeframe': pattern.get('timeframe', '1m'),
+                    'session_bucket': 'GLOBAL',
+                    'regime': 'unknown',
+                    'tags': [f"intelligence:raw_data:{pattern['type']}:{pattern.get('severity', 'medium')}", 'cil'],
+                    'module_intelligence': {
+                        'pattern_type': pattern['type'],
+                        'statistical_measurements': statistical_measurements,
+                        'analysis_timestamp': analysis_results['timestamp'],
+                        'data_points': int(analysis_results.get('data_points', 0)),
+                        'symbols': analysis_results.get('symbols', []),
+                        'timeframe_analysis': analysis_results.get('timeframe_analysis', {}),
+                        'cross_timeframe_patterns': analysis_results.get('cross_timeframe_patterns', [])
+                    },
+                    'sig_sigma': statistical_measurements.get('z_score', 0.0),  # Statistical significance
+                    'confidence': statistical_measurements.get('pattern_clarity', 0.0),  # Pattern strength/clarity
+                    'sig_direction': 'neutral',  # Raw data doesn't predict direction
+                    'sig_confidence': None,  # Not used by raw data intelligence
+                    'prediction_score': None,  # Not used by raw data intelligence
+                    'outcome_score': None,  # Not used by raw data intelligence
+                    'created_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Create appropriate tags
-                tags = f"intelligence:raw_data:{pattern['type']}:{pattern['severity']}"
+                pattern_strands.append(pattern_strand)
                 
-                # Publish finding
-                message_id = await self.communication_protocol.publish_finding(
-                    content, tags, priority=pattern['severity']
-                )
-                
-                if message_id:
-                    self.logger.info(f"Published {pattern['type']} finding: {message_id}")
+                # Publish individual pattern strand
+                try:
+                    result = self.supabase_manager.insert_strand(pattern_strand)
+                    self.logger.info(f"Published {pattern['type']} pattern to database: {pattern_strand['id']}")
+                except Exception as insert_error:
+                    self.logger.error(f"Failed to insert pattern strand {pattern_strand['id']}: {insert_error}")
+                    raise
+            
+            # Create compilation strand (RMC summary)
+            if pattern_strands:
+                await self._publish_compilation_strand(pattern_strands, analysis_results)
                 
         except Exception as e:
             self.logger.error(f"Failed to publish findings: {e}")
+    
+    def _extract_statistical_measurements(self, pattern: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract statistical measurements from pattern data
+        
+        Args:
+            pattern: Pattern data
+            
+        Returns:
+            Dictionary with statistical measurements
+        """
+        try:
+            details = pattern.get('details', {})
+            
+            # Extract statistical measurements based on pattern type
+            if pattern['type'] == 'volume_spike':
+                return {
+                    'volume_ratio': details.get('volume_ratio', 1.0),
+                    'z_score': details.get('z_score', 0.0),
+                    'baseline_volume': details.get('baseline_volume', 0.0),
+                    'current_volume': details.get('current_volume', 0.0),
+                    'statistical_significance': details.get('statistical_significance', 0.0),
+                    'pattern_clarity': details.get('pattern_clarity', 0.0),
+                    'cross_timeframe_confirmation': details.get('cross_timeframe_confirmation', False),
+                    'timeframes_confirmed': details.get('timeframes_confirmed', [])
+                }
+            elif pattern['type'] == 'divergence':
+                return {
+                    'divergence_strength': details.get('divergence_strength', 0.0),
+                    'correlation_coefficient': details.get('correlation_coefficient', 0.0),
+                    'statistical_significance': details.get('statistical_significance', 0.0),
+                    'pattern_clarity': details.get('pattern_clarity', 0.0),
+                    'divergence_type': details.get('divergence_type', 'unknown'),
+                    'lookback_period': details.get('lookback_period', 0)
+                }
+            else:
+                # Generic statistical measurements
+                return {
+                    'statistical_significance': details.get('statistical_significance', 0.0),
+                    'pattern_clarity': details.get('pattern_clarity', 0.0),
+                    'z_score': details.get('z_score', 0.0),
+                    'correlation': details.get('correlation', 0.0),
+                    'baseline_value': details.get('baseline_value', 0.0),
+                    'current_value': details.get('current_value', 0.0)
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Failed to extract statistical measurements: {e}")
+            return {
+                'statistical_significance': 0.0,
+                'pattern_clarity': 0.0,
+                'z_score': 0.0
+            }
+    
+    async def _publish_compilation_strand(self, pattern_strands: List[Dict[str, Any]], analysis_results: Dict[str, Any]):
+        """
+        Publish compilation strand (RMC summary) to CIL
+        
+        Args:
+            pattern_strands: List of individual pattern strands
+            analysis_results: Full analysis results
+        """
+        try:
+            # Create compilation strand
+            compilation_strand = {
+                'id': f"raw_data_compilation_{int(datetime.now().timestamp())}",
+                'kind': 'intelligence',
+                'module': 'alpha',
+                'agent_id': 'raw_data_intelligence',
+                'cil_team_member': 'raw_data_intelligence_agent',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['intelligence:raw_data:compilation:5min_summary', 'cil'],
+                'module_intelligence': {
+                    'compilation_type': 'pattern_summary',
+                    'period': '5_minutes',
+                    'total_patterns': len(pattern_strands),
+                    'pattern_links': [strand['id'] for strand in pattern_strands],
+                    'pattern_types': list(set(pattern.get('type', 'unknown') for pattern in analysis_results.get('significant_patterns', []))),
+                    'symbols_analyzed': analysis_results.get('symbols', []),
+                    'timeframe_analysis': analysis_results.get('timeframe_analysis', {}),
+                    'cross_timeframe_patterns': analysis_results.get('cross_timeframe_patterns', []),
+                    'analysis_timestamp': analysis_results['timestamp'],
+                    'data_points': int(analysis_results.get('data_points', 0))
+                },
+                'sig_sigma': 1.0,  # System compilation always has max signal strength
+                'confidence': 1.0,  # System compilation always has max confidence
+                'sig_direction': 'neutral',
+                'sig_confidence': None,
+                'prediction_score': None,
+                'outcome_score': None,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Publish compilation strand
+            result = self.supabase_manager.insert_strand(compilation_strand)
+            self.logger.info(f"Published compilation strand to CIL: {compilation_strand['id']}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to publish compilation strand: {e}")
+            raise
+    
+    def _serialize_for_json(self, obj):
+        """Serialize object for JSON compatibility"""
+        import numpy as np
+        
+        if isinstance(obj, dict):
+            return {k: self._serialize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._serialize_for_json(item) for item in obj]
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif hasattr(obj, '__dict__'):
+            return self._serialize_for_json(obj.__dict__)
+        else:
+            return obj
     
     # Message handlers
     async def _handle_raw_data_analysis_request(self, message):

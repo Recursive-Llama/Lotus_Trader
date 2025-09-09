@@ -110,5 +110,51 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Failed to delete strand {strand_id}: {e}")
             return False
+    
+    async def execute_query(self, query: str, params: List[Any] = None) -> List[Dict[str, Any]]:
+        """
+        Execute a raw SQL query
+        
+        Args:
+            query: SQL query string
+            params: Query parameters
+            
+        Returns:
+            List of result rows as dictionaries
+        """
+        try:
+            # For Supabase, we'll use the RPC (Remote Procedure Call) approach
+            # or convert the query to use the Supabase client methods
+            
+            # For now, let's implement a simple version that handles basic SELECT queries
+            if query.strip().upper().startswith('SELECT'):
+                # Extract table name and basic query structure
+                # This is a simplified implementation - in production you'd want more robust parsing
+                
+                # For the specific query used in InputProcessor, let's handle it directly
+                if 'AD_strands' in query and 'agent_id IS NOT NULL' in query:
+                    # This is the query from InputProcessor
+                    cutoff_time = params[0] if params else None
+                    
+                    # Use Supabase client to get recent strands with agent_id
+                    result = self.client.table('ad_strands').select(
+                        'id, agent_id, kind, module_intelligence, sig_sigma, sig_confidence, '
+                        'outcome_score, tags, created_at, symbol, timeframe, regime, session_bucket'
+                    ).not_.is_('agent_id', 'null').gte('created_at', cutoff_time.isoformat() if cutoff_time else '').order('created_at', desc=True).execute()
+                    
+                    return result.data if result.data else []
+                
+                # Generic fallback - try to execute as RPC
+                # Note: This would require setting up RPC functions in Supabase
+                logger.warning(f"Generic query execution not fully implemented: {query}")
+                return []
+            
+            else:
+                logger.warning(f"Non-SELECT queries not supported: {query}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error executing query: {e}")
+            return []
 
 # Global Supabase manager instance - removed to avoid import-time instantiation

@@ -44,6 +44,34 @@ class AdaptationType(Enum):
     AGENT_CALIBRATION = "agent_calibration"
 
 
+# Meta-Signal Integration System Integration
+class MetaSignalType(Enum):
+    """Types of meta-signals"""
+    CONFLUENCE = "confluence"
+    LEAD_LAG = "lead_lag"
+    TRANSFER_HIT = "transfer_hit"
+    REGIME_SHIFT = "regime_shift"
+    CROSS_ASSET_CONFLUENCE = "cross_asset_confluence"
+    VOLUME_CONFIRMATION = "volume_confirmation"
+
+
+class IntegrationLevel(Enum):
+    """Levels of meta-signal integration"""
+    BASIC = "basic"
+    ENHANCED = "enhanced"
+    ADVANCED = "advanced"
+    FULL = "full"
+
+
+class MetaSignalStatus(Enum):
+    """Status of meta-signal integration"""
+    PENDING = "pending"
+    INTEGRATED = "integrated"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
 @dataclass
 class SelfReflection:
     """Self-reflection result"""
@@ -82,6 +110,57 @@ class AgentCalibration:
     created_at: datetime
 
 
+# Meta-Signal Integration System Integration
+@dataclass
+class MetaSignal:
+    """A meta-signal from the meta-signal system"""
+    signal_id: str
+    signal_type: MetaSignalType
+    source_agents: List[str]
+    target_agents: List[str]
+    signal_data: Dict[str, Any]
+    integration_level: IntegrationLevel
+    status: MetaSignalStatus
+    created_at: datetime
+    expires_at: datetime
+
+
+@dataclass
+class IntegrationRule:
+    """Rule for meta-signal integration"""
+    rule_id: str
+    signal_type: MetaSignalType
+    target_engine: str
+    integration_conditions: List[Dict[str, Any]]
+    integration_actions: List[Dict[str, Any]]
+    priority: int
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
+class IntegrationResult:
+    """Result of meta-signal integration"""
+    result_id: str
+    signal_id: str
+    target_engine: str
+    integration_status: MetaSignalStatus
+    integration_data: Dict[str, Any]
+    performance_metrics: Dict[str, float]
+    integration_timestamp: datetime
+    validation_score: float
+
+
+@dataclass
+class EngineIntegrationState:
+    """State of engine integration with meta-signals"""
+    engine_id: str
+    integration_level: IntegrationLevel
+    active_integrations: List[str]
+    performance_history: List[Dict[str, Any]]
+    last_updated: datetime
+
+
 class AutonomyAdaptationEngine:
     """
     CIL Autonomy & Adaptation Engine
@@ -115,6 +194,13 @@ class AutonomyAdaptationEngine:
             'pattern_intelligence': {'max_autonomy': AutonomyLevel.EXPLORATORY, 'current_budget': 0.25},
             'system_control': {'max_autonomy': AutonomyLevel.STRICT, 'current_budget': 0.2}
         }
+        
+        # Meta-Signal Integration System configuration
+        self.meta_signal_queue = []
+        self.integration_rules = {}
+        self.engine_integration_states = {}
+        self.integration_performance_threshold = 0.7
+        self.meta_signal_expiry_hours = 24
         
     async def process_autonomy_adaptation(self, learning_results: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -613,6 +699,517 @@ class AutonomyAdaptationEngine:
             recommendations.append("Enhance learning persistence for long-term stability")
         
         return recommendations
+    
+    # Meta-Signal Integration System Methods
+    async def process_meta_signal_integration(self, meta_signals: List[MetaSignal],
+                                            engine_states: Dict[str, Any]) -> Dict[str, Any]:
+        """Process meta-signal integration with core engines"""
+        try:
+            # Queue meta-signals for integration processing
+            await self._queue_meta_signals(meta_signals)
+            
+            # Process the integration queue
+            integration_results = await self._process_integration_queue(engine_states)
+            
+            # Validate completed integrations
+            validation_results = await self._validate_integrations(integration_results)
+            
+            # Update engine states based on validation results
+            state_updates = await self._update_engine_states(validation_results)
+            
+            # Optimize integration performance
+            optimization_results = await self._optimize_integration_performance()
+            
+            # Compile results
+            results = {
+                'meta_signals_processed': len(meta_signals),
+                'integration_results': len(integration_results),
+                'validation_results': len(validation_results),
+                'state_updates': len(state_updates),
+                'optimization_results': optimization_results,
+                'integration_insights': self._compile_integration_insights(integration_results, validation_results)
+            }
+            
+            # Publish integration results
+            await self._publish_integration_results(results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in meta-signal integration: {e}")
+            return {'error': str(e)}
+    
+    async def _queue_meta_signals(self, meta_signals: List[MetaSignal]):
+        """Queue meta-signals for integration processing"""
+        for signal in meta_signals:
+            # Check if signal is still valid (not expired)
+            if signal.expires_at > datetime.now(timezone.utc):
+                self.meta_signal_queue.append(signal)
+            else:
+                # Mark expired signals
+                signal.status = MetaSignalStatus.EXPIRED
+    
+    async def _process_integration_queue(self, engine_states: Dict[str, Any]) -> List[IntegrationResult]:
+        """Process the meta-signal integration queue"""
+        integration_results = []
+        
+        for signal in self.meta_signal_queue:
+            if signal.status == MetaSignalStatus.PENDING:
+                # Find applicable integration rules
+                applicable_rules = await self._find_applicable_rules(signal)
+                
+                for rule in applicable_rules:
+                    # Check integration conditions
+                    if await self._check_integration_conditions(signal, rule, engine_states):
+                        # Perform integration
+                        result = await self._perform_integration(signal, rule, engine_states)
+                        if result:
+                            integration_results.append(result)
+                            signal.status = MetaSignalStatus.INTEGRATED
+                            break
+        
+        return integration_results
+    
+    async def _find_applicable_rules(self, signal: MetaSignal) -> List[IntegrationRule]:
+        """Find integration rules applicable to a meta-signal"""
+        applicable_rules = []
+        
+        for rule_id, rule in self.integration_rules.items():
+            if (rule.is_active and 
+                rule.signal_type == signal.signal_type and
+                signal.integration_level.value in [level.value for level in IntegrationLevel]):
+                applicable_rules.append(rule)
+        
+        # Sort by priority (higher priority first)
+        applicable_rules.sort(key=lambda r: r.priority, reverse=True)
+        
+        return applicable_rules
+    
+    async def _check_integration_conditions(self, signal: MetaSignal, rule: IntegrationRule,
+                                          engine_states: Dict[str, Any]) -> bool:
+        """Check if integration conditions are met"""
+        try:
+            # Check basic conditions
+            target_engine = rule.target_engine
+            if target_engine not in engine_states:
+                return False
+            
+            # Check integration level compatibility
+            engine_state = engine_states[target_engine]
+            if hasattr(engine_state, 'integration_level'):
+                if signal.integration_level.value not in [level.value for level in IntegrationLevel]:
+                    return False
+            
+            # Check specific integration conditions
+            for condition in rule.integration_conditions:
+                condition_type = condition.get('type')
+                condition_value = condition.get('value')
+                
+                if condition_type == 'engine_available':
+                    if not engine_states.get(target_engine, {}).get('available', False):
+                        return False
+                elif condition_type == 'performance_threshold':
+                    performance = engine_states.get(target_engine, {}).get('performance', 0)
+                    if performance < condition_value:
+                        return False
+                elif condition_type == 'integration_capacity':
+                    capacity = engine_states.get(target_engine, {}).get('integration_capacity', 0)
+                    if capacity < condition_value:
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error checking integration conditions: {e}")
+            return False
+    
+    async def _perform_integration(self, signal: MetaSignal, rule: IntegrationRule,
+                                 engine_states: Dict[str, Any]) -> Optional[IntegrationResult]:
+        """Perform meta-signal integration with a core engine"""
+        try:
+            # Generate integration analysis
+            integration_analysis = await self._generate_integration_analysis(signal, rule, engine_states)
+            
+            if not integration_analysis:
+                return None
+            
+            # Create integration result
+            result = IntegrationResult(
+                result_id=f"integration_{signal.signal_id}_{rule.rule_id}_{int(datetime.now().timestamp())}",
+                signal_id=signal.signal_id,
+                target_engine=rule.target_engine,
+                integration_status=MetaSignalStatus.INTEGRATED,
+                integration_data=integration_analysis.get('integration_data', {}),
+                performance_metrics=integration_analysis.get('performance_metrics', {}),
+                integration_timestamp=datetime.now(timezone.utc),
+                validation_score=integration_analysis.get('validation_score', 0.0)
+            )
+            
+            # Update engine integration state
+            await self._update_engine_integration_state(rule.target_engine, signal, result)
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error performing integration: {e}")
+            return None
+    
+    async def _generate_integration_analysis(self, signal: MetaSignal, rule: IntegrationRule,
+                                           engine_states: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate integration analysis using LLM"""
+        try:
+            # Prepare data for LLM analysis
+            analysis_data = {
+                'meta_signal': {
+                    'signal_type': signal.signal_type.value,
+                    'signal_data': signal.signal_data,
+                    'integration_level': signal.integration_level.value
+                },
+                'integration_rule': {
+                    'target_engine': rule.target_engine,
+                    'integration_actions': rule.integration_actions
+                },
+                'engine_state': engine_states.get(rule.target_engine, {})
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_integration_analysis_prompt(), analysis_data)
+            
+            return llm_analysis
+            
+        except Exception as e:
+            print(f"Error generating integration analysis: {e}")
+            return None
+    
+    async def _validate_integrations(self, integration_results: List[IntegrationResult]) -> List[Dict[str, Any]]:
+        """Validate completed integrations"""
+        validation_results = []
+        
+        for integration in integration_results:
+            # Generate validation analysis
+            validation_analysis = await self._generate_validation_analysis(integration)
+            
+            if validation_analysis:
+                validation_results.append(validation_analysis)
+        
+        return validation_results
+    
+    async def _generate_validation_analysis(self, integration: IntegrationResult) -> Optional[Dict[str, Any]]:
+        """Generate validation analysis for an integration"""
+        try:
+            # Prepare data for LLM analysis
+            validation_data = {
+                'integration_result': {
+                    'target_engine': integration.target_engine,
+                    'integration_data': integration.integration_data,
+                    'performance_metrics': integration.performance_metrics
+                },
+                'validation_criteria': {
+                    'performance_threshold': self.integration_performance_threshold,
+                    'validation_requirements': ['performance_improvement', 'stability', 'compatibility']
+                }
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_validation_analysis_prompt(), validation_data)
+            
+            return llm_analysis
+            
+        except Exception as e:
+            print(f"Error generating validation analysis: {e}")
+            return None
+    
+    async def _update_engine_states(self, validation_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Update engine integration states based on validation results"""
+        state_updates = []
+        
+        for validation in validation_results:
+            engine_id = validation.get('target_engine')
+            validation_score = validation.get('validation_score', 0.0)
+            
+            if engine_id and validation_score >= self.integration_performance_threshold:
+                # Update engine integration state
+                if engine_id not in self.engine_integration_states:
+                    self.engine_integration_states[engine_id] = EngineIntegrationState(
+                        engine_id=engine_id,
+                        integration_level=IntegrationLevel.BASIC,
+                        active_integrations=[],
+                        performance_history=[],
+                        last_updated=datetime.now(timezone.utc)
+                    )
+                
+                # Update integration level based on performance
+                if validation_score >= 0.9:
+                    self.engine_integration_states[engine_id].integration_level = IntegrationLevel.FULL
+                elif validation_score >= 0.8:
+                    self.engine_integration_states[engine_id].integration_level = IntegrationLevel.ADVANCED
+                elif validation_score >= 0.7:
+                    self.engine_integration_states[engine_id].integration_level = IntegrationLevel.ENHANCED
+                
+                # Update performance history
+                performance_entry = {
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'validation_score': validation_score,
+                    'performance_metrics': validation.get('performance_metrics', {})
+                }
+                self.engine_integration_states[engine_id].performance_history.append(performance_entry)
+                
+                # Keep only recent performance history
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
+                self.engine_integration_states[engine_id].performance_history = [
+                    entry for entry in self.engine_integration_states[engine_id].performance_history
+                    if datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00')) > cutoff_date
+                ]
+                
+                self.engine_integration_states[engine_id].last_updated = datetime.now(timezone.utc)
+                
+                state_updates.append({
+                    'engine_id': engine_id,
+                    'integration_level': self.engine_integration_states[engine_id].integration_level.value,
+                    'validation_score': validation_score,
+                    'performance_improvement': validation.get('performance_improvement', 0.0)
+                })
+        
+        return state_updates
+    
+    async def _optimize_integration_performance(self) -> Dict[str, Any]:
+        """Optimize meta-signal integration performance"""
+        try:
+            optimization_actions = []
+            
+            # Analyze integration performance across engines
+            for engine_id, state in self.engine_integration_states.items():
+                if state.performance_history:
+                    # Calculate average performance
+                    avg_performance = sum(entry['validation_score'] for entry in state.performance_history) / len(state.performance_history)
+                    
+                    # Determine optimization actions
+                    if avg_performance < self.integration_performance_threshold:
+                        optimization_actions.append({
+                            'action': 'reduce_integration_level',
+                            'engine_id': engine_id,
+                            'current_level': state.integration_level.value,
+                            'recommended_level': IntegrationLevel.BASIC.value,
+                            'reason': 'low_performance'
+                        })
+                    elif avg_performance >= 0.9 and state.integration_level != IntegrationLevel.FULL:
+                        optimization_actions.append({
+                            'action': 'increase_integration_level',
+                            'engine_id': engine_id,
+                            'current_level': state.integration_level.value,
+                            'recommended_level': IntegrationLevel.FULL.value,
+                            'reason': 'high_performance'
+                        })
+            
+            # Apply optimization actions
+            applied_actions = await self._apply_optimization_actions(optimization_actions)
+            
+            return {
+                'optimization_actions': optimization_actions,
+                'applied_actions': applied_actions,
+                'performance_improvements': len([a for a in applied_actions if a.get('success', False)])
+            }
+            
+        except Exception as e:
+            print(f"Error optimizing integration performance: {e}")
+            return {'error': str(e)}
+    
+    async def _apply_optimization_actions(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Apply optimization actions"""
+        applied_actions = []
+        
+        for action in actions:
+            try:
+                action_type = action.get('action')
+                engine_id = action.get('engine_id')
+                
+                if action_type == 'reduce_integration_level' and engine_id in self.engine_integration_states:
+                    # Reduce integration level
+                    current_state = self.engine_integration_states[engine_id]
+                    current_state.integration_level = IntegrationLevel.BASIC
+                    current_state.last_updated = datetime.now(timezone.utc)
+                    
+                    applied_actions.append({
+                        'action': action_type,
+                        'engine_id': engine_id,
+                        'success': True,
+                        'new_level': IntegrationLevel.BASIC.value
+                    })
+                
+                elif action_type == 'increase_integration_level' and engine_id in self.engine_integration_states:
+                    # Increase integration level
+                    current_state = self.engine_integration_states[engine_id]
+                    current_state.integration_level = IntegrationLevel.FULL
+                    current_state.last_updated = datetime.now(timezone.utc)
+                    
+                    applied_actions.append({
+                        'action': action_type,
+                        'engine_id': engine_id,
+                        'success': True,
+                        'new_level': IntegrationLevel.FULL.value
+                    })
+                
+                else:
+                    applied_actions.append({
+                        'action': action_type,
+                        'engine_id': engine_id,
+                        'success': False,
+                        'reason': 'invalid_action_or_engine'
+                    })
+                    
+            except Exception as e:
+                applied_actions.append({
+                    'action': action.get('action', 'unknown'),
+                    'engine_id': action.get('engine_id', 'unknown'),
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        return applied_actions
+    
+    async def _update_engine_integration_state(self, engine_id: str, signal: MetaSignal, result: IntegrationResult):
+        """Update engine integration state after successful integration"""
+        if engine_id not in self.engine_integration_states:
+            self.engine_integration_states[engine_id] = EngineIntegrationState(
+                engine_id=engine_id,
+                integration_level=IntegrationLevel.BASIC,
+                active_integrations=[],
+                performance_history=[],
+                last_updated=datetime.now(timezone.utc)
+            )
+        
+        # Add to active integrations
+        if result.result_id not in self.engine_integration_states[engine_id].active_integrations:
+            self.engine_integration_states[engine_id].active_integrations.append(result.result_id)
+        
+        # Update last updated timestamp
+        self.engine_integration_states[engine_id].last_updated = datetime.now(timezone.utc)
+    
+    def _compile_integration_insights(self, integration_results: List[IntegrationResult], 
+                                    validation_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compile integration insights from results and validations"""
+        insights = []
+        
+        # Insights from integration results
+        for result in integration_results:
+            insight = {
+                'type': 'integration_result',
+                'target_engine': result.target_engine,
+                'integration_status': result.integration_status.value,
+                'validation_score': result.validation_score,
+                'performance_metrics': result.performance_metrics
+            }
+            insights.append(insight)
+        
+        # Insights from validation results
+        for validation in validation_results:
+            insight = {
+                'type': 'validation_result',
+                'target_engine': validation.get('target_engine'),
+                'validation_score': validation.get('validation_score', 0.0),
+                'performance_improvement': validation.get('performance_improvement', 0.0),
+                'validation_status': validation.get('validation_status', 'unknown')
+            }
+            insights.append(insight)
+        
+        return insights
+    
+    async def _publish_integration_results(self, results: Dict[str, Any]):
+        """Publish integration results as CIL strand"""
+        try:
+            # Create CIL strand with integration results
+            strand_data = {
+                'id': f"cil_meta_signal_integration_{int(datetime.now().timestamp())}",
+                'kind': 'cil_meta_signal_integration',
+                'module': 'alpha',
+                'agent_id': 'central_intelligence_layer',
+                'cil_team_member': 'autonomy_adaptation_engine',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['agent:central_intelligence:autonomy_adaptation_engine:meta_signal_integration'],
+                'module_intelligence': {
+                    'analysis_type': 'meta_signal_integration',
+                    'meta_signals_processed': results.get('meta_signals_processed', 0),
+                    'integration_results': results.get('integration_results', 0),
+                    'validation_results': results.get('validation_results', 0),
+                    'state_updates': results.get('state_updates', 0),
+                    'optimization_results': results.get('optimization_results', {}),
+                    'integration_insights': results.get('integration_insights', [])
+                },
+                'sig_sigma': 1.0,
+                'sig_confidence': 0.8,
+                'sig_direction': 'neutral',
+                'outcome_score': 0.0,
+                'created_at': datetime.now(timezone.utc)
+            }
+            
+            # Insert into database
+            await self.supabase_manager.insert_strand(strand_data)
+            
+        except Exception as e:
+            print(f"Error publishing integration results: {e}")
+    
+    async def _generate_llm_analysis(self, prompt_template: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate LLM analysis using prompt template"""
+        try:
+            # Format prompt with data
+            formatted_prompt = prompt_template.format(**data)
+            
+            # Get LLM response
+            response = await self.llm_client.generate_response(
+                prompt=formatted_prompt,
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            # Parse JSON response
+            if response and response.strip():
+                return json.loads(response)
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating LLM analysis: {e}")
+            return None
+    
+    def _get_integration_analysis_prompt(self) -> str:
+        """Get integration analysis prompt template"""
+        return """
+        Analyze the integration of a meta-signal with a core engine.
+        
+        Meta Signal: {meta_signal}
+        Integration Rule: {integration_rule}
+        Engine State: {engine_state}
+        
+        Provide analysis in JSON format:
+        {{
+            "integration_data": {{"integration_type": "signal_type", "integration_parameters": {{}}}},
+            "performance_metrics": {{"expected_improvement": 0.0, "integration_complexity": 0.0}},
+            "validation_score": 0.0-1.0,
+            "integration_rationale": "detailed explanation"
+        }}
+        """
+    
+    def _get_validation_analysis_prompt(self) -> str:
+        """Get validation analysis prompt template"""
+        return """
+        Validate the integration of a meta-signal with a core engine.
+        
+        Integration Result: {integration_result}
+        Validation Criteria: {validation_criteria}
+        
+        Provide validation in JSON format:
+        {{
+            "target_engine": "engine_id",
+            "validation_score": 0.0-1.0,
+            "performance_improvement": 0.0-1.0,
+            "validation_status": "validated|rejected|needs_revision",
+            "performance_metrics": {{"metric": value}},
+            "validation_rationale": "detailed explanation"
+        }}
+        """
     
     async def _publish_adaptation_results(self, adaptation_results: Dict[str, Any]):
         """Publish adaptation results as CIL strand"""

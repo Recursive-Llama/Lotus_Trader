@@ -85,8 +85,8 @@ class VolumePatternAnalyzer:
             analysis_results['significant_volume_spike'] = len(significant_patterns) > 0
             analysis_results['spike_details'] = significant_patterns
             
-            # 8. Calculate overall confidence
-            analysis_results['confidence'] = self._calculate_volume_analysis_confidence(analysis_results)
+            # 8. Calculate pattern clarity (not prediction confidence)
+            analysis_results['pattern_clarity'] = self._calculate_volume_pattern_clarity(analysis_results)
             
             return analysis_results
             
@@ -596,54 +596,54 @@ class VolumePatternAnalyzer:
         
         return significant_patterns
     
-    def _calculate_volume_analysis_confidence(self, analysis_results: Dict[str, Any]) -> float:
+    def _calculate_volume_pattern_clarity(self, analysis_results: Dict[str, Any]) -> float:
         """
-        Calculate confidence in the volume analysis results
+        Calculate pattern clarity (statistical strength) of volume patterns
         
         Args:
             analysis_results: Complete volume analysis results
             
         Returns:
-            Confidence score between 0.0 and 1.0
+            Pattern clarity score between 0.0 and 1.0
         """
         try:
-            confidence_factors = []
+            clarity_factors = []
             
             # Data quality factor
             data_points = analysis_results.get('data_points', 0)
             if data_points > 100:
-                confidence_factors.append(0.9)
+                clarity_factors.append(0.9)
             elif data_points > 50:
-                confidence_factors.append(0.7)
+                clarity_factors.append(0.7)
             elif data_points > 20:
-                confidence_factors.append(0.5)
+                clarity_factors.append(0.5)
             else:
-                confidence_factors.append(0.3)
+                clarity_factors.append(0.3)
             
             # Analysis completeness factor
             analysis_components = ['volume_spikes', 'volume_price_relationship', 'volume_trends', 
                                  'volume_clustering', 'volume_distribution', 'institutional_volume']
             completed_analyses = sum(1 for component in analysis_components if component in analysis_results)
-            completeness_confidence = completed_analyses / len(analysis_components)
-            confidence_factors.append(completeness_confidence)
+            completeness_clarity = completed_analyses / len(analysis_components)
+            clarity_factors.append(completeness_clarity)
             
             # Pattern consistency factor
             significant_patterns = analysis_results.get('spike_details', [])
             if len(significant_patterns) > 0:
-                # Higher confidence if patterns are consistent
+                # Higher clarity if patterns are consistent
                 pattern_types = [pattern.get('type', '') for pattern in significant_patterns]
                 unique_types = len(set(pattern_types))
-                consistency_confidence = min(0.9, 0.5 + (len(significant_patterns) - unique_types) * 0.1)
-                confidence_factors.append(consistency_confidence)
+                consistency_clarity = min(0.9, 0.5 + (len(significant_patterns) - unique_types) * 0.1)
+                clarity_factors.append(consistency_clarity)
             else:
-                confidence_factors.append(0.8)  # High confidence in "no significant patterns" result
+                clarity_factors.append(0.8)  # High clarity in "no significant patterns" result
             
             # Calculate weighted average
-            return sum(confidence_factors) / len(confidence_factors)
+            return sum(clarity_factors) / len(clarity_factors)
             
         except Exception as e:
-            self.logger.error(f"Volume analysis confidence calculation failed: {e}")
-            return 0.5  # Default confidence
+            self.logger.error(f"Volume pattern clarity calculation failed: {e}")
+            return 0.5  # Default clarity
     
     async def configure(self, configuration: Dict[str, Any]) -> bool:
         """

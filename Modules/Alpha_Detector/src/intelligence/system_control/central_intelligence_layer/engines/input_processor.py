@@ -19,6 +19,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.openrouter_client import OpenRouterClient
@@ -78,6 +79,77 @@ class ExperimentRegistry:
     experiment_outcomes: List[Dict[str, Any]]
 
 
+# Why-Map System Integration
+class MechanismType(Enum):
+    """Types of mechanisms that can be hypothesized"""
+    LIQUIDITY_VACUUM = "liquidity_vacuum"
+    MOMENTUM_CARRYOVER = "momentum_carryover"
+    ARBITRAGE_PRESSURE = "arbitrage_pressure"
+    SENTIMENT_SHIFT = "sentiment_shift"
+    VOLUME_CONFIRMATION = "volume_confirmation"
+    REJECTION_PATTERN = "rejection_pattern"
+    TREND_CONTINUATION = "trend_continuation"
+    REGIME_SHIFT = "regime_shift"
+
+
+class EvidenceStrength(Enum):
+    """Strength of evidence supporting a mechanism"""
+    WEAK = "weak"
+    MODERATE = "moderate"
+    STRONG = "strong"
+    CONVINCING = "convincing"
+
+
+class MechanismStatus(Enum):
+    """Status of a mechanism hypothesis"""
+    PROVISIONAL = "provisional"
+    AFFIRMED = "affirmed"
+    RETIRED = "retired"
+    CONTRADICTED = "contradicted"
+
+
+@dataclass
+class MechanismHypothesis:
+    """A mechanism hypothesis for why a pattern works"""
+    hypothesis_id: str
+    pattern_family: str
+    mechanism_type: MechanismType
+    mechanism_description: str
+    evidence_motifs: List[str]
+    fails_when_conditions: List[str]
+    confidence_level: float
+    evidence_strength: EvidenceStrength
+    status: MechanismStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class WhyMapEntry:
+    """A Why-Map entry for a pattern family"""
+    family_id: str
+    pattern_family: str
+    primary_mechanism: MechanismHypothesis
+    alternative_mechanisms: List[MechanismHypothesis]
+    mechanism_evolution: List[Dict[str, Any]]
+    cross_family_connections: List[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class MechanismEvidence:
+    """Evidence supporting or contradicting a mechanism"""
+    evidence_id: str
+    mechanism_id: str
+    evidence_type: str
+    evidence_description: str
+    supporting: bool
+    confidence: float
+    source_strand_id: str
+    created_at: datetime
+
+
 class InputProcessor:
     """
     CIL Input Processor Engine
@@ -101,6 +173,17 @@ class InputProcessor:
         self.cross_agent_analysis_window_hours = 48
         self.historical_analysis_window_days = 30
         self.experiment_registry_window_days = 7
+        
+        # Why-Map System configuration
+        self.mechanism_confidence_threshold = 0.7
+        self.evidence_accumulation_threshold = 3
+        self.mechanism_retirement_threshold = 0.3
+        self.cross_family_connection_threshold = 0.8
+        
+        # Why-Map state
+        self.why_map_entries = {}
+        self.mechanism_hypotheses = {}
+        self.mechanism_evidence = {}
         
     async def process_all_inputs(self) -> Dict[str, Any]:
         """
@@ -673,6 +756,387 @@ class InputProcessor:
         
         return lead_lag_pairs / total_pairs if total_pairs > 0 else 0.0
     
+    # Why-Map System Methods
+    async def process_why_map_analysis(self, pattern_detections: List[Dict[str, Any]],
+                                     learning_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Process Why-Map analysis for pattern detections"""
+        try:
+            # Generate mechanism hypotheses for pattern detections
+            hypotheses = await self._generate_mechanism_hypotheses(pattern_detections)
+            
+            # Evaluate evidence for mechanism hypotheses
+            evidence_evaluations = await self._evaluate_mechanism_evidence(hypotheses)
+            
+            # Update Why-Map entries with new hypotheses and evidence
+            why_map_updates = await self._update_why_map_entries(hypotheses, evidence_evaluations)
+            
+            # Analyze cross-family connections
+            cross_family_analysis = await self._analyze_cross_family_connections(why_map_updates)
+            
+            # Compile results
+            results = {
+                'hypotheses_generated': len(hypotheses),
+                'evidence_evaluations': len(evidence_evaluations),
+                'why_map_updates': len(why_map_updates),
+                'cross_family_connections': cross_family_analysis,
+                'mechanism_insights': self._compile_mechanism_insights(hypotheses, evidence_evaluations)
+            }
+            
+            # Publish Why-Map results
+            await self._publish_why_map_results(results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in Why-Map analysis: {e}")
+            return {'error': str(e)}
+    
+    async def _generate_mechanism_hypotheses(self, pattern_detections: List[Dict[str, Any]]) -> List[MechanismHypothesis]:
+        """Generate mechanism hypotheses for pattern detections"""
+        hypotheses = []
+        
+        for detection in pattern_detections:
+            hypothesis = await self._create_mechanism_hypothesis(detection)
+            if hypothesis:
+                hypotheses.append(hypothesis)
+        
+        return hypotheses
+    
+    async def _create_mechanism_hypothesis(self, detection: Dict[str, Any]) -> Optional[MechanismHypothesis]:
+        """Create a mechanism hypothesis for a pattern detection"""
+        try:
+            # Prepare data for LLM analysis
+            analysis_data = {
+                'pattern_family': detection.get('detection_type', 'unknown'),
+                'context': detection.get('context', {}),
+                'success_rate': detection.get('success_rate', 0.5),
+                'conditions': detection.get('conditions', []),
+                'evidence': detection.get('evidence', [])
+            }
+            
+            # Generate LLM analysis
+            llm_analysis = await self._generate_llm_analysis(self._get_mechanism_analysis_prompt(), analysis_data)
+            
+            if not llm_analysis:
+                return None
+            
+            # Create mechanism hypothesis
+            hypothesis = MechanismHypothesis(
+                hypothesis_id=f"hyp_{int(datetime.now().timestamp())}_{detection.get('id', 'unknown')}",
+                pattern_family=detection.get('detection_type', 'unknown'),
+                mechanism_type=MechanismType(llm_analysis.get('mechanism_type', 'trend_continuation')),
+                mechanism_description=llm_analysis.get('mechanism_description', ''),
+                evidence_motifs=llm_analysis.get('evidence_motifs', []),
+                fails_when_conditions=llm_analysis.get('fails_when_conditions', []),
+                confidence_level=llm_analysis.get('confidence_level', 0.5),
+                evidence_strength=EvidenceStrength.WEAK,  # Will be updated by evidence evaluation
+                status=MechanismStatus.PROVISIONAL,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            
+            return hypothesis
+            
+        except Exception as e:
+            print(f"Error creating mechanism hypothesis: {e}")
+            return None
+    
+    async def _generate_llm_analysis(self, prompt_template: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate LLM analysis using prompt template"""
+        try:
+            # Format prompt with data
+            formatted_prompt = prompt_template.format(**data)
+            
+            # Get LLM response
+            response = await self.llm_client.generate_response(
+                prompt=formatted_prompt,
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            # Parse JSON response
+            if response and response.strip():
+                return json.loads(response)
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error generating LLM analysis: {e}")
+            return None
+    
+    async def _evaluate_mechanism_evidence(self, hypotheses: List[MechanismHypothesis]) -> List[Dict[str, Any]]:
+        """Evaluate evidence for mechanism hypotheses"""
+        evaluations = []
+        
+        for hypothesis in hypotheses:
+            # Gather evidence for this hypothesis
+            evidence = await self._gather_mechanism_evidence(hypothesis)
+            
+            # Evaluate evidence strength
+            evaluation = await self._evaluate_evidence_strength(hypothesis, evidence)
+            if evaluation:
+                evaluations.append(evaluation)
+        
+        return evaluations
+    
+    async def _gather_mechanism_evidence(self, hypothesis: MechanismHypothesis) -> List[MechanismEvidence]:
+        """Gather evidence for a mechanism hypothesis"""
+        evidence = []
+        
+        try:
+            # Query database for related strands
+            query = """
+            SELECT id, agent_id, detection_type, sig_confidence, sig_sigma, 
+                   outcome_score, created_at, module_intelligence
+            FROM AD_strands 
+            WHERE detection_type = %s
+            AND created_at >= NOW() - INTERVAL '7 days'
+            ORDER BY created_at DESC
+            LIMIT 20
+            """
+            
+            result = await self.supabase_manager.execute_query(query, [hypothesis.pattern_family])
+            strands = result.get('data', [])
+            
+            for strand in strands:
+                # Create evidence entry
+                evidence_entry = MechanismEvidence(
+                    evidence_id=f"ev_{strand['id']}",
+                    mechanism_id=hypothesis.hypothesis_id,
+                    evidence_type="strand_outcome",
+                    evidence_description=f"Pattern outcome from {strand['agent_id']}",
+                    supporting=strand.get('outcome_score', 0) > 0.5,
+                    confidence=strand.get('sig_confidence', 0.5),
+                    source_strand_id=strand['id'],
+                    created_at=datetime.now(timezone.utc)
+                )
+                evidence.append(evidence_entry)
+            
+        except Exception as e:
+            print(f"Error gathering mechanism evidence: {e}")
+        
+        return evidence
+    
+    async def _evaluate_evidence_strength(self, hypothesis: MechanismHypothesis, 
+                                        evidence: List[MechanismEvidence]) -> Optional[Dict[str, Any]]:
+        """Evaluate the strength of evidence for a mechanism"""
+        if not evidence:
+            return None
+        
+        try:
+            # Count supporting vs contradicting evidence
+            supporting_count = sum(1 for e in evidence if e.supporting)
+            contradicting_count = len(evidence) - supporting_count
+            
+            # Calculate evidence strength
+            if supporting_count >= self.evidence_accumulation_threshold and contradicting_count == 0:
+                evidence_strength = EvidenceStrength.CONVINCING
+            elif supporting_count >= self.evidence_accumulation_threshold:
+                evidence_strength = EvidenceStrength.STRONG
+            elif supporting_count > contradicting_count:
+                evidence_strength = EvidenceStrength.MODERATE
+            else:
+                evidence_strength = EvidenceStrength.WEAK
+            
+            # Update hypothesis evidence strength
+            hypothesis.evidence_strength = evidence_strength
+            
+            return {
+                'hypothesis_id': hypothesis.hypothesis_id,
+                'evidence_strength': evidence_strength.value,
+                'supporting_count': supporting_count,
+                'contradicting_count': contradicting_count,
+                'total_evidence': len(evidence)
+            }
+            
+        except Exception as e:
+            print(f"Error evaluating evidence strength: {e}")
+            return None
+    
+    async def _update_why_map_entries(self, hypotheses: List[MechanismHypothesis],
+                                    evidence_evaluations: List[Dict[str, Any]]) -> List[WhyMapEntry]:
+        """Update Why-Map entries with new hypotheses and evidence"""
+        why_map_updates = []
+        
+        for hypothesis in hypotheses:
+            # Check if Why-Map entry exists for this pattern family
+            existing_entry = self.why_map_entries.get(hypothesis.pattern_family)
+            
+            if existing_entry:
+                # Update existing entry
+                await self._update_existing_why_map_entry(existing_entry, hypothesis, evidence_evaluations)
+                why_map_updates.append(existing_entry)
+            else:
+                # Create new entry
+                new_entry = await self._create_new_why_map_entry(hypothesis, evidence_evaluations)
+                self.why_map_entries[hypothesis.pattern_family] = new_entry
+                why_map_updates.append(new_entry)
+        
+        return why_map_updates
+    
+    async def _update_existing_why_map_entry(self, entry: WhyMapEntry, hypothesis: MechanismHypothesis,
+                                           evidence_evaluations: List[Dict[str, Any]]):
+        """Update an existing Why-Map entry"""
+        # Add as alternative mechanism if confidence is high enough
+        if hypothesis.confidence_level >= self.mechanism_confidence_threshold:
+            entry.alternative_mechanisms.append(hypothesis)
+        
+        # Update mechanism evolution
+        evolution_entry = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'hypothesis_id': hypothesis.hypothesis_id,
+            'mechanism_type': hypothesis.mechanism_type.value,
+            'confidence_level': hypothesis.confidence_level,
+            'evidence_strength': hypothesis.evidence_strength.value
+        }
+        entry.mechanism_evolution.append(evolution_entry)
+        
+        # Update timestamp
+        entry.updated_at = datetime.now(timezone.utc)
+    
+    async def _create_new_why_map_entry(self, hypothesis: MechanismHypothesis,
+                                      evidence_evaluations: List[Dict[str, Any]]) -> WhyMapEntry:
+        """Create a new Why-Map entry"""
+        entry = WhyMapEntry(
+            family_id=f"family_{hypothesis.pattern_family}_{int(datetime.now().timestamp())}",
+            pattern_family=hypothesis.pattern_family,
+            primary_mechanism=hypothesis,
+            alternative_mechanisms=[],
+            mechanism_evolution=[{
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'hypothesis_id': hypothesis.hypothesis_id,
+                'mechanism_type': hypothesis.mechanism_type.value,
+                'confidence_level': hypothesis.confidence_level,
+                'evidence_strength': hypothesis.evidence_strength.value
+            }],
+            cross_family_connections=[],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        
+        return entry
+    
+    async def _analyze_cross_family_connections(self, why_map_updates: List[WhyMapEntry]) -> Dict[str, Any]:
+        """Analyze connections between different pattern families"""
+        try:
+            connections = []
+            
+            # Simple cross-family analysis based on mechanism types
+            mechanism_type_groups = {}
+            for entry in why_map_updates:
+                mechanism_type = entry.primary_mechanism.mechanism_type
+                if mechanism_type not in mechanism_type_groups:
+                    mechanism_type_groups[mechanism_type] = []
+                mechanism_type_groups[mechanism_type].append(entry)
+            
+            # Find connections between families with similar mechanism types
+            for mechanism_type, entries in mechanism_type_groups.items():
+                if len(entries) > 1:
+                    for i, entry1 in enumerate(entries):
+                        for entry2 in entries[i+1:]:
+                            connection = {
+                                'family1': entry1.pattern_family,
+                                'family2': entry2.pattern_family,
+                                'connection_type': 'shared_mechanism',
+                                'mechanism_type': mechanism_type.value,
+                                'strength': min(entry1.primary_mechanism.confidence_level, 
+                                              entry2.primary_mechanism.confidence_level)
+                            }
+                            connections.append(connection)
+            
+            return {
+                'total_connections': len(connections),
+                'connections': connections,
+                'mechanism_type_groups': {k.value: len(v) for k, v in mechanism_type_groups.items()}
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing cross-family connections: {e}")
+            return {'error': str(e)}
+    
+    def _compile_mechanism_insights(self, hypotheses: List[MechanismHypothesis], 
+                                  evidence_evaluations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compile mechanism insights from hypotheses and evidence"""
+        insights = []
+        
+        for hypothesis in hypotheses:
+            insight = {
+                'pattern_family': hypothesis.pattern_family,
+                'mechanism_type': hypothesis.mechanism_type.value,
+                'confidence_level': hypothesis.confidence_level,
+                'evidence_strength': hypothesis.evidence_strength.value,
+                'status': hypothesis.status.value,
+                'mechanism_description': hypothesis.mechanism_description
+            }
+            insights.append(insight)
+        
+        return insights
+    
+    async def _publish_why_map_results(self, results: Dict[str, Any]):
+        """Publish Why-Map results as CIL strand"""
+        try:
+            # Create CIL strand with Why-Map results
+            strand_data = {
+                'id': f"cil_why_map_{int(datetime.now().timestamp())}",
+                'kind': 'cil_why_map_analysis',
+                'module': 'alpha',
+                'agent_id': 'central_intelligence_layer',
+                'cil_team_member': 'input_processor',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['agent:central_intelligence:input_processor:why_map_analysis'],
+                'module_intelligence': {
+                    'analysis_type': 'why_map_analysis',
+                    'hypotheses_generated': results.get('hypotheses_generated', 0),
+                    'evidence_evaluations': results.get('evidence_evaluations', 0),
+                    'why_map_updates': results.get('why_map_updates', 0),
+                    'cross_family_connections': results.get('cross_family_connections', {}),
+                    'mechanism_insights': results.get('mechanism_insights', [])
+                },
+                'sig_sigma': 1.0,
+                'sig_confidence': 0.8,
+                'sig_direction': 'neutral',
+                'outcome_score': 0.0,
+                'created_at': datetime.now(timezone.utc)
+            }
+            
+            # Insert into database
+            await self.supabase_manager.insert_strand(strand_data)
+            
+        except Exception as e:
+            print(f"Error publishing Why-Map results: {e}")
+    
+    def _get_mechanism_analysis_prompt(self) -> str:
+        """Get mechanism analysis prompt template"""
+        return """
+        Analyze the following pattern detection and generate a mechanism hypothesis for why it works.
+        
+        Pattern Details:
+        - Family: {pattern_family}
+        - Context: {context}
+        - Success Rate: {success_rate}
+        - Conditions: {conditions}
+        - Evidence: {evidence}
+        
+        Generate a mechanism hypothesis that explains:
+        1. What underlying market mechanism causes this pattern to work
+        2. What evidence motifs support this mechanism
+        3. What conditions would cause this mechanism to fail
+        4. Confidence level in this mechanism (0.0-1.0)
+        
+        Respond in JSON format:
+        {{
+            "mechanism_type": "one of: liquidity_vacuum, momentum_carryover, arbitrage_pressure, sentiment_shift, volume_confirmation, rejection_pattern, trend_continuation, regime_shift",
+            "mechanism_description": "detailed explanation of the mechanism",
+            "evidence_motifs": ["list of supporting evidence"],
+            "fails_when_conditions": ["list of failure conditions"],
+            "confidence_level": 0.0-1.0,
+            "uncertainty_flags": ["any uncertainties or limitations"]
+        }}
+        """
+    
     def _determine_volatility_band(self, result: List[Dict[str, Any]]) -> str:
         """Determine current volatility band from strand data"""
         if not result:
@@ -704,6 +1168,15 @@ class InputProcessor:
         else:
             return 'tight_correlation'
     
+    def _get_dict_value(self, obj, key, default=None):
+        """Get value from object, handling both dict and dataclass objects"""
+        if hasattr(obj, 'get'):
+            return obj.get(key, default)
+        elif hasattr(obj, '__dict__'):
+            return getattr(obj, key, default)
+        else:
+            return default
+
     async def _publish_processing_results(self, processed_inputs: Dict[str, Any]):
         """Publish input processing results as CIL strand"""
         try:
@@ -723,7 +1196,7 @@ class InputProcessor:
                     'processing_type': 'input_processing',
                     'agent_outputs_count': len(processed_inputs.get('agent_outputs', [])),
                     'cross_agent_events': len(processed_inputs.get('cross_agent_metadata', {}).get('confluence_events', [])),
-                    'current_regime': processed_inputs.get('market_regime_context', {}).get('current_regime', 'unknown'),
+                    'current_regime': self._get_dict_value(processed_inputs.get('market_regime_context', {}), 'current_regime', 'unknown'),
                     'active_experiments': len(processed_inputs.get('experiment_registry', {}).get('active_experiments', [])),
                     'processing_errors': processed_inputs.get('processing_errors', [])
                 },
@@ -760,7 +1233,7 @@ async def main():
     print("CIL Input Processing Results:")
     print(f"Agent Outputs: {len(processed_inputs.get('agent_outputs', []))}")
     print(f"Cross-Agent Events: {len(processed_inputs.get('cross_agent_metadata', {}).get('confluence_events', []))}")
-    print(f"Current Regime: {processed_inputs.get('market_regime_context', {}).get('current_regime', 'unknown')}")
+    print(f"Current Regime: {self._get_dict_value(processed_inputs.get('market_regime_context', {}), 'current_regime', 'unknown')}")
     print(f"Active Experiments: {len(processed_inputs.get('experiment_registry', {}).get('active_experiments', []))}")
 
 

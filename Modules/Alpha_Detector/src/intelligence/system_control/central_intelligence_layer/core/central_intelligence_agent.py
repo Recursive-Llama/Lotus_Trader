@@ -41,14 +41,26 @@ class CentralIntelligenceAgent:
         self.team_id = "central_intelligence_layer"
         self.agent_id = "central_intelligence_agent"
         
-        # Initialize CIL team members
+        # Initialize CIL team members - all engines that exist
+        from ..engines.input_processor import InputProcessor
+        from ..engines.global_synthesis_engine import GlobalSynthesisEngine
+        from ..engines.experiment_orchestration_engine import ExperimentOrchestrationEngine
+        from ..engines.learning_feedback_engine import LearningFeedbackEngine
+        from ..engines.autonomy_adaptation_engine import AutonomyAdaptationEngine
+        from ..engines.output_directive_system import OutputDirectiveSystem
+        from ..engines.governance_system import GovernanceSystem
+        from ..engines.system_resonance_manager import SystemResonanceManager
+        
         self.team_members = {
             "strategic_pattern_miner": StrategicPatternMiner(db_manager, llm_client),
-            # TODO: Add other team members as they are implemented
-            # "experiment_orchestrator": ExperimentOrchestrator(db_manager, llm_client),
-            # "doctrine_keeper": DoctrineKeeper(db_manager, llm_client),
-            # "plan_composer": PlanComposer(db_manager, llm_client),
-            # "system_resonance_manager": SystemResonanceManager(db_manager, llm_client)
+            "input_processor": InputProcessor(db_manager, llm_client),
+            "global_synthesis_engine": GlobalSynthesisEngine(db_manager, llm_client),
+            "experiment_orchestration_engine": ExperimentOrchestrationEngine(db_manager, llm_client),
+            "learning_feedback_engine": LearningFeedbackEngine(db_manager, llm_client),
+            "autonomy_adaptation_engine": AutonomyAdaptationEngine(db_manager, llm_client),
+            "output_directive_system": OutputDirectiveSystem(db_manager, llm_client),
+            "governance_system": GovernanceSystem(db_manager, llm_client),
+            "system_resonance_manager": SystemResonanceManager(db_manager, llm_client)
         }
         
         logger.info(f"CentralIntelligenceAgent initialized with {len(self.team_members)} team members")
@@ -205,11 +217,53 @@ class CentralIntelligenceAgent:
                 confluence_analysis = await pattern_miner.detect_strategic_confluence()
                 results["confluence_analysis"] = confluence_analysis
             
-            # TODO: Add coordination for other team members
-            # - Experiment Orchestrator: experiment design and assignment
-            # - Doctrine Keeper: knowledge curation and doctrine updates
-            # - Plan Composer: strategic plan composition
-            # - System Resonance Manager: resonance analysis and scoring
+            # 1. Input Processing - Get all agent outputs
+            if "input_processor" in self.team_members:
+                input_processor = self.team_members["input_processor"]
+                processed_inputs = await input_processor.process_all_inputs()
+                results["processed_inputs"] = processed_inputs
+            
+            # 2. Global Synthesis - Analyze cross-agent patterns
+            if "global_synthesis_engine" in self.team_members:
+                synthesis_engine = self.team_members["global_synthesis_engine"]
+                global_view = await synthesis_engine.synthesize_global_view(processed_inputs)
+                results["global_synthesis"] = global_view
+            
+            # 3. Learning & Feedback - Process outcomes and lessons
+            if "learning_feedback_engine" in self.team_members:
+                learning_engine = self.team_members["learning_feedback_engine"]
+                learning_results = await learning_engine.process_learning_feedback(global_view)
+                results["learning_feedback"] = learning_results
+            
+            # 4. Autonomy & Adaptation - Adjust thresholds and parameters
+            if "autonomy_adaptation_engine" in self.team_members:
+                autonomy_engine = self.team_members["autonomy_adaptation_engine"]
+                adaptation_results = await autonomy_engine.process_autonomy_adaptation(global_view)
+                results["autonomy_adaptation"] = adaptation_results
+            
+            # 5. Experiment Orchestration - Design new experiments
+            if "experiment_orchestration_engine" in self.team_members:
+                experiment_engine = self.team_members["experiment_orchestration_engine"]
+                experiment_results = await experiment_engine.orchestrate_experiments(global_view)
+                results["experiment_orchestration"] = experiment_results
+            
+            # 6. Output & Directives - Generate directives for other agents
+            if "output_directive_system" in self.team_members:
+                output_system = self.team_members["output_directive_system"]
+                directive_results = await output_system.generate_directives(global_view, learning_results)
+                results["output_directives"] = directive_results
+            
+            # 7. Governance - Ensure system boundaries and conflict resolution
+            if "governance_system" in self.team_members:
+                governance_system = self.team_members["governance_system"]
+                governance_results = await governance_system.govern_system_operations(global_view)
+                results["governance"] = governance_results
+            
+            # 8. System Resonance - Monitor resonance fields
+            if "system_resonance_manager" in self.team_members:
+                resonance_manager = self.team_members["system_resonance_manager"]
+                resonance_results = await resonance_manager.manage_system_resonance(global_view)
+                results["system_resonance"] = resonance_results
             
             return results
             

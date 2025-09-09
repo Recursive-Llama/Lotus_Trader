@@ -21,6 +21,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Set
 from dataclasses import dataclass
 from collections import defaultdict
+from enum import Enum
 
 from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.openrouter_client import OpenRouterClient
@@ -84,6 +85,80 @@ class DoctrineInsight:
     confidence_level: float
 
 
+# Confluence Graph System Integration
+class ConfluenceType(Enum):
+    """Types of confluence events"""
+    SIGNAL_ALIGNMENT = "signal_alignment"
+    PATTERN_CONVERGENCE = "pattern_convergence"
+    TIMING_SYNCHRONIZATION = "timing_synchronization"
+    VOLUME_CONFIRMATION = "volume_confirmation"
+    REGIME_CONFLUENCE = "regime_confluence"
+    CROSS_ASSET_CONFLUENCE = "cross_asset_confluence"
+
+
+class ConfluenceStrength(Enum):
+    """Strength of confluence events"""
+    WEAK = "weak"
+    MODERATE = "moderate"
+    STRONG = "strong"
+    OVERWHELMING = "overwhelming"
+
+
+class GraphNodeType(Enum):
+    """Types of nodes in the confluence graph"""
+    SIGNAL = "signal"
+    PATTERN = "pattern"
+    AGENT = "agent"
+    TIMEFRAME = "timeframe"
+    ASSET = "asset"
+    REGIME = "regime"
+
+
+@dataclass
+class ConfluenceNode:
+    """A node in the confluence graph"""
+    node_id: str
+    node_type: GraphNodeType
+    node_data: Dict[str, Any]
+    connections: Set[str]
+    weight: float
+    last_updated: datetime
+
+
+@dataclass
+class ConfluenceEdge:
+    """An edge in the confluence graph"""
+    edge_id: str
+    source_node: str
+    target_node: str
+    edge_type: str
+    weight: float
+    confluence_strength: ConfluenceStrength
+    last_updated: datetime
+
+
+@dataclass
+class ConfluenceEvent:
+    """A confluence event between signals/patterns"""
+    event_id: str
+    confluence_type: ConfluenceType
+    confluence_strength: ConfluenceStrength
+    participating_nodes: List[str]
+    confluence_score: float
+    timing_window: timedelta
+    detected_at: datetime
+    metadata: Dict[str, Any]
+
+
+@dataclass
+class ConfluenceGraph:
+    """The complete confluence graph"""
+    nodes: Dict[str, ConfluenceNode]
+    edges: Dict[str, ConfluenceEdge]
+    clusters: List[Dict[str, Any]]
+    last_updated: datetime
+
+
 class GlobalSynthesisEngine:
     """
     CIL Global Synthesis Engine
@@ -114,6 +189,18 @@ class GlobalSynthesisEngine:
         self.family_strength_threshold = 0.6
         self.meta_pattern_threshold = 0.75
         self.doctrine_confidence_threshold = 0.8
+        
+        # Confluence Graph System configuration
+        self.confluence_graph = ConfluenceGraph(
+            nodes={},
+            edges={},
+            clusters=[],
+            last_updated=datetime.now(timezone.utc)
+        )
+        self.confluence_events: List[ConfluenceEvent] = []
+        self.confluence_analysis_window_hours = 6
+        self.confluence_strength_threshold = 0.7
+        self.graph_optimization_interval_hours = 24
         
     async def synthesize_global_view(self, processed_inputs: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -167,6 +254,10 @@ class GlobalSynthesisEngine:
             agent_outputs = processed_inputs.get('agent_outputs', [])
             cross_agent_metadata = processed_inputs.get('cross_agent_metadata', {})
             
+            # Convert dataclass to dict if needed
+            if hasattr(cross_agent_metadata, '__dict__'):
+                cross_agent_metadata = cross_agent_metadata.__dict__
+            
             # Detect coincidences
             coincidences = await self._detect_agent_coincidences(agent_outputs)
             
@@ -213,6 +304,11 @@ class GlobalSynthesisEngine:
         """
         try:
             cross_agent_metadata = processed_inputs.get('cross_agent_metadata', {})
+            
+            # Convert dataclass to dict if needed
+            if hasattr(cross_agent_metadata, '__dict__'):
+                cross_agent_metadata = cross_agent_metadata.__dict__
+            
             coverage_map = cross_agent_metadata.get('coverage_map', {})
             
             # Find redundant areas
@@ -258,6 +354,11 @@ class GlobalSynthesisEngine:
         try:
             # Get historical performance data
             historical_performance = processed_inputs.get('historical_performance', {})
+            
+            # Convert dataclass to dict if needed
+            if hasattr(historical_performance, '__dict__'):
+                historical_performance = historical_performance.__dict__
+            
             success_patterns = historical_performance.get('success_patterns', [])
             failed_patterns = historical_performance.get('failed_patterns', [])
             
@@ -286,11 +387,20 @@ class GlobalSynthesisEngine:
         try:
             # Get cross-agent metadata
             cross_agent_metadata = processed_inputs.get('cross_agent_metadata', {})
+            
+            # Convert dataclass to dict if needed
+            if hasattr(cross_agent_metadata, '__dict__'):
+                cross_agent_metadata = cross_agent_metadata.__dict__
+            
             confluence_events = cross_agent_metadata.get('confluence_events', [])
             lead_lag_relationships = cross_agent_metadata.get('lead_lag_relationships', [])
             
             # Get market regime context
             market_regime_context = processed_inputs.get('market_regime_context', {})
+            
+            # Convert dataclass to dict if needed
+            if hasattr(market_regime_context, '__dict__'):
+                market_regime_context = market_regime_context.__dict__
             
             # Detect meta-patterns
             meta_patterns = []
@@ -334,6 +444,10 @@ class GlobalSynthesisEngine:
             
             doctrine_insights = []
             
+            # FIRST: Add data quality analysis insights
+            data_quality_insights = await self._analyze_data_quality(processed_inputs)
+            doctrine_insights.extend(data_quality_insights)
+            
             # Form insights from signal families
             family_insights = await self._form_family_doctrine_insights(signal_families)
             doctrine_insights.extend(family_insights)
@@ -352,28 +466,152 @@ class GlobalSynthesisEngine:
             print(f"Error forming doctrine insights: {e}")
             return []
     
+    async def _analyze_data_quality(self, processed_inputs: Dict[str, Any]) -> List[DoctrineInsight]:
+        """
+        Analyze data quality issues and provide strategic recommendations
+        
+        Returns:
+            List of DoctrineInsight objects with data quality recommendations
+        """
+        try:
+            insights = []
+            
+            # Get agent outputs to analyze
+            agent_outputs = processed_inputs.get('agent_outputs', [])
+            
+            # Analyze Raw Data Intelligence patterns
+            raw_data_patterns = [output for output in agent_outputs 
+                               if hasattr(output, 'agent_id') and output.agent_id == 'raw_data_intelligence']
+            
+            if raw_data_patterns:
+                # Analyze pattern counts and confidence levels
+                total_patterns = 0
+                high_confidence_patterns = 0
+                high_count_patterns = 0
+                
+                for pattern in raw_data_patterns:
+                    if hasattr(pattern, 'module_intelligence'):
+                        module_intel = pattern.module_intelligence
+                        if isinstance(module_intel, dict):
+                            details = module_intel.get('details', [])
+                            confidence = pattern.sig_confidence
+                            
+                            total_patterns += len(details)
+                            
+                            # Check for high confidence on 1m data
+                            if confidence > 0.9:
+                                high_confidence_patterns += 1
+                            
+                            # Check for high pattern counts (potential noise)
+                            if len(details) > 50:
+                                high_count_patterns += 1
+                                insights.append(DoctrineInsight(
+                                    insight_type='data_quality_noise',
+                                    pattern_family='raw_data_intelligence',
+                                    reliability_score=0.9,
+                                    evidence_count=len(details),
+                                    recommendation=f'High pattern count detected ({len(details)} patterns) - consider adjusting divergence threshold from 10% to 25-50% to reduce noise',
+                                    confidence_level=0.8,
+                                    conditions={'pattern_count': len(details), 'threshold_suggestion': '25-50%'}
+                                ))
+                
+                # Check for suspicious confidence levels
+                if high_confidence_patterns > 0:
+                    insights.append(DoctrineInsight(
+                        insight_type='data_quality_confidence',
+                        pattern_family='raw_data_intelligence',
+                        reliability_score=0.9,
+                        evidence_count=high_confidence_patterns,
+                        recommendation=f'High confidence detected on 1m data ({high_confidence_patterns} patterns > 0.9 confidence) - implement confidence calibration for 1m timeframe data',
+                        confidence_level=0.8,
+                        conditions={'high_confidence_count': high_confidence_patterns, 'calibration_needed': True}
+                    ))
+                
+                # Check for insufficient data
+                if total_patterns < 10:
+                    insights.append(DoctrineInsight(
+                        insight_type='data_quality_sample',
+                        pattern_family='raw_data_intelligence',
+                        reliability_score=0.8,
+                        evidence_count=total_patterns,
+                        recommendation=f'Limited data sample ({total_patterns} total patterns) - wait for more data before making strong conclusions',
+                        confidence_level=0.7,
+                        conditions={'total_patterns': total_patterns, 'sample_size': 'insufficient'}
+                    ))
+            
+            # Analyze CIL self-correlation issues
+            cil_patterns = [output for output in agent_outputs 
+                          if hasattr(output, 'agent_id') and output.agent_id == 'central_intelligence_layer']
+            
+            if len(cil_patterns) > len(raw_data_patterns) * 2:
+                insights.append(DoctrineInsight(
+                    insight_type='data_quality_correlation',
+                    pattern_family='central_intelligence_layer',
+                    reliability_score=0.9,
+                    evidence_count=len(cil_patterns),
+                    recommendation=f'CIL self-correlation detected ({len(cil_patterns)} CIL vs {len(raw_data_patterns)} Raw Data patterns) - correlation analysis needs improvement to exclude self-correlation',
+                    confidence_level=0.8,
+                    conditions={'cil_patterns': len(cil_patterns), 'raw_data_patterns': len(raw_data_patterns)}
+                ))
+            
+            return insights
+            
+        except Exception as e:
+            print(f"Error analyzing data quality: {e}")
+            return []
+    
+    def _parse_timestamp(self, timestamp) -> Optional[datetime]:
+        """Parse timestamp string to datetime object"""
+        if timestamp is None:
+            return None
+        
+        if isinstance(timestamp, datetime):
+            return timestamp
+        
+        if isinstance(timestamp, str):
+            try:
+                # Try ISO format first
+                return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                try:
+                    # Try parsing with pandas
+                    import pandas as pd
+                    return pd.to_datetime(timestamp).to_pydatetime()
+                except:
+                    return None
+        
+        return None
+
     async def _detect_agent_coincidences(self, agent_outputs: List[Any]) -> List[Dict[str, Any]]:
-        """Detect coincidences between agent outputs"""
+        """Detect coincidences between agent outputs (excluding self-correlation)"""
         coincidences = []
         
         # Group outputs by time windows
         time_windows = defaultdict(list)
         for output in agent_outputs:
             if hasattr(output, 'timestamp'):
-                # Round to 5-minute windows
-                window_time = output.timestamp.replace(
-                    minute=(output.timestamp.minute // 5) * 5, 
-                    second=0, 
-                    microsecond=0
-                )
-                time_windows[window_time].append(output)
+                # Parse timestamp to datetime
+                parsed_timestamp = self._parse_timestamp(output.timestamp)
+                if parsed_timestamp:
+                    # Round to 5-minute windows
+                    window_time = parsed_timestamp.replace(
+                        minute=(parsed_timestamp.minute // 5) * 5, 
+                        second=0, 
+                        microsecond=0
+                    )
+                    time_windows[window_time].append(output)
         
         # Check for coincidences in each time window
         for window_time, window_outputs in time_windows.items():
             if len(window_outputs) >= 2:
-                # Check for similar patterns
+                # Check for similar patterns (excluding self-correlation)
                 for i, output1 in enumerate(window_outputs):
                     for output2 in window_outputs[i+1:]:
+                        # EXCLUDE SELF-CORRELATION: Don't correlate CIL with CIL
+                        if (output1.agent_id == output2.agent_id and 
+                            output1.agent_id == 'central_intelligence_layer'):
+                            continue
+                            
                         if self._are_outputs_similar(output1, output2):
                             coincidences.append({
                                 'timestamp': window_time,
@@ -471,6 +709,42 @@ class GlobalSynthesisEngine:
                             })
         
         return blind_spots
+    
+    def _calculate_blind_spot_priority(self, symbol: str, timeframe: str, regime: str, session: str) -> float:
+        """Calculate priority for blind spot analysis"""
+        try:
+            # Base priority calculation
+            priority = 0.5
+            
+            # Higher priority for major symbols
+            if symbol in ['BTC', 'ETH']:
+                priority += 0.3
+            elif symbol in ['SOL', 'AVAX']:
+                priority += 0.2
+            
+            # Higher priority for shorter timeframes
+            if timeframe == '1m':
+                priority += 0.2
+            elif timeframe == '5m':
+                priority += 0.1
+            
+            # Higher priority for trending regimes
+            if regime == 'trending':
+                priority += 0.2
+            elif regime == 'volatile':
+                priority += 0.1
+            
+            # Higher priority for active sessions
+            if session == 'US':
+                priority += 0.2
+            elif session == 'EU':
+                priority += 0.1
+            
+            return min(priority, 1.0)  # Cap at 1.0
+            
+        except Exception as e:
+            logger.error(f"Error calculating blind spot priority: {e}")
+            return 0.5
     
     def _find_coverage_gaps(self, coverage_map: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Find coverage gaps in existing areas"""
@@ -922,9 +1196,410 @@ class GlobalSynthesisEngine:
         
         return insights
     
+    # Confluence Graph System Methods
+    async def process_confluence_analysis(self, recent_strands: List[Dict[str, Any]],
+                                        global_synthesis_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Process confluence analysis and update graph"""
+        try:
+            # Extract signals and patterns from recent strands
+            signals_patterns = await self._extract_signals_patterns(recent_strands)
+            
+            # Analyze confluence events
+            confluence_events = await self._analyze_confluence_events(signals_patterns, global_synthesis_results)
+            
+            # Update confluence graph
+            graph_updates = await self._update_confluence_graph(confluence_events)
+            
+            # Analyze confluence clusters
+            cluster_analysis = await self._analyze_confluence_clusters()
+            
+            # Optimize graph structure if needed
+            optimization_results = await self._optimize_graph_structure()
+            
+            # Compile results
+            results = {
+                'confluence_events_detected': len(confluence_events),
+                'graph_updates': graph_updates,
+                'cluster_analysis': cluster_analysis,
+                'optimization_results': optimization_results,
+                'confluence_insights': self._compile_confluence_insights(confluence_events, cluster_analysis)
+            }
+            
+            # Publish confluence results
+            await self._publish_confluence_results(results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in confluence analysis: {e}")
+            return {'error': str(e)}
+    
+    async def _extract_signals_patterns(self, recent_strands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Extract signals and patterns from recent strands"""
+        signals_patterns = []
+        
+        for strand in recent_strands:
+            # Extract signal/pattern data
+            signal_data = {
+                'strand_id': strand.get('id'),
+                'agent_id': strand.get('agent_id'),
+                'detection_type': strand.get('detection_type'),
+                'symbol': strand.get('symbol'),
+                'timeframe': strand.get('timeframe'),
+                'sig_confidence': strand.get('sig_confidence', 0),
+                'sig_sigma': strand.get('sig_sigma', 0),
+                'created_at': strand.get('created_at'),
+                'module_intelligence': strand.get('module_intelligence', {})
+            }
+            signals_patterns.append(signal_data)
+        
+        return signals_patterns
+    
+    async def _analyze_confluence_events(self, signals_patterns: List[Dict[str, Any]],
+                                       global_synthesis_results: Dict[str, Any]) -> List[ConfluenceEvent]:
+        """Analyze confluence events between signals and patterns"""
+        confluence_events = []
+        
+        # Group signals for confluence analysis
+        signal_groups = await self._group_signals_for_confluence(signals_patterns)
+        
+        # Analyze confluence within each group
+        for group_key, group_signals in signal_groups.items():
+            if len(group_signals) >= 2:  # Need at least 2 signals for confluence
+                group_confluence = await self._analyze_group_confluence(group_signals, global_synthesis_results)
+                confluence_events.extend(group_confluence)
+        
+        return confluence_events
+    
+    async def _group_signals_for_confluence(self, signals_patterns: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Group signals for confluence analysis"""
+        groups = {}
+        
+        for signal in signals_patterns:
+            # Group by symbol and timeframe for confluence analysis
+            group_key = f"{signal.get('symbol', 'UNKNOWN')}_{signal.get('timeframe', 'UNKNOWN')}"
+            
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(signal)
+        
+        return groups
+    
+    async def _analyze_group_confluence(self, group_signals: List[Dict[str, Any]],
+                                      global_synthesis_results: Dict[str, Any]) -> List[ConfluenceEvent]:
+        """Analyze confluence within a group of signals"""
+        confluence_events = []
+        
+        # Sort signals by timestamp
+        group_signals.sort(key=lambda x: x.get('created_at', datetime.min))
+        
+        # Check for confluence between consecutive signals
+        for i in range(len(group_signals) - 1):
+            signal1 = group_signals[i]
+            signal2 = group_signals[i + 1]
+            
+            # Check if signals are within confluence window
+            time_diff = signal2.get('created_at') - signal1.get('created_at')
+            if time_diff.total_seconds() <= self.confluence_analysis_window_hours * 3600:
+                
+                # Analyze confluence type and strength
+                confluence_type, confluence_strength, confluence_score = await self._analyze_signal_confluence(
+                    signal1, signal2, global_synthesis_results
+                )
+                
+                if confluence_score >= self.confluence_strength_threshold:
+                    # Create confluence event
+                    event = ConfluenceEvent(
+                        event_id=f"confluence_{signal1.get('strand_id')}_{signal2.get('strand_id')}",
+                        confluence_type=confluence_type,
+                        confluence_strength=confluence_strength,
+                        participating_nodes=[signal1.get('strand_id'), signal2.get('strand_id')],
+                        confluence_score=confluence_score,
+                        timing_window=time_diff,
+                        detected_at=datetime.now(timezone.utc),
+                        metadata={
+                            'signal1_agent': signal1.get('agent_id'),
+                            'signal2_agent': signal2.get('agent_id'),
+                            'signal1_type': signal1.get('detection_type'),
+                            'signal2_type': signal2.get('detection_type')
+                        }
+                    )
+                    confluence_events.append(event)
+        
+        return confluence_events
+    
+    async def _analyze_signal_confluence(self, signal1: Dict[str, Any], signal2: Dict[str, Any],
+                                       global_synthesis_results: Dict[str, Any]) -> Tuple[ConfluenceType, ConfluenceStrength, float]:
+        """Analyze confluence between two signals"""
+        try:
+            # Determine confluence type based on signal characteristics
+            if signal1.get('detection_type') == signal2.get('detection_type'):
+                confluence_type = ConfluenceType.PATTERN_CONVERGENCE
+            elif signal1.get('agent_id') == signal2.get('agent_id'):
+                confluence_type = ConfluenceType.SIGNAL_ALIGNMENT
+            else:
+                confluence_type = ConfluenceType.CROSS_ASSET_CONFLUENCE
+            
+            # Calculate confluence score based on confidence and timing
+            confidence_avg = (signal1.get('sig_confidence', 0) + signal2.get('sig_confidence', 0)) / 2
+            sigma_avg = (signal1.get('sig_sigma', 0) + signal2.get('sig_sigma', 0)) / 2
+            
+            # Base confluence score
+            confluence_score = (confidence_avg * 0.6) + (sigma_avg * 0.4)
+            
+            # Determine confluence strength
+            if confluence_score >= 0.9:
+                confluence_strength = ConfluenceStrength.OVERWHELMING
+            elif confluence_score >= 0.8:
+                confluence_strength = ConfluenceStrength.STRONG
+            elif confluence_score >= 0.6:
+                confluence_strength = ConfluenceStrength.MODERATE
+            else:
+                confluence_strength = ConfluenceStrength.WEAK
+            
+            return confluence_type, confluence_strength, confluence_score
+            
+        except Exception as e:
+            print(f"Error analyzing signal confluence: {e}")
+            return ConfluenceType.SIGNAL_ALIGNMENT, ConfluenceStrength.WEAK, 0.0
+    
+    async def _update_confluence_graph(self, confluence_events: List[ConfluenceEvent]) -> Dict[str, Any]:
+        """Update confluence graph with new events"""
+        graph_updates = {
+            'nodes_added': 0,
+            'edges_added': 0,
+            'nodes_updated': 0,
+            'edges_updated': 0
+        }
+        
+        for event in confluence_events:
+            # Add/update nodes for participating signals
+            for node_id in event.participating_nodes:
+                if node_id not in self.confluence_graph.nodes:
+                    # Create new node
+                    node = ConfluenceNode(
+                        node_id=node_id,
+                        node_type=GraphNodeType.SIGNAL,
+                        node_data={'confluence_events': 1},
+                        connections=set(),
+                        weight=event.confluence_score,
+                        last_updated=datetime.now(timezone.utc)
+                    )
+                    self.confluence_graph.nodes[node_id] = node
+                    graph_updates['nodes_added'] += 1
+                else:
+                    # Update existing node
+                    self.confluence_graph.nodes[node_id].weight = max(
+                        self.confluence_graph.nodes[node_id].weight, event.confluence_score
+                    )
+                    self.confluence_graph.nodes[node_id].node_data['confluence_events'] = \
+                        self.confluence_graph.nodes[node_id].node_data.get('confluence_events', 0) + 1
+                    self.confluence_graph.nodes[node_id].last_updated = datetime.now(timezone.utc)
+                    graph_updates['nodes_updated'] += 1
+            
+            # Add edge between participating nodes
+            if len(event.participating_nodes) >= 2:
+                edge_id = f"edge_{event.participating_nodes[0]}_{event.participating_nodes[1]}"
+                
+                if edge_id not in self.confluence_graph.edges:
+                    # Create new edge
+                    edge = ConfluenceEdge(
+                        edge_id=edge_id,
+                        source_node=event.participating_nodes[0],
+                        target_node=event.participating_nodes[1],
+                        edge_type=event.confluence_type.value,
+                        weight=event.confluence_score,
+                        confluence_strength=event.confluence_strength,
+                        last_updated=datetime.now(timezone.utc)
+                    )
+                    self.confluence_graph.edges[edge_id] = edge
+                    graph_updates['edges_added'] += 1
+                    
+                    # Update node connections
+                    self.confluence_graph.nodes[event.participating_nodes[0]].connections.add(event.participating_nodes[1])
+                    self.confluence_graph.nodes[event.participating_nodes[1]].connections.add(event.participating_nodes[0])
+                else:
+                    # Update existing edge
+                    self.confluence_graph.edges[edge_id].weight = max(
+                        self.confluence_graph.edges[edge_id].weight, event.confluence_score
+                    )
+                    self.confluence_graph.edges[edge_id].confluence_strength = event.confluence_strength
+                    self.confluence_graph.edges[edge_id].last_updated = datetime.now(timezone.utc)
+                    graph_updates['edges_updated'] += 1
+        
+        # Update graph timestamp
+        self.confluence_graph.last_updated = datetime.now(timezone.utc)
+        
+        return graph_updates
+    
+    async def _analyze_confluence_clusters(self) -> Dict[str, Any]:
+        """Analyze confluence clusters in the graph"""
+        try:
+            clusters = []
+            
+            # Simple clustering based on connected components
+            visited = set()
+            
+            for node_id, node in self.confluence_graph.nodes.items():
+                if node_id not in visited:
+                    # Start new cluster
+                    cluster = {'nodes': [], 'edges': [], 'strength': 0, 'size': 0}
+                    
+                    # DFS to find connected nodes
+                    stack = [node_id]
+                    while stack:
+                        current_node = stack.pop()
+                        if current_node not in visited:
+                            visited.add(current_node)
+                            cluster['nodes'].append(current_node)
+                            cluster['size'] += 1
+                            
+                            # Add node weight to cluster strength
+                            cluster['strength'] += self.confluence_graph.nodes[current_node].weight
+                            
+                            # Find connected edges
+                            for edge_id, edge in self.confluence_graph.edges.items():
+                                if (edge.source_node == current_node or edge.target_node == current_node) and \
+                                   edge_id not in cluster['edges']:
+                                    cluster['edges'].append(edge_id)
+                                    
+                                    # Add connected node to stack
+                                    connected_node = edge.target_node if edge.source_node == current_node else edge.source_node
+                                    if connected_node not in visited:
+                                        stack.append(connected_node)
+                    
+                    # Calculate average cluster strength
+                    if cluster['size'] > 0:
+                        cluster['strength'] /= cluster['size']
+                    
+                    # Only include significant clusters
+                    if cluster['size'] >= 2 and cluster['strength'] >= self.confluence_strength_threshold:
+                        clusters.append(cluster)
+            
+            return {
+                'total_clusters': len(clusters),
+                'clusters': clusters,
+                'largest_cluster_size': max([c['size'] for c in clusters], default=0),
+                'average_cluster_strength': sum([c['strength'] for c in clusters]) / len(clusters) if clusters else 0
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing confluence clusters: {e}")
+            return {'error': str(e)}
+    
+    async def _optimize_graph_structure(self) -> Dict[str, Any]:
+        """Optimize graph structure for better performance"""
+        try:
+            optimization_actions = []
+            
+            # Remove old, low-weight nodes
+            nodes_to_remove = []
+            for node_id, node in self.confluence_graph.nodes.items():
+                if (datetime.now(timezone.utc) - node.last_updated).total_seconds() > 86400 and node.weight < 0.3:
+                    nodes_to_remove.append(node_id)
+            
+            for node_id in nodes_to_remove:
+                # Remove node and its edges
+                if node_id in self.confluence_graph.nodes:
+                    del self.confluence_graph.nodes[node_id]
+                
+                # Remove connected edges
+                edges_to_remove = []
+                for edge_id, edge in self.confluence_graph.edges.items():
+                    if edge.source_node == node_id or edge.target_node == node_id:
+                        edges_to_remove.append(edge_id)
+                
+                for edge_id in edges_to_remove:
+                    del self.confluence_graph.edges[edge_id]
+                
+                optimization_actions.append({
+                    'action': 'remove_old_node',
+                    'node_id': node_id,
+                    'reason': 'low_weight_and_old'
+                })
+            
+            return {
+                'optimization_actions': optimization_actions,
+                'nodes_removed': len(nodes_to_remove),
+                'edges_removed': sum(len([e for e in self.confluence_graph.edges.values() 
+                                        if e.source_node == n or e.target_node == n]) for n in nodes_to_remove)
+            }
+            
+        except Exception as e:
+            print(f"Error optimizing graph structure: {e}")
+            return {'error': str(e)}
+    
+    def _compile_confluence_insights(self, confluence_events: List[ConfluenceEvent], 
+                                   cluster_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Compile confluence insights from events and clusters"""
+        insights = []
+        
+        # Insights from confluence events
+        for event in confluence_events:
+            insight = {
+                'type': 'confluence_event',
+                'confluence_type': event.confluence_type.value,
+                'strength': event.confluence_strength.value,
+                'score': event.confluence_score,
+                'participating_agents': list(set([event.metadata.get('signal1_agent'), event.metadata.get('signal2_agent')])),
+                'timing_window': event.timing_window.total_seconds()
+            }
+            insights.append(insight)
+        
+        # Insights from cluster analysis
+        if cluster_analysis.get('clusters'):
+            for cluster in cluster_analysis['clusters']:
+                insight = {
+                    'type': 'confluence_cluster',
+                    'cluster_size': cluster['size'],
+                    'cluster_strength': cluster['strength'],
+                    'node_count': len(cluster['nodes']),
+                    'edge_count': len(cluster['edges'])
+                }
+                insights.append(insight)
+        
+        return insights
+    
+    async def _publish_confluence_results(self, results: Dict[str, Any]):
+        """Publish confluence results as CIL strand"""
+        try:
+            # Create CIL strand with confluence results
+            strand_data = {
+                'id': f"cil_confluence_{int(datetime.now().timestamp())}",
+                'kind': 'cil_confluence_analysis',
+                'module': 'alpha',
+                'agent_id': 'central_intelligence_layer',
+                'cil_team_member': 'global_synthesis_engine',
+                'symbol': 'SYSTEM',
+                'timeframe': 'system',
+                'session_bucket': 'GLOBAL',
+                'regime': 'system',
+                'tags': ['agent:central_intelligence:global_synthesis_engine:confluence_analysis'],
+                'module_intelligence': {
+                    'analysis_type': 'confluence_analysis',
+                    'confluence_events_detected': results.get('confluence_events_detected', 0),
+                    'graph_updates': results.get('graph_updates', {}),
+                    'cluster_analysis': results.get('cluster_analysis', {}),
+                    'optimization_results': results.get('optimization_results', {}),
+                    'confluence_insights': results.get('confluence_insights', [])
+                },
+                'sig_sigma': 1.0,
+                'sig_confidence': 0.8,
+                'sig_direction': 'neutral',
+                'outcome_score': 0.0,
+                'created_at': datetime.now(timezone.utc)
+            }
+            
+            # Insert into database
+            await self.supabase_manager.insert_strand(strand_data)
+            
+        except Exception as e:
+            print(f"Error publishing confluence results: {e}")
+    
     async def _publish_synthesis_results(self, global_view: Dict[str, Any]):
         """Publish global synthesis results as CIL strand"""
         try:
+            print(f"Publishing synthesis results: {len(global_view)} items")
             # Create CIL synthesis strand
             cil_strand = {
                 'id': f"cil_global_synthesis_{int(datetime.now().timestamp())}",
@@ -939,26 +1614,41 @@ class GlobalSynthesisEngine:
                 'tags': ['agent:central_intelligence:global_synthesis_engine:synthesis_complete'],
                 'module_intelligence': {
                     'synthesis_type': 'global_synthesis',
-                    'correlation_strength': global_view.get('cross_agent_correlation', {}).get('correlation_strength', 0.0),
-                    'coverage_score': global_view.get('coverage_analysis', {}).get('coverage_score', 0.0),
-                    'efficiency_score': global_view.get('coverage_analysis', {}).get('efficiency_score', 0.0),
+                    'correlation_strength': global_view.get('cross_agent_correlation').correlation_strength if global_view.get('cross_agent_correlation') else 0.0,
+                    'coverage_score': global_view.get('coverage_analysis').coverage_score if global_view.get('coverage_analysis') else 0.0,
+                    'efficiency_score': global_view.get('coverage_analysis').efficiency_score if global_view.get('coverage_analysis') else 0.0,
                     'signal_families_count': len(global_view.get('signal_families', [])),
                     'meta_patterns_count': len(global_view.get('meta_patterns', [])),
                     'doctrine_insights_count': len(global_view.get('doctrine_insights', [])),
+                    'doctrine_insights': [
+                        {
+                            'insight_type': insight.insight_type,
+                            'pattern_family': insight.pattern_family,
+                            'reliability_score': insight.reliability_score,
+                            'evidence_count': insight.evidence_count,
+                            'recommendation': insight.recommendation,
+                            'confidence_level': insight.confidence_level,
+                            'conditions': insight.conditions
+                        } for insight in global_view.get('doctrine_insights', [])
+                    ],
                     'synthesis_errors': global_view.get('synthesis_errors', [])
                 },
                 'sig_sigma': 1.0,
                 'sig_confidence': 1.0,
                 'sig_direction': 'neutral',
                 'outcome_score': 1.0,
-                'created_at': datetime.now(timezone.utc)
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             # Insert into database
-            await self.supabase_manager.insert_strand(cil_strand)
+            print(f"Inserting CIL strand: {cil_strand['id']}")
+            result = self.supabase_manager.insert_strand(cil_strand)
+            print(f"CIL strand inserted successfully: {result}")
             
         except Exception as e:
             print(f"Error publishing global synthesis results: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 # Example usage and testing
