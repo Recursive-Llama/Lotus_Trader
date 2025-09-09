@@ -25,14 +25,26 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              RAW DATA INTELLIGENCE TEAM ✅                  │
-│  • Market Microstructure Analyzer  • Volume Pattern Analyzer│
-│  • Time-Based Pattern Detector     • Cross-Asset Analyzer   │
-│  • Raw Data Divergence Detector    • Raw Data Coordinator   │
-│  • Enhanced Agent Base with CIL Integration                 │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ RAW DATA        │  │ SOCIAL DATA     │  │ USER            │
+│ INTELLIGENCE    │  │ INTELLIGENCE    │  │ INTELLIGENCE    │
+│ TEAM ✅         │  │ TEAM 📋         │  │ TEAM 📋         │
+│                 │  │                 │  │                 │
+│ • Market        │  │ • Social        │  │ • User          │
+│   Microstructure│  │   Media Scanner │  │   Preference    │
+│ • Volume        │  │ • Sentiment     │  │   Analyzer      │
+│   Analyzer      │  │   Analyzer      │  │ • Behavior      │
+│ • Time Patterns │  │ • Chart         │  │   Pattern       │
+│ • Cross-Asset   │  │   Understanding │  │   Detector      │
+│ • Divergence    │  │ • News Impact   │  │ • Custom        │
+│   Detector      │  │   Analyzer      │  │   Strategy      │
+│ • Coordinator   │  │ • Social        │  │ • Risk Profile  │
+│                 │  │   Coordinator   │  │ • User          │
+│                 │  │                 │  │   Coordinator   │
+└─────────┬───────┘  └─────────┬───────┘  └─────────┬───────┘
+          │                    │                    │
+          └────────────────────┼────────────────────┘
+                               │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              CENTRAL INTELLIGENCE LAYER (CIL) ✅            │
@@ -58,25 +70,6 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 │  • Position Tracker              • Hyperliquid Integration  │
 │  • Venue Fallback Manager        • Trader Coordinator       │
 │  • CIL Integration               (Architecture Complete)    │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│              PLANNED INTELLIGENCE TEAMS                     │
-│                                                             │
-│  📋 SOCIAL DATA INTELLIGENCE TEAM                          │
-│  • Social Media Scanner          • Sentiment Analyzer       │
-│  • Chart Understanding Agent     • News Impact Analyzer     │
-│  • Social Pattern Detector       • Social Coordinator       │
-│  • Community Intelligence Agent  (Architecture Planned)     │
-│                                                             │
-│  📋 USER INTELLIGENCE TEAM                                 │
-│  • User Preference Analyzer      • Behavior Pattern Detector│
-│  • Custom Strategy Agent         • Risk Profile Analyzer    │
-│  • User Feedback Processor       • User Coordinator         │
-│  • Personalization Engine        (Architecture Planned)     │
-│                                                             │
-│  Note: These teams will feed directly into CIL,            │
-│  not through the Raw Data team.                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
