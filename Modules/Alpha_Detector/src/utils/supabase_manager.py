@@ -123,7 +123,7 @@ class SupabaseManager:
     
     async def execute_query(self, query: str, params: List[Any] = None) -> List[Dict[str, Any]]:
         """
-        Execute a raw SQL query
+        Execute a raw SQL query using Supabase RPC or fallback methods
         
         Args:
             query: SQL query string
@@ -133,38 +133,132 @@ class SupabaseManager:
             List of result rows as dictionaries
         """
         try:
-            # For Supabase, we'll use the RPC (Remote Procedure Call) approach
-            # or convert the query to use the Supabase client methods
+            # Clean up the query
+            cleaned_query = query.strip()
+            params = params or []
             
-            # For now, let's implement a simple version that handles basic SELECT queries
-            if query.strip().upper().startswith('SELECT'):
-                # Extract table name and basic query structure
-                # This is a simplified implementation - in production you'd want more robust parsing
-                
-                # For the specific query used in InputProcessor, let's handle it directly
-                if 'AD_strands' in query and 'agent_id IS NOT NULL' in query:
-                    # This is the query from InputProcessor
-                    cutoff_time = params[0] if params else None
-                    
-                    # Use Supabase client to get recent strands with agent_id
-                    result = self.client.table('ad_strands').select(
-                        'id, agent_id, kind, module_intelligence, sig_sigma, sig_confidence, '
-                        'outcome_score, tags, created_at, symbol, timeframe, regime, session_bucket'
-                    ).not_.is_('agent_id', 'null').gte('created_at', cutoff_time.isoformat() if cutoff_time else '').order('created_at', desc=True).execute()
-                    
+            # Try RPC approach first
+            try:
+                if cleaned_query.upper().startswith('SELECT'):
+                    result = self.client.rpc('execute_select_query', {
+                        'query_text': cleaned_query,
+                        'query_params': params
+                    }).execute()
                     return result.data if result.data else []
-                
-                # Generic fallback - try to execute as RPC
-                # Note: This would require setting up RPC functions in Supabase
-                logger.warning(f"Generic query execution not fully implemented: {query}")
-                return []
+                    
+                elif cleaned_query.upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
+                    result = self.client.rpc('execute_modify_query', {
+                        'query_text': cleaned_query,
+                        'query_params': params
+                    }).execute()
+                    return result.data if result.data else []
+                    
+            except Exception as rpc_error:
+                logger.warning(f"RPC approach failed, trying fallback: {rpc_error}")
+                # Fall through to fallback methods
             
-            else:
-                logger.warning(f"Non-SELECT queries not supported: {query}")
-                return []
+            # Fallback: Convert common queries to Supabase client methods
+            return await self._execute_query_fallback(cleaned_query, params)
                 
         except Exception as e:
             logger.error(f"Error executing query: {e}")
+            return []
+    
+    async def _execute_query_fallback(self, query: str, params: List[Any]) -> List[Dict[str, Any]]:
+        """Fallback method to execute queries using Supabase client methods"""
+        
+        try:
+            # Handle specific query patterns we know we need
+            if 'AD_strands' in query and 'kind =' in query:
+                # Extract kind from query
+                kind_match = None
+                if "'prediction_review'" in query:
+                    kind_match = 'prediction_review'
+                elif "'pattern'" in query:
+                    kind_match = 'pattern'
+                elif "'braid'" in query:
+                    kind_match = 'braid'
+                elif "'learning_braid'" in query:
+                    kind_match = 'learning_braid'
+                
+                if kind_match:
+                    # Build Supabase query
+                    supabase_query = self.client.table('ad_strands').select('*').eq('kind', kind_match)
+                    
+                    # Add additional filters based on query content
+                    if 'content->>' in query:
+                        # Handle JSONB field filters
+                        if 'asset' in query and params:
+                            supabase_query = supabase_query.eq('content->>asset', params[0])
+                        elif 'group_signature' in query and params:
+                            supabase_query = supabase_query.eq('content->>group_signature', params[0])
+                        elif 'success' in query and params:
+                            supabase_query = supabase_query.eq('content->>success', params[0])
+                        elif 'timeframe' in query and params:
+                            supabase_query = supabase_query.eq('content->>timeframe', params[0])
+                        elif 'group_type' in query and params:
+                            supabase_query = supabase_query.eq('content->>group_type', params[0])
+                        elif 'method' in query and params:
+                            supabase_query = supabase_query.eq('content->>method', params[0])
+                    
+                    # Add ordering
+                    if 'ORDER BY' in query:
+                        if 'created_at DESC' in query:
+                            supabase_query = supabase_query.order('created_at', desc=True)
+                        elif 'created_at ASC' in query:
+                            supabase_query = supabase_query.order('created_at', desc=False)
+                    
+                    # Add limit
+                    if 'LIMIT' in query:
+                        limit_match = None
+                        import re
+                        limit_match = re.search(r'LIMIT\s+(\d+)', query)
+                        if limit_match:
+                            supabase_query = supabase_query.limit(int(limit_match.group(1)))
+                    
+                    result = supabase_query.execute()
+                    return result.data if result.data else []
+            
+            # Handle COUNT queries
+            elif query.upper().startswith('SELECT COUNT'):
+                if 'AD_strands' in query and 'kind =' in query:
+                    kind_match = None
+                    if "'prediction_review'" in query:
+                        kind_match = 'prediction_review'
+                    elif "'braid'" in query:
+                        kind_match = 'braid'
+                    elif "'learning_braid'" in query:
+                        kind_match = 'learning_braid'
+                    
+                    if kind_match:
+                        result = self.client.table('ad_strands').select('*', count='exact').eq('kind', kind_match).execute()
+                        return [{'count': result.count}] if result.count is not None else [{'count': 0}]
+            
+            # Handle INSERT queries
+            elif query.upper().startswith('INSERT INTO AD_strands'):
+                # Extract values from INSERT query
+                import re
+                values_match = re.search(r'VALUES\s*\((.*?)\)', query, re.DOTALL)
+                if values_match and params:
+                    # This is a simplified approach - in practice you'd want more robust parsing
+                    strand_data = {
+                        'id': params[0] if len(params) > 0 else None,
+                        'kind': params[1] if len(params) > 1 else None,
+                        'created_at': params[2] if len(params) > 2 else None,
+                        'tags': params[3] if len(params) > 3 else None,
+                        'content': params[4] if len(params) > 4 else None,
+                        'metadata': params[5] if len(params) > 5 else None
+                    }
+                    
+                    result = self.client.table('ad_strands').insert(strand_data).execute()
+                    return result.data if result.data else []
+            
+            # Generic fallback - return empty result
+            logger.warning(f"Query not supported in fallback: {query[:100]}...")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error in query fallback: {e}")
             return []
 
 # Global Supabase manager instance - removed to avoid import-time instantiation
