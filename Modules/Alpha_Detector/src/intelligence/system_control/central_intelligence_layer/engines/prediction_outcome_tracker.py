@@ -59,6 +59,26 @@ class PredictionOutcomeTracker:
         self.tracking_interval = 300  # 5 minutes
         self.max_tracking_hours = 24  # Stop tracking after 24 hours
         
+    async def track_prediction(self, prediction_id: str) -> str:
+        """Track a specific prediction"""
+        try:
+            logger.info(f"Starting tracking for prediction: {prediction_id}")
+            
+            # Get prediction data
+            prediction = await self._get_prediction_by_id(prediction_id)
+            if not prediction:
+                logger.error(f"Prediction {prediction_id} not found")
+                return f"error: prediction not found"
+            
+            # Start tracking
+            await self._start_tracking(prediction_id, prediction.get('symbol', 'BTC'), prediction.get('timeframe', '1h'))
+            
+            return f"tracking started for {prediction_id}"
+            
+        except Exception as e:
+            logger.error(f"Error tracking prediction {prediction_id}: {e}")
+            return f"error: {str(e)}"
+    
     async def start_prediction_tracking(self):
         """Start the prediction tracking service"""
         logger.info("Starting PredictionOutcomeTracker service")
@@ -347,6 +367,20 @@ class PredictionOutcomeTracker:
             
         except Exception as e:
             logger.error(f"Error creating outcome learning strand: {e}")
+    
+    async def _get_prediction_by_id(self, prediction_id: str) -> Optional[Dict[str, Any]]:
+        """Get prediction data by ID"""
+        try:
+            query = "SELECT * FROM AD_strands WHERE id = %s AND kind = 'prediction'"
+            result = await self.db_manager.execute_query(query, [prediction_id])
+            
+            if result:
+                return dict(result[0])
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting prediction {prediction_id}: {e}")
+            return None
     
     async def _is_tracking(self, strand_id: str) -> bool:
         """Check if we're already tracking this prediction"""

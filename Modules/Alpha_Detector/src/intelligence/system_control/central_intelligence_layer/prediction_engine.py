@@ -7,6 +7,7 @@ and creates predictions with pattern grouping and similarity matching.
 
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
@@ -127,16 +128,68 @@ class PredictionEngine:
     
     async def get_exact_group_context(self, pattern_group: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Get exact group signature matches"""
-        group_signature = self.pattern_grouping.create_group_signature(pattern_group)
-        
-        # For now, return empty list - will implement proper context retrieval later
-        return []
+        try:
+            group_signature = self.pattern_grouping.create_group_signature(pattern_group)
+            
+            # Query for exact group signature matches
+            query = """
+                SELECT * FROM AD_strands 
+                WHERE kind = 'prediction_review' 
+                AND content->>'group_signature' = %s
+                AND content->>'asset' = %s
+                ORDER BY created_at DESC
+                LIMIT 20
+            """
+            
+            result = await self.supabase_manager.execute_query(query, [
+                group_signature, 
+                pattern_group['asset']
+            ])
+            
+            return [dict(row) for row in result]
+            
+        except Exception as e:
+            self.logger.error(f"Error getting exact group context: {e}")
+            return []
     
     async def get_similar_group_context(self, pattern_group: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Get similar groups with 70% similarity threshold"""
-        
-        # For now, return empty list - will implement proper context retrieval later
-        return []
+        try:
+            # Query for similar groups (same asset, overlapping pattern types)
+            pattern_types = [p['pattern_type'] for p in pattern_group['patterns']]
+            
+            query = """
+                SELECT * FROM AD_strands 
+                WHERE kind = 'prediction_review' 
+                AND content->>'asset' = %s
+                AND content->>'group_type' = %s
+                ORDER BY created_at DESC
+                LIMIT 50
+            """
+            
+            result = await self.supabase_manager.execute_query(query, [
+                pattern_group['asset'],
+                pattern_group['group_type']
+            ])
+            
+            # Score similarity for each group
+            scored_groups = []
+            for row in result:
+                group = dict(row)
+                similarity_score = self.calculate_similarity_score(pattern_group, group)
+                if similarity_score >= 0.7:  # 70% similarity threshold
+                    scored_groups.append({
+                        'group': group,
+                        'similarity_score': similarity_score,
+                        'match_type': 'similar',
+                        'differences': self.identify_differences(pattern_group, group)
+                    })
+            
+            return scored_groups
+            
+        except Exception as e:
+            self.logger.error(f"Error getting similar group context: {e}")
+            return []
     
     def calculate_similarity_score(self, current_group: Dict[str, Any], historical_group: Dict[str, Any]) -> float:
         """Calculate similarity score between groups"""
@@ -241,31 +294,326 @@ class PredictionEngine:
     
     async def create_code_prediction(self, pattern_group: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create code-based prediction using historical outcomes"""
-        # TODO: Implement code prediction logic
+        try:
+            # Get historical outcomes from context
+            historical_outcomes = self.extract_historical_outcomes(context)
+            
+            if not historical_outcomes:
+                # No historical data - create conservative prediction
+                return self.create_conservative_prediction(pattern_group)
+            
+            # Calculate prediction based on historical outcomes
+            prediction = self.calculate_prediction_from_outcomes(pattern_group, historical_outcomes)
+            
+            return {
+                'method': 'code',
+                'target_price': prediction['target_price'],
+                'stop_loss': prediction['stop_loss'],
+                'confidence': prediction['confidence'],
+                'direction': prediction['direction'],
+                'duration_hours': prediction['duration_hours'],
+                'historical_basis': {
+                    'sample_size': len(historical_outcomes),
+                    'success_rate': prediction['success_rate'],
+                    'avg_return': prediction['avg_return'],
+                    'max_drawdown': prediction['max_drawdown']
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error creating code prediction: {e}")
+            return self.create_conservative_prediction(pattern_group)
+    
+    def extract_historical_outcomes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract historical outcomes from context"""
+        outcomes = []
+        
+        # Extract from exact matches
+        for match in context.get('exact_matches', []):
+            if 'outcome' in match.get('content', {}):
+                outcomes.append(match['content']['outcome'])
+        
+        # Extract from similar matches
+        for match in context.get('similar_matches', []):
+            if 'outcome' in match.get('group', {}).get('content', {}):
+                outcomes.append(match['group']['content']['outcome'])
+        
+        return outcomes
+    
+    def calculate_prediction_from_outcomes(self, pattern_group: Dict[str, Any], outcomes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate prediction from historical outcomes"""
+        if not outcomes:
+            return self.create_conservative_prediction(pattern_group)
+        
+        # Calculate statistics
+        returns = [o.get('return_pct', 0) for o in outcomes if 'return_pct' in o]
+        success_rate = len([r for r in returns if r > 0]) / len(returns) if returns else 0.5
+        
+        avg_return = sum(returns) / len(returns) if returns else 0.0
+        max_drawdown = min(returns) if returns else -0.02
+        
+        # Calculate target price and stop loss
+        current_price = 50000  # TODO: Get actual current price
+        target_return = avg_return * 0.8  # Conservative estimate
+        stop_loss_pct = abs(max_drawdown) * 1.2  # Slightly wider stop
+        
+        target_price = current_price * (1 + target_return / 100)
+        stop_loss = current_price * (1 - stop_loss_pct / 100)
+        
+        # Calculate confidence based on sample size and success rate
+        confidence = min(0.9, 0.3 + (len(outcomes) * 0.1) + (success_rate * 0.4))
+        
+        # Determine direction
+        direction = 'long' if avg_return > 0 else 'short'
+        
+        # Calculate duration (20x timeframe)
+        timeframe_hours = self.get_timeframe_hours(pattern_group.get('timeframe', '1h'))
+        duration_hours = timeframe_hours * 20
+        
+        return {
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'confidence': confidence,
+            'direction': direction,
+            'duration_hours': duration_hours,
+            'success_rate': success_rate,
+            'avg_return': avg_return,
+            'max_drawdown': max_drawdown
+        }
+    
+    def create_conservative_prediction(self, pattern_group: Dict[str, Any]) -> Dict[str, Any]:
+        """Create conservative prediction when no historical data available"""
+        current_price = 50000  # TODO: Get actual current price
+        
         return {
             'method': 'code',
-            'target_price': 0.0,
-            'stop_loss': 0.0,
-            'confidence': 0.5
+            'target_price': current_price * 1.01,  # 1% target
+            'stop_loss': current_price * 0.99,     # 1% stop
+            'confidence': 0.3,                     # Low confidence
+            'direction': 'long',
+            'duration_hours': 20,                  # 20 hours
+            'historical_basis': {
+                'sample_size': 0,
+                'success_rate': 0.5,
+                'avg_return': 0.0,
+                'max_drawdown': -0.01
+            }
         }
+    
+    def get_timeframe_hours(self, timeframe: str) -> float:
+        """Convert timeframe string to hours"""
+        timeframe_map = {
+            '1m': 1/60,
+            '5m': 5/60,
+            '15m': 15/60,
+            '1h': 1,
+            '4h': 4,
+            '1d': 24
+        }
+        return timeframe_map.get(timeframe, 1)
     
     async def create_llm_prediction(self, pattern_group: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create LLM-based prediction using historical outcomes"""
-        # TODO: Implement LLM prediction logic
+        try:
+            # Prepare context for LLM
+            llm_context = self.prepare_llm_context(pattern_group, context)
+            
+            # Create LLM prompt
+            prompt = self.create_prediction_prompt(pattern_group, llm_context)
+            
+            # Get LLM prediction
+            llm_response = self.llm_client.generate_completion(prompt)
+            
+            # Parse LLM response
+            prediction = self.parse_llm_prediction(llm_response, pattern_group)
+            
+            return {
+                'method': 'llm',
+                'target_price': prediction['target_price'],
+                'stop_loss': prediction['stop_loss'],
+                'confidence': prediction['confidence'],
+                'direction': prediction['direction'],
+                'duration_hours': prediction['duration_hours'],
+                'reasoning': prediction['reasoning'],
+                'historical_basis': {
+                    'sample_size': context.get('exact_count', 0) + context.get('similar_count', 0),
+                    'match_quality': context.get('confidence_level', 0.0),
+                    'similarity_scores': [g['similarity_score'] for g in context.get('similar_matches', [])]
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error creating LLM prediction: {e}")
+            return self.create_conservative_prediction(pattern_group)
+    
+    def prepare_llm_context(self, pattern_group: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare context for LLM prediction"""
         return {
-            'method': 'llm',
-            'target_price': 0.0,
-            'stop_loss': 0.0,
-            'confidence': 0.5
+            'pattern_group': pattern_group,
+            'exact_matches': context.get('exact_matches', []),
+            'similar_matches': context.get('similar_matches', []),
+            'exact_count': context.get('exact_count', 0),
+            'similar_count': context.get('similar_count', 0),
+            'confidence_level': context.get('confidence_level', 0.0)
         }
+    
+    def create_prediction_prompt(self, pattern_group: Dict[str, Any], context: Dict[str, Any]) -> str:
+        """Create prompt for LLM prediction"""
+        
+        # Extract historical outcomes
+        historical_outcomes = []
+        for match in context.get('exact_matches', []):
+            if 'outcome' in match.get('content', {}):
+                historical_outcomes.append(match['content']['outcome'])
+        
+        for match in context.get('similar_matches', []):
+            if 'outcome' in match.get('group', {}).get('content', {}):
+                historical_outcomes.append(match['group']['content']['outcome'])
+        
+        prompt = f"""
+You are a quantitative trading analyst. Create a prediction based on the following pattern group and historical data.
+
+PATTERN GROUP:
+- Asset: {pattern_group['asset']}
+- Group Type: {pattern_group['group_type']}
+- Timeframe: {pattern_group.get('timeframe', 'N/A')}
+- Patterns: {[p['pattern_type'] for p in pattern_group['patterns']]}
+
+HISTORICAL CONTEXT:
+- Exact Matches: {context.get('exact_count', 0)}
+- Similar Matches: {context.get('similar_count', 0)}
+- Confidence Level: {context.get('confidence_level', 0.0):.2f}
+
+HISTORICAL OUTCOMES:
+{self.format_historical_outcomes(historical_outcomes)}
+
+TASK:
+Create a trading prediction with:
+1. Target price (current price is $50,000)
+2. Stop loss price
+3. Direction (long/short)
+4. Duration in hours
+5. Confidence level (0.0-1.0)
+6. Brief reasoning
+
+RESPONSE FORMAT (JSON):
+{{
+    "target_price": 51000,
+    "stop_loss": 49500,
+    "direction": "long",
+    "duration_hours": 20,
+    "confidence": 0.7,
+    "reasoning": "Based on historical volume spike patterns showing 60% success rate with average 2% returns"
+}}
+"""
+        return prompt
+    
+    def format_historical_outcomes(self, outcomes: List[Dict[str, Any]]) -> str:
+        """Format historical outcomes for LLM prompt"""
+        if not outcomes:
+            return "No historical data available"
+        
+        formatted = []
+        for i, outcome in enumerate(outcomes[:5]):  # Limit to 5 examples
+            formatted.append(f"  {i+1}. Return: {outcome.get('return_pct', 'N/A')}%, "
+                           f"Success: {outcome.get('success', 'N/A')}, "
+                           f"Max DD: {outcome.get('max_drawdown', 'N/A')}%")
+        
+        return "\n".join(formatted)
+    
+    def parse_llm_prediction(self, llm_response: str, pattern_group: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse LLM response into prediction format"""
+        try:
+            import json
+            
+            # Handle both string and dict responses
+            if isinstance(llm_response, dict):
+                response_text = llm_response.get('content', str(llm_response))
+            else:
+                response_text = str(llm_response)
+            
+            # Extract JSON from response
+            if '```json' in response_text:
+                json_start = response_text.find('```json') + 7
+                json_end = response_text.find('```', json_start)
+                json_str = response_text[json_start:json_end].strip()
+            else:
+                json_str = response_text.strip()
+            
+            prediction = json.loads(json_str)
+            
+            # Validate and set defaults
+            return {
+                'target_price': float(prediction.get('target_price', 50000)),
+                'stop_loss': float(prediction.get('stop_loss', 49500)),
+                'direction': prediction.get('direction', 'long'),
+                'duration_hours': float(prediction.get('duration_hours', 20)),
+                'confidence': float(prediction.get('confidence', 0.5)),
+                'reasoning': prediction.get('reasoning', 'LLM prediction based on pattern analysis')
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing LLM prediction: {e}")
+            # Return conservative prediction if parsing fails
+            return {
+                'target_price': 50000 * 1.01,
+                'stop_loss': 50000 * 0.99,
+                'direction': 'long',
+                'duration_hours': 20,
+                'confidence': 0.3,
+                'reasoning': 'Conservative prediction due to parsing error'
+            }
     
     async def create_prediction_strand(self, prediction: Dict[str, Any]) -> Dict[str, Any]:
         """Store prediction as strand in database"""
-        # TODO: Implement strand creation
-        return {
-            'id': f"prediction_{int(datetime.now().timestamp())}",
-            'created_at': datetime.now(timezone.utc).isoformat()
-        }
+        try:
+            # Create prediction strand data
+            strand_data = {
+                'id': f"prediction_{int(datetime.now().timestamp())}",
+                'kind': 'prediction',
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'tags': ['cil', 'prediction'],
+                'content': {
+                    'pattern_group': prediction['pattern_group'],
+                    'code_prediction': prediction['code_prediction'],
+                    'llm_prediction': prediction['llm_prediction'],
+                    'context_metadata': prediction['context_metadata'],
+                    'prediction_notes': prediction['prediction_notes'],
+                    'tracking_status': 'active',
+                    'created_by': 'prediction_engine'
+                },
+                'metadata': {
+                    'asset': prediction['pattern_group']['asset'],
+                    'group_type': prediction['pattern_group']['group_type'],
+                    'timeframe': prediction['pattern_group'].get('timeframe', 'N/A'),
+                    'confidence_level': prediction['context_metadata']['confidence_level'],
+                    'match_quality': prediction['context_metadata']['match_quality']
+                }
+            }
+            
+            # Store in database
+            await self.supabase_manager.execute_query("""
+                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, [
+                strand_data['id'],
+                strand_data['kind'],
+                strand_data['created_at'],
+                strand_data['tags'],
+                json.dumps(strand_data['content']),
+                json.dumps(strand_data['metadata'])
+            ])
+            
+            self.logger.info(f"Created prediction strand: {strand_data['id']}")
+            return strand_data
+            
+        except Exception as e:
+            self.logger.error(f"Error creating prediction strand: {e}")
+            return {
+                'id': f"prediction_error_{int(datetime.now().timestamp())}",
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'error': str(e)
+            }
     
     def calculate_confidence_level(self, exact_context: List[Dict[str, Any]], similar_context: List[Dict[str, Any]]) -> float:
         """Calculate overall confidence level"""
