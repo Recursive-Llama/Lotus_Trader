@@ -11,6 +11,7 @@ Simplified Central Intelligence Layer with 5 core components:
 
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import pandas as pd
@@ -50,6 +51,13 @@ class SimplifiedCIL:
         # Processing intervals
         self.pattern_processing_interval = timedelta(minutes=5)  # Process every 5 minutes
         self.learning_interval = timedelta(minutes=10)  # Learning every 10 minutes
+        
+        # Learning thresholds
+        self.learning_thresholds = {
+            'min_predictions_for_learning': 3,
+            'min_success_rate': 0.4,
+            'min_confidence': 0.3
+        }
         
     async def start(self):
         """Start the simplified CIL system"""
@@ -150,8 +158,124 @@ class SimplifiedCIL:
                 except Exception as e:
                     self.logger.error(f"Error processing prediction {prediction['id']}: {e}")
             
+            # Process group-level learning
+            await self.process_group_learning()
+            
         except Exception as e:
             self.logger.error(f"Error in learning cycle: {e}")
+    
+    async def process_group_learning(self):
+        """Process group-level learning for pattern groups"""
+        try:
+            # Get all pattern groups that have predictions
+            pattern_groups = await self.get_pattern_groups_with_predictions()
+            
+            for pattern_group in pattern_groups:
+                try:
+                    # Analyze group performance
+                    group_analysis = await self.outcome_analyzer.analyze_prediction_group(pattern_group)
+                    
+                    # Update learning system with group insights
+                    await self.learning_system.process_group_analysis(group_analysis)
+                    
+                    # Check if group meets learning thresholds
+                    if self.meets_learning_thresholds(group_analysis):
+                        await self.trigger_group_learning(pattern_group, group_analysis)
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing group learning for {pattern_group}: {e}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in group learning: {e}")
+    
+    async def get_pattern_groups_with_predictions(self) -> List[Dict[str, Any]]:
+        """Get all pattern groups that have predictions"""
+        try:
+            # This would query for unique pattern groups from predictions
+            # For now, return empty list since database queries aren't working
+            return []
+            
+        except Exception as e:
+            self.logger.error(f"Error getting pattern groups: {e}")
+            return []
+    
+    def meets_learning_thresholds(self, group_analysis: Dict[str, Any]) -> bool:
+        """Check if group meets learning thresholds"""
+        try:
+            total_predictions = group_analysis.get('total_predictions', 0)
+            success_rate = group_analysis.get('success_rate', 0.0)
+            avg_confidence = group_analysis.get('avg_confidence', 0.0)
+            
+            return (total_predictions >= self.learning_thresholds['min_predictions_for_learning'] and
+                    success_rate >= self.learning_thresholds['min_success_rate'] and
+                    avg_confidence >= self.learning_thresholds['min_confidence'])
+            
+        except Exception as e:
+            self.logger.error(f"Error checking learning thresholds: {e}")
+            return False
+    
+    async def trigger_group_learning(self, pattern_group: Dict[str, Any], group_analysis: Dict[str, Any]):
+        """Trigger learning for a pattern group that meets thresholds"""
+        try:
+            self.logger.info(f"Triggering group learning for {pattern_group['asset']} {pattern_group['group_type']}")
+            
+            # Create learning strand
+            learning_strand = {
+                'id': f"learning_{int(datetime.now().timestamp())}",
+                'kind': 'learning_insight',
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'tags': ['cil', 'learning', 'pattern_group'],
+                'content': {
+                    'pattern_group': pattern_group,
+                    'group_analysis': group_analysis,
+                    'learning_type': 'pattern_group_insight',
+                    'confidence_level': group_analysis.get('avg_confidence', 0.0),
+                    'success_rate': group_analysis.get('success_rate', 0.0),
+                    'total_predictions': group_analysis.get('total_predictions', 0)
+                },
+                'metadata': {
+                    'asset': pattern_group['asset'],
+                    'group_type': pattern_group['group_type'],
+                    'timeframe': pattern_group.get('timeframe', 'N/A'),
+                    'learning_quality': self.assess_learning_quality(group_analysis)
+                }
+            }
+            
+            # Store learning strand
+            await self.supabase_manager.execute_query("""
+                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, [
+                learning_strand['id'],
+                learning_strand['kind'],
+                learning_strand['created_at'],
+                learning_strand['tags'],
+                json.dumps(learning_strand['content']),
+                json.dumps(learning_strand['metadata'])
+            ])
+            
+            self.logger.info(f"Created learning strand: {learning_strand['id']}")
+            
+        except Exception as e:
+            self.logger.error(f"Error triggering group learning: {e}")
+    
+    def assess_learning_quality(self, group_analysis: Dict[str, Any]) -> str:
+        """Assess the quality of learning based on group analysis"""
+        try:
+            total_predictions = group_analysis.get('total_predictions', 0)
+            success_rate = group_analysis.get('success_rate', 0.0)
+            avg_confidence = group_analysis.get('avg_confidence', 0.0)
+            
+            if total_predictions >= 10 and success_rate >= 0.6 and avg_confidence >= 0.7:
+                return 'high_quality'
+            elif total_predictions >= 5 and success_rate >= 0.5 and avg_confidence >= 0.5:
+                return 'medium_quality'
+            else:
+                return 'low_quality'
+                
+        except Exception as e:
+            self.logger.error(f"Error assessing learning quality: {e}")
+            return 'unknown'
     
     async def get_cil_tagged_overviews(self) -> List[Dict[str, Any]]:
         """Get pattern_overview strands tagged for CIL processing"""
@@ -224,6 +348,13 @@ class OutcomeAnalyzer:
     def __init__(self, supabase_manager: SupabaseManager):
         self.supabase_manager = supabase_manager
         self.logger = logging.getLogger(f"{__name__}.outcome_analyzer")
+        
+        # Analysis thresholds
+        self.analysis_thresholds = {
+            'min_predictions_for_analysis': 3,
+            'min_success_rate': 0.4,
+            'min_confidence': 0.3
+        }
     
     async def analyze_completed_prediction(self, prediction_id: str) -> Dict[str, Any]:
         """Analyze a completed prediction"""
@@ -242,13 +373,42 @@ class OutcomeAnalyzer:
                 'outcome_score': prediction.get('outcome_score', 0.0),
                 'pattern_group': prediction.get('pattern_group', {}),
                 'context_metadata': prediction.get('context_metadata', {}),
-                'analysis_timestamp': datetime.now(timezone.utc).isoformat()
+                'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
+                'analysis_quality': self.assess_analysis_quality(prediction)
             }
             
             return analysis
             
         except Exception as e:
             self.logger.error(f"Error analyzing prediction {prediction_id}: {e}")
+            return {'error': str(e)}
+    
+    async def analyze_prediction_group(self, pattern_group: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze all predictions for a pattern group"""
+        try:
+            # Get all predictions for this pattern group
+            predictions = await self.get_predictions_for_group(pattern_group)
+            
+            if not predictions:
+                return {'error': 'No predictions found for group'}
+            
+            # Analyze group performance
+            group_analysis = {
+                'pattern_group': pattern_group,
+                'total_predictions': len(predictions),
+                'successful_predictions': len([p for p in predictions if p.get('outcome_score', 0) > 0]),
+                'avg_confidence': sum(p.get('confidence', 0) for p in predictions) / len(predictions),
+                'avg_outcome_score': sum(p.get('outcome_score', 0) for p in predictions) / len(predictions),
+                'success_rate': self.calculate_group_success_rate(predictions),
+                'confidence_trend': self.calculate_confidence_trend(predictions),
+                'outcome_trend': self.calculate_outcome_trend(predictions),
+                'analysis_timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+            return group_analysis
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing prediction group: {e}")
             return {'error': str(e)}
     
     async def get_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
@@ -265,7 +425,97 @@ class OutcomeAnalyzer:
             self.logger.error(f"Error getting prediction {prediction_id}: {e}")
             return None
     
+    async def get_predictions_for_group(self, pattern_group: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get all predictions for a pattern group"""
+        try:
+            # Create group signature
+            from .prediction_engine import PatternGroupingSystem
+            grouping_system = PatternGroupingSystem()
+            group_signature = grouping_system.create_group_signature(pattern_group)
+            
+            query = """
+                SELECT * FROM AD_strands 
+                WHERE kind = 'prediction' 
+                AND content->>'pattern_group'->>'group_signature' = %s
+                AND content->>'pattern_group'->>'asset' = %s
+                ORDER BY created_at DESC
+            """
+            
+            result = await self.supabase_manager.execute_query(query, [
+                group_signature,
+                pattern_group['asset']
+            ])
+            
+            return [dict(row) for row in result]
+            
+        except Exception as e:
+            self.logger.error(f"Error getting predictions for group: {e}")
+            return []
+    
     def calculate_success_rate(self, prediction: Dict[str, Any]) -> float:
         """Calculate success rate for prediction"""
-        # TODO: Implement success rate calculation
-        return prediction.get('outcome_score', 0.0)
+        outcome_score = prediction.get('outcome_score', 0.0)
+        return 1.0 if outcome_score > 0 else 0.0
+    
+    def calculate_group_success_rate(self, predictions: List[Dict[str, Any]]) -> float:
+        """Calculate success rate for a group of predictions"""
+        if not predictions:
+            return 0.0
+        
+        successful = len([p for p in predictions if p.get('outcome_score', 0) > 0])
+        return successful / len(predictions)
+    
+    def calculate_confidence_trend(self, predictions: List[Dict[str, Any]]) -> str:
+        """Calculate confidence trend over time"""
+        if len(predictions) < 2:
+            return 'insufficient_data'
+        
+        # Sort by creation time
+        sorted_predictions = sorted(predictions, key=lambda x: x.get('created_at', ''))
+        
+        # Calculate trend
+        early_confidence = sum(p.get('confidence', 0) for p in sorted_predictions[:len(predictions)//2])
+        late_confidence = sum(p.get('confidence', 0) for p in sorted_predictions[len(predictions)//2:])
+        
+        if late_confidence > early_confidence * 1.1:
+            return 'increasing'
+        elif late_confidence < early_confidence * 0.9:
+            return 'decreasing'
+        else:
+            return 'stable'
+    
+    def calculate_outcome_trend(self, predictions: List[Dict[str, Any]]) -> str:
+        """Calculate outcome trend over time"""
+        if len(predictions) < 2:
+            return 'insufficient_data'
+        
+        # Sort by creation time
+        sorted_predictions = sorted(predictions, key=lambda x: x.get('created_at', ''))
+        
+        # Calculate trend
+        early_outcomes = sum(p.get('outcome_score', 0) for p in sorted_predictions[:len(predictions)//2])
+        late_outcomes = sum(p.get('outcome_score', 0) for p in sorted_predictions[len(predictions)//2:])
+        
+        if late_outcomes > early_outcomes * 1.1:
+            return 'improving'
+        elif late_outcomes < early_outcomes * 0.9:
+            return 'declining'
+        else:
+            return 'stable'
+    
+    def assess_analysis_quality(self, prediction: Dict[str, Any]) -> str:
+        """Assess the quality of analysis based on available data"""
+        confidence = prediction.get('confidence', 0.0)
+        outcome_score = prediction.get('outcome_score', 0.0)
+        context_metadata = prediction.get('context_metadata', {})
+        
+        # Check if we have enough historical data
+        sample_size = context_metadata.get('exact_count', 0) + context_metadata.get('similar_count', 0)
+        
+        if sample_size >= self.analysis_thresholds['min_predictions_for_analysis']:
+            if confidence >= self.analysis_thresholds['min_confidence']:
+                return 'high_quality'
+            else:
+                return 'medium_quality'
+        else:
+            return 'low_quality'
