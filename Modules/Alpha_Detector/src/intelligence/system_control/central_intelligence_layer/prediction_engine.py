@@ -628,11 +628,55 @@ RESPONSE FORMAT (JSON):
         # TODO: Implement cycle proximity calculation
         return 0.5
     
+    def _generate_cluster_keys(self, prediction: Dict[str, Any], outcome: Dict[str, Any], group_signature: str) -> List[str]:
+        """Generate all cluster keys for multi-cluster learning"""
+        
+        pattern_group = prediction['pattern_group']
+        asset = pattern_group['asset']
+        timeframe = pattern_group.get('timeframe', 'N/A')
+        group_type = pattern_group['group_type']
+        method = prediction.get('method', 'unknown')
+        success = outcome.get('success', False)
+        
+        cluster_keys = [
+            # 1. Pattern + Timeframe (exact group signature)
+            f"pattern_timeframe_{asset}_{group_signature}",
+            
+            # 2. Asset only
+            f"asset_{asset}",
+            
+            # 3. Timeframe only
+            f"timeframe_{timeframe}",
+            
+            # 4. Success or Failure
+            f"outcome_{'success' if success else 'failure'}",
+            
+            # 5. Pattern only (group_type)
+            f"pattern_{group_type}",
+            
+            # 6. Group Type (single_single, multi_single, etc.)
+            f"group_type_{group_type}",
+            
+            # 7. Method (Code vs LLM)
+            f"method_{method}"
+        ]
+        
+        return cluster_keys
+    
     async def create_prediction_review_strand(self, prediction: Dict[str, Any], outcome: Dict[str, Any]) -> str:
-        """Create prediction review strand for clustering and learning"""
+        """Create prediction review strand for clustering and learning with cluster keys and original pattern links"""
         try:
             # Create group signature
             group_signature = self.pattern_grouping.create_group_signature(prediction['pattern_group'])
+            
+            # Extract original pattern strand IDs from pattern group
+            original_pattern_strand_ids = [
+                p.get('strand_id') for p in prediction['pattern_group']['patterns'] 
+                if p.get('strand_id')
+            ]
+            
+            # Generate all cluster keys for multi-cluster learning
+            cluster_keys = self._generate_cluster_keys(prediction, outcome, group_signature)
             
             # Create prediction review strand
             review_strand = {
@@ -650,14 +694,21 @@ RESPONSE FORMAT (JSON):
                     'max_drawdown': outcome.get('max_drawdown', 0.0),
                     'confidence': prediction.get('confidence', 0.0),
                     'method': prediction.get('method', 'unknown'),
-                    'duration_hours': outcome.get('duration_hours', 0.0)
+                    'duration_hours': outcome.get('duration_hours', 0.0),
+                    # NEW: Multi-cluster learning fields
+                    'cluster_keys': cluster_keys,
+                    'original_pattern_strand_ids': original_pattern_strand_ids,
+                    'asset': prediction['pattern_group']['asset'],
+                    'timeframe': prediction['pattern_group'].get('timeframe', 'N/A'),
+                    'group_type': prediction['pattern_group']['group_type']
                 },
                 'metadata': {
                     'asset': prediction['pattern_group']['asset'],
                     'group_type': prediction['pattern_group']['group_type'],
                     'timeframe': prediction['pattern_group'].get('timeframe', 'N/A'),
                     'success': outcome.get('success', False),
-                    'return_pct': outcome.get('return_pct', 0.0)
+                    'return_pct': outcome.get('return_pct', 0.0),
+                    'cluster_keys': cluster_keys  # Also store in metadata for easy querying
                 }
             }
             

@@ -711,7 +711,409 @@ class LearningSystem:
    - Add prediction-specific thresholds
    - Trigger learning cycles
 
-### **Phase 4: Integration and Testing (Week 4)**
+### **Phase 4: Multi-Cluster Learning System (Week 4)**
+
+1. **Multi-Cluster Grouping Engine**
+   ```python
+   class MultiClusterGroupingEngine:
+       def group_prediction_reviews(self, prediction_reviews):
+           """Group prediction reviews into 7 cluster types"""
+           
+           clusters = {
+               # 1. Pattern + Timeframe (exact group signature)
+               'pattern_timeframe': self.group_by_pattern_timeframe(prediction_reviews),
+               
+               # 2. Asset only
+               'asset': self.group_by_asset(prediction_reviews),
+               
+               # 3. Timeframe only
+               'timeframe': self.group_by_timeframe(prediction_reviews),
+               
+               # 4. Success or Failure
+               'outcome': self.group_by_outcome(prediction_reviews),
+               
+               # 5. Pattern only (no timeframe)
+               'pattern': self.group_by_pattern(prediction_reviews),
+               
+               # 6. Group Type (single_single, multi_single, etc.)
+               'group_type': self.group_by_group_type(prediction_reviews),
+               
+               # 7. Method (Code vs LLM)
+               'method': self.group_by_method(prediction_reviews)
+           }
+           
+           return clusters
+   ```
+
+2. **Enhanced Prediction Review Strands**
+   ```python
+   def create_prediction_review_strand(self, prediction, analysis):
+       """Create prediction review strand with cluster keys and original pattern links"""
+       
+       # Extract pattern group information
+       pattern_group = prediction['pattern_group']
+       group_signature = self.create_group_signature(pattern_group)
+       
+       # Extract original pattern strand IDs from pattern group
+       original_pattern_strand_ids = [
+           p.get('strand_id') for p in pattern_group['patterns'] 
+           if p.get('strand_id')
+       ]
+       
+       # Generate all cluster keys
+       cluster_keys = [
+           f"pattern_timeframe_{group_signature}",           # Pattern + Timeframe
+           f"asset_{prediction['asset']}",                   # Asset
+           f"timeframe_{prediction['timeframe']}",           # Timeframe
+           f"outcome_{analysis['outcome']}",                 # Success/Failure
+           f"pattern_{pattern_group['group_type']}",         # Pattern type
+           f"group_type_{pattern_group['group_type']}",      # Group type
+           f"method_{prediction['prediction_method']}"       # Method
+       ]
+       
+       return {
+           'kind': 'prediction_review',
+           'content': {
+               'prediction_id': prediction['id'],
+               'pattern_group': pattern_group,
+               'group_signature': group_signature,
+               'cluster_keys': cluster_keys,
+               'original_pattern_strand_ids': original_pattern_strand_ids,  # NEW: Link to original patterns
+               'outcome': analysis['outcome'],
+               'success_rate': analysis['success_rate'],
+               'confidence': analysis['confidence'],
+               'method': prediction['prediction_method'],
+               'analysis_metadata': analysis
+           },
+           'tags': ['cil', 'learning', 'prediction_review']
+       }
+   ```
+
+3. **Braid Level Progression System**
+   ```python
+   class BraidLevelManager:
+       def __init__(self):
+           self.braid_levels = {}  # Track braid levels per cluster
+       
+       async def process_braid_creation(self, cluster_type, cluster_key):
+           """Process braid creation for a specific cluster"""
+           
+           # Get all strands in this cluster
+           cluster_strands = await self.get_cluster_strands(cluster_type, cluster_key)
+           
+           # Group by braid level
+           level_groups = self.group_by_braid_level(cluster_strands)
+           
+           # Process each level
+           for level, strands in level_groups.items():
+               if len(strands) >= 3:  # 3+ strands needed for next level
+                   await self.create_next_level_braid(level, strands, cluster_type, cluster_key)
+       
+       async def create_next_level_braid(self, current_level, strands, cluster_type, cluster_key):
+           """Create braid at next level from 3+ strands of current level"""
+           
+           next_level = current_level + 1
+           
+           # Create braid strand
+           braid_strand = {
+               'kind': 'braid',
+               'content': {
+                   'braid_level': next_level,
+                   'cluster_type': cluster_type,
+                   'cluster_key': cluster_key,
+                   'source_strands': [s['id'] for s in strands],
+                   'source_level': current_level,
+                   'created_at': datetime.now(timezone.utc)
+               },
+               'tags': ['cil', 'braid', f'level_{next_level}']
+           }
+           
+           # Store braid strand
+           braid_id = await self.store_strand(braid_strand)
+           
+           # Update source strands to reference this braid
+           await self.update_source_strands(strands, braid_id)
+           
+           return braid_id
+   ```
+
+4. **LLM Learning Analysis System**
+   ```python
+   class LLMLearningAnalyzer:
+       def __init__(self, llm_client, context_system):
+           self.llm_client = llm_client
+           self.context_system = context_system
+       
+       async def analyze_cluster_for_learning(self, cluster_type, cluster_key, prediction_reviews):
+           """Analyze a cluster of prediction reviews and extract learning insights"""
+           
+           # 1. Get original pattern strands for context
+           pattern_context = await self.get_original_pattern_context(prediction_reviews)
+           
+           # 2. Prepare cluster data for LLM analysis
+           cluster_data = self.prepare_cluster_data(prediction_reviews, pattern_context)
+           
+           # 3. Create LLM prompt for cluster analysis
+           prompt = self.create_cluster_analysis_prompt(cluster_type, cluster_key, cluster_data)
+           
+           # 4. Get LLM analysis
+           llm_response = await self.llm_client.generate_completion(prompt)
+           
+           # 5. Parse and structure the learning insights
+           learning_insights = self.parse_learning_insights(llm_response, cluster_type, cluster_key)
+           
+           # 6. Create learning braid strand
+           learning_braid = await self.create_learning_braid(learning_insights, cluster_type, cluster_key)
+           
+           return learning_braid
+       
+       async def get_original_pattern_context(self, prediction_reviews):
+           """Get original pattern strands that led to these predictions"""
+           
+           pattern_contexts = []
+           for pr in prediction_reviews:
+               # Get original pattern strand IDs from prediction review
+               pattern_strand_ids = pr.get('content', {}).get('original_pattern_strand_ids', [])
+               
+               # Query database for each pattern strand
+               for strand_id in pattern_strand_ids:
+                   pattern_strand = await self.get_pattern_strand_by_id(strand_id)
+                   if pattern_strand:
+                       pattern_contexts.append(pattern_strand)
+           
+           return pattern_contexts
+       
+       async def get_pattern_strand_by_id(self, strand_id):
+           """Get pattern strand by ID from database"""
+           query = """
+               SELECT * FROM AD_strands 
+               WHERE id = %s AND kind = 'pattern'
+           """
+           result = await self.context_system.supabase_manager.execute_query(query, [strand_id])
+           return dict(result[0]) if result else None
+       
+       def prepare_cluster_data(self, prediction_reviews, pattern_contexts):
+           """Prepare structured data for LLM analysis"""
+           
+           return {
+               'cluster_type': cluster_type,
+               'cluster_key': cluster_key,
+               'prediction_count': len(prediction_reviews),
+               'predictions': prediction_reviews,
+               'original_patterns': pattern_contexts,
+               'success_rate': self.calculate_success_rate(prediction_reviews),
+               'avg_confidence': self.calculate_avg_confidence(prediction_reviews),
+               'avg_return': self.calculate_avg_return(prediction_reviews),
+               'avg_drawdown': self.calculate_avg_drawdown(prediction_reviews)
+           }
+       
+       def create_cluster_analysis_prompt(self, cluster_type, cluster_key, cluster_data):
+           """Create LLM prompt for cluster analysis"""
+           
+           prompt = f"""
+           Analyze this cluster of {cluster_type} predictions and extract numerical, stats-focused learning insights.
+           
+           Cluster: {cluster_key}
+           Prediction Count: {cluster_data['prediction_count']}
+           Success Rate: {cluster_data['success_rate']:.2%}
+           Avg Confidence: {cluster_data['avg_confidence']:.2f}
+           Avg Return: {cluster_data['avg_return']:.2%}
+           Avg Drawdown: {cluster_data['avg_drawdown']:.2%}
+           
+           Prediction Details:
+           {self.format_prediction_details(cluster_data['predictions'])}
+           
+           Original Patterns:
+           {self.format_pattern_details(cluster_data['original_patterns'])}
+           
+           Please analyze this data and provide:
+           1. What patterns can we see in the data?
+           2. What mistakes did we make?
+           3. What did we do well?
+           4. What can we learn from this cluster?
+           5. What should we do differently next time?
+           
+           Keep your analysis numerical and stats-focused. No narratives, just facts and insights.
+           """
+           
+           return prompt
+       
+       def parse_learning_insights(self, llm_response, cluster_type, cluster_key):
+           """Parse LLM response into structured learning insights"""
+           
+           return {
+               'cluster_type': cluster_type,
+               'cluster_key': cluster_key,
+               'analysis_timestamp': datetime.now(timezone.utc),
+               'insights': {
+                   'patterns_observed': self.extract_patterns_observed(llm_response),
+                   'mistakes_identified': self.extract_mistakes_identified(llm_response),
+                   'success_factors': self.extract_success_factors(llm_response),
+                   'lessons_learned': self.extract_lessons_learned(llm_response),
+                   'recommendations': self.extract_recommendations(llm_response)
+               },
+               'metadata': {
+                   'llm_model': 'openrouter',
+                   'analysis_type': 'cluster_learning',
+                   'confidence': self.calculate_analysis_confidence(llm_response)
+               }
+           }
+       
+       async def create_learning_braid(self, learning_insights, cluster_type, cluster_key):
+           """Create learning braid strand from insights"""
+           
+           learning_braid = {
+               'kind': 'learning_braid',
+               'content': {
+                   'cluster_type': cluster_type,
+                   'cluster_key': cluster_key,
+                   'learning_insights': learning_insights,
+                   'created_at': datetime.now(timezone.utc),
+                   'braid_level': 1  # This is a learning braid, not a prediction braid
+               },
+               'tags': ['cil', 'learning', 'braid', f'cluster_{cluster_type}']
+           }
+           
+           return learning_braid
+   ```
+
+5. **Per-Cluster Learning System**
+   ```python
+   class PerClusterLearningSystem:
+       def __init__(self):
+           self.cluster_thresholds = {
+               'min_predictions_for_learning': 3,     # 3+ prediction reviews
+               'min_confidence': 0.1,                 # Very low threshold
+               'min_sample_size': 3,                  # Need at least 3 data points
+               'learn_from_failures': True,           # Failures are valuable!
+               'learn_from_successes': True           # Successes confirm patterns
+           }
+           self.llm_analyzer = LLMLearningAnalyzer(llm_client, context_system)
+       
+       async def process_cluster_learning(self, cluster_type, cluster_key):
+           """Process learning for a specific cluster"""
+           
+           # Get prediction reviews in this cluster
+           prediction_reviews = await self.get_cluster_prediction_reviews(cluster_type, cluster_key)
+           
+           # Check if meets learning thresholds
+           if self.meets_learning_thresholds(prediction_reviews):
+               # Analyze cluster for learning insights using LLM
+               learning_braid = await self.llm_analyzer.analyze_cluster_for_learning(
+                   cluster_type, cluster_key, prediction_reviews
+               )
+               
+               # Update context system with new learnings
+               await self.update_context_system(learning_braid)
+       
+       def meets_learning_thresholds(self, prediction_reviews):
+           """Check if cluster meets learning thresholds"""
+           
+           if len(prediction_reviews) < self.cluster_thresholds['min_predictions_for_learning']:
+               return False
+           
+           # Check confidence threshold (very low - learn from everything)
+           avg_confidence = sum(pr['confidence'] for pr in prediction_reviews) / len(prediction_reviews)
+           if avg_confidence < self.cluster_thresholds['min_confidence']:
+               return False
+           
+           return True
+   ```
+
+6. **Database Query Examples**
+   ```sql
+   -- Cluster 1: Pattern + Timeframe (Exact Match)
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'group_signature' = 'BTC_1h_volume_spike_divergence'
+   AND content->>'asset' = 'BTC'
+   ORDER BY created_at DESC;
+
+   -- Cluster 2: Asset Only
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'asset' = 'BTC'
+   ORDER BY created_at DESC;
+
+   -- Cluster 3: Timeframe Only
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'timeframe' = '1h'
+   ORDER BY created_at DESC;
+
+   -- Cluster 4: Success/Failure
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'success' = 'true'
+   ORDER BY created_at DESC;
+
+   -- Cluster 5: Pattern Only (No Timeframe)
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'group_type' = 'multi_single'
+   ORDER BY created_at DESC;
+
+   -- Cluster 6: Group Type
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'group_type' = 'multi_single'
+   ORDER BY created_at DESC;
+
+   -- Cluster 7: Method (Code vs LLM)
+   SELECT * FROM AD_strands 
+   WHERE kind = 'prediction_review' 
+   AND content->>'method' = 'code'
+   ORDER BY created_at DESC;
+
+   -- Get Original Pattern Strands
+   SELECT * FROM AD_strands 
+   WHERE id = ANY(%s) AND kind = 'pattern';
+   ```
+
+7. **Complete Implementation Flow**
+   ```python
+   # Step 1: Multi-Cluster Grouping
+   clusters = [
+       ('pattern_timeframe', 'group_signature + asset'),
+       ('asset', 'asset'),
+       ('timeframe', 'timeframe'),
+       ('outcome', 'success'),
+       ('pattern', 'group_type'),
+       ('group_type', 'group_type'),
+       ('method', 'method')
+   ]
+
+   # Step 2: Process Each Cluster
+   for cluster_name, query_field in clusters:
+       # Get prediction reviews in this cluster
+       prediction_reviews = await get_cluster_prediction_reviews(cluster_name, query_field)
+       
+       # Check if meets learning thresholds (3+ predictions)
+       if len(prediction_reviews) >= 3:
+           # Get original pattern strands for context
+           pattern_contexts = await get_original_pattern_context(prediction_reviews)
+           
+           # LLM analyzes cluster and creates learning insights
+           learning_braid = await llm_analyzer.analyze_cluster_for_learning(
+               cluster_name, query_field, prediction_reviews, pattern_contexts
+           )
+           
+           # Store learning braid
+           await store_learning_braid(learning_braid)
+           
+           # Update context system
+           await update_context_system(learning_braid)
+
+   # Step 3: Braid Level Progression
+   # When 3+ learning braids exist in a cluster, create next level braid
+   for cluster_name, query_field in clusters:
+       braids = await get_learning_braids_in_cluster(cluster_name, query_field)
+       if len(braids) >= 3:
+           next_level_braid = await create_next_level_braid(braids, cluster_name, query_field)
+           await store_braid(next_level_braid)
+   ```
+
+### **Phase 5: Integration and Testing (Week 5)**
 
 1. **Integrate with RMC**
    - Update RMC to send pattern overviews to CIL
@@ -881,7 +1283,17 @@ GET /api/pattern-learning/{pattern_type}/{asset}/{timeframe}
 - ✅ Code vs LLM comparison
 - ✅ Learning system integration
 
-### **Phase 4: Integration and Testing**
+### **Phase 4: Multi-Cluster Learning System**
+- ✅ Multi-cluster grouping engine implemented
+- ✅ Enhanced prediction review strands with cluster keys and original pattern links
+- ✅ Braid level progression system (no cap)
+- ✅ Per-cluster learning with 3+ prediction threshold
+- ✅ 7 cluster types: pattern+timeframe, asset, timeframe, outcome, pattern, group_type, method
+- ✅ LLM learning analysis with original pattern context
+- ✅ Database query examples for all cluster types
+- ✅ Complete implementation flow with step-by-step process
+
+### **Phase 5: Integration and Testing**
 - ✅ End-to-end flow working
 - ✅ Real data testing completed
 - ✅ Performance optimized
@@ -937,12 +1349,17 @@ GET /api/pattern-learning/{pattern_type}/{asset}/{timeframe}
 - **Better Context** - Prediction outcomes more valuable than pattern detection
 - **Continuous Learning** - Learn from every prediction, success or failure
 - **Dual Validation** - Code and LLM predictions for comparison
+- **Multi-Cluster Learning** - 7 different clustering approaches for comprehensive learning
+- **Braid Level Progression** - Unlimited compression and learning depth
+- **LLM Learning Analysis** - Extract insights from clusters with original pattern context
+- **Original Pattern Context** - LLM sees full picture: Pattern → Prediction → Outcome → Learning
 - **No Schema Changes** - Use existing AD_strands table
 
 ### **Implementation Order:**
 1. **Week 1**: CIL simplification (move complex components)
 2. **Week 2**: Prediction context system + dual prediction creation
 3. **Week 3**: Analysis system + learning integration
-4. **Week 4**: Testing + optimization
+4. **Week 4**: Multi-cluster learning system + braid level progression
+5. **Week 5**: Testing + optimization
 
 This plan provides a clear path to simplify the CIL while adding a comprehensive prediction system that learns continuously from market data.
