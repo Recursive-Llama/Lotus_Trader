@@ -127,11 +127,11 @@ class PredictionEngine:
         return combined_context
     
     async def get_exact_group_context(self, pattern_group: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Get exact group signature matches"""
+        """Get exact group signature matches from prediction reviews"""
         try:
             group_signature = self.pattern_grouping.create_group_signature(pattern_group)
             
-            # Query for exact group signature matches
+            # Query for exact group signature matches in prediction reviews
             query = """
                 SELECT * FROM AD_strands 
                 WHERE kind = 'prediction_review' 
@@ -153,11 +153,9 @@ class PredictionEngine:
             return []
     
     async def get_similar_group_context(self, pattern_group: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Get similar groups with 70% similarity threshold"""
+        """Get similar groups with 70% similarity threshold from prediction reviews"""
         try:
-            # Query for similar groups (same asset, overlapping pattern types)
-            pattern_types = [p['pattern_type'] for p in pattern_group['patterns']]
-            
+            # Query for similar groups (same asset, same group type)
             query = """
                 SELECT * FROM AD_strands 
                 WHERE kind = 'prediction_review' 
@@ -629,6 +627,59 @@ RESPONSE FORMAT (JSON):
         """Calculate cycle proximity (within 10x timeframe)"""
         # TODO: Implement cycle proximity calculation
         return 0.5
+    
+    async def create_prediction_review_strand(self, prediction: Dict[str, Any], outcome: Dict[str, Any]) -> str:
+        """Create prediction review strand for clustering and learning"""
+        try:
+            # Create group signature
+            group_signature = self.pattern_grouping.create_group_signature(prediction['pattern_group'])
+            
+            # Create prediction review strand
+            review_strand = {
+                'id': f"prediction_review_{int(datetime.now().timestamp())}",
+                'kind': 'prediction_review',
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'tags': ['cil', 'prediction_review', 'learning'],
+                'content': {
+                    'group_signature': group_signature,
+                    'pattern_group': prediction['pattern_group'],
+                    'prediction_id': prediction.get('id'),
+                    'outcome': outcome,
+                    'success': outcome.get('success', False),
+                    'return_pct': outcome.get('return_pct', 0.0),
+                    'max_drawdown': outcome.get('max_drawdown', 0.0),
+                    'confidence': prediction.get('confidence', 0.0),
+                    'method': prediction.get('method', 'unknown'),
+                    'duration_hours': outcome.get('duration_hours', 0.0)
+                },
+                'metadata': {
+                    'asset': prediction['pattern_group']['asset'],
+                    'group_type': prediction['pattern_group']['group_type'],
+                    'timeframe': prediction['pattern_group'].get('timeframe', 'N/A'),
+                    'success': outcome.get('success', False),
+                    'return_pct': outcome.get('return_pct', 0.0)
+                }
+            }
+            
+            # Store in database
+            await self.supabase_manager.execute_query("""
+                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, [
+                review_strand['id'],
+                review_strand['kind'],
+                review_strand['created_at'],
+                review_strand['tags'],
+                json.dumps(review_strand['content']),
+                json.dumps(review_strand['metadata'])
+            ])
+            
+            self.logger.info(f"Created prediction review strand: {review_strand['id']}")
+            return review_strand['id']
+            
+        except Exception as e:
+            self.logger.error(f"Error creating prediction review strand: {e}")
+            return f"error: {str(e)}"
 
 
 class PatternGroupingSystem:

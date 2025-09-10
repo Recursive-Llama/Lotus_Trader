@@ -52,11 +52,11 @@ class SimplifiedCIL:
         self.pattern_processing_interval = timedelta(minutes=5)  # Process every 5 minutes
         self.learning_interval = timedelta(minutes=10)  # Learning every 10 minutes
         
-        # Learning thresholds
+        # Learning thresholds - learn from both success and failure
         self.learning_thresholds = {
-            'min_predictions_for_learning': 3,
-            'min_success_rate': 0.4,
-            'min_confidence': 0.3
+            'min_predictions_for_learning': 3,  # Any 3 predictions (success or failure)
+            'min_confidence': 0.1,  # Very low threshold - include all attempts
+            'min_sample_size': 3  # Minimum sample size for statistical significance
         }
         
     async def start(self):
@@ -200,14 +200,13 @@ class SimplifiedCIL:
             return []
     
     def meets_learning_thresholds(self, group_analysis: Dict[str, Any]) -> bool:
-        """Check if group meets learning thresholds"""
+        """Check if group meets learning thresholds - learn from both success and failure"""
         try:
             total_predictions = group_analysis.get('total_predictions', 0)
-            success_rate = group_analysis.get('success_rate', 0.0)
             avg_confidence = group_analysis.get('avg_confidence', 0.0)
             
+            # Learn from any predictions (success or failure) as long as we have enough data
             return (total_predictions >= self.learning_thresholds['min_predictions_for_learning'] and
-                    success_rate >= self.learning_thresholds['min_success_rate'] and
                     avg_confidence >= self.learning_thresholds['min_confidence'])
             
         except Exception as e:
