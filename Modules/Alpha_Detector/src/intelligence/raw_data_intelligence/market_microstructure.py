@@ -82,8 +82,11 @@ class MarketMicrostructureAnalyzer:
             analysis_results['anomalies_detected'] = len(anomalies) > 0
             analysis_results['anomaly_details'] = anomalies
             
-            # 7. Calculate overall confidence
-            analysis_results['confidence'] = self._calculate_analysis_confidence(analysis_results)
+            # 7. Calculate overall confidence based on whether patterns were found
+            if analysis_results['anomalies_detected']:
+                analysis_results['confidence'] = self._calculate_analysis_confidence(analysis_results)
+            else:
+                analysis_results['confidence'] = 0.0
             
             return analysis_results
             

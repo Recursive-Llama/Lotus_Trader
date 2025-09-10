@@ -86,8 +86,14 @@ class RawDataDivergenceDetector:
             analysis_results['divergences_detected'] = len(significant_divergences)
             analysis_results['divergence_details'] = significant_divergences
             
-            # 7. Calculate pattern clarity (not prediction confidence)
+            # 7. Calculate pattern clarity and confidence
             analysis_results['pattern_clarity'] = self._calculate_divergence_pattern_clarity(analysis_results)
+            
+            # 8. Set confidence based on whether patterns were found
+            if analysis_results['divergences_detected'] > 0:
+                analysis_results['confidence'] = analysis_results['pattern_clarity']
+            else:
+                analysis_results['confidence'] = 0.0
             
             return analysis_results
             

@@ -87,8 +87,11 @@ class CrossAssetPatternAnalyzer:
             analysis_results['significant_correlation'] = len(significant_patterns) > 0
             analysis_results['correlation_details'] = significant_patterns
             
-            # 8. Calculate overall confidence
-            analysis_results['confidence'] = self._calculate_cross_asset_analysis_confidence(analysis_results)
+            # 8. Calculate overall confidence based on whether patterns were found
+            if analysis_results['significant_correlation']:
+                analysis_results['confidence'] = self._calculate_cross_asset_analysis_confidence(analysis_results)
+            else:
+                analysis_results['confidence'] = 0.0
             
             return analysis_results
             

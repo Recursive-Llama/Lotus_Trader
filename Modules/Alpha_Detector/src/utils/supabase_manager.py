@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import Dict, Any, List, Optional
+from datetime import datetime, timezone, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -62,11 +63,20 @@ class SupabaseManager:
             logger.error(f"Failed to get strand {strand_id}: {e}")
             return None
     
-    def get_recent_strands(self, limit: int = 100, days: int = 7) -> List[Dict[str, Any]]:
+    def get_recent_strands(self, limit: int = 100, days: int = 7, since: datetime = None) -> List[Dict[str, Any]]:
         """Get recent strands"""
         try:
-            # Note: This is a simplified version - you might want to add date filtering
-            result = self.client.table('ad_strands').select('*').order('created_at', desc=True).limit(limit).execute()
+            query = self.client.table('ad_strands').select('*')
+            
+            # Add date filtering if since parameter is provided
+            if since:
+                query = query.gte('created_at', since.isoformat())
+            else:
+                # Use days parameter as fallback
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+                query = query.gte('created_at', cutoff_date.isoformat())
+            
+            result = query.order('created_at', desc=True).limit(limit).execute()
             return result.data
         except Exception as e:
             logger.error(f"Failed to get recent strands: {e}")

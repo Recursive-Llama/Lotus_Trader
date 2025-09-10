@@ -85,8 +85,14 @@ class VolumePatternAnalyzer:
             analysis_results['significant_volume_spike'] = len(significant_patterns) > 0
             analysis_results['spike_details'] = significant_patterns
             
-            # 8. Calculate pattern clarity (not prediction confidence)
+            # 8. Calculate pattern clarity and confidence
             analysis_results['pattern_clarity'] = self._calculate_volume_pattern_clarity(analysis_results)
+            
+            # 9. Set confidence based on whether patterns were found
+            if analysis_results['significant_volume_spike']:
+                analysis_results['confidence'] = analysis_results['pattern_clarity']
+            else:
+                analysis_results['confidence'] = 0.0
             
             return analysis_results
             
@@ -160,7 +166,14 @@ class VolumePatternAnalyzer:
             
         except Exception as e:
             self.logger.error(f"Volume spike detection failed: {e}")
-            return {'error': str(e)}
+            return {
+                'spikes_detected': 0,
+                'spike_details': [],
+                'average_volume': 0.0,
+                'volume_std': 0.0,
+                'max_volume': 0.0,
+                'spike_threshold': 0.0
+            }
     
     def _analyze_volume_price_relationship(self, market_data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -416,9 +429,16 @@ class VolumePatternAnalyzer:
             
             volume_data = market_data['volume']
             
-            # Calculate distribution statistics
-            results['skewness'] = volume_data.skew()
-            results['kurtosis'] = volume_data.kurtosis()
+            # Calculate distribution statistics with NaN handling
+            if len(volume_data) < 4:
+                # Not enough data for reliable kurtosis calculation
+                results['skewness'] = 0.0
+                results['kurtosis'] = 0.0
+            else:
+                skewness = volume_data.skew()
+                kurtosis = volume_data.kurtosis()
+                results['skewness'] = 0.0 if np.isnan(skewness) else skewness
+                results['kurtosis'] = 0.0 if np.isnan(kurtosis) else kurtosis
             
             # Determine distribution type
             if abs(results['skewness']) > 1.0:

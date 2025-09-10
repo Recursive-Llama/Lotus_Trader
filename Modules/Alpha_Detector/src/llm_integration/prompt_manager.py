@@ -54,10 +54,10 @@ class PromptManager:
                 with open(yaml_file, 'r', encoding='utf-8') as f:
                     templates = yaml.safe_load(f)
                 
-                if templates:
-                    for template_name, template_data in templates.items():
-                        self.prompts[template_name] = template_data
-                        logger.debug(f"Loaded prompt template: {template_name}")
+                if templates and 'name' in templates:
+                    template_name = templates['name']
+                    self.prompts[template_name] = templates
+                    logger.debug(f"Loaded prompt template: {template_name}")
                 
             except Exception as e:
                 logger.error(f"Error loading prompt template from {yaml_file}: {e}")
@@ -123,11 +123,26 @@ class PromptManager:
         """
         
         template = self.get_prompt(template_name, version)
-        prompt_text = template.get('prompt', '')
+        prompt_text = template.get('template', '')
         
         try:
+            # Format the prompt with context using safe substitution
+            # First, escape any existing braces that aren't meant to be placeholders
+            import re
+            
+            # Replace { with {{ and } with }} except for our placeholders
+            placeholders = list(context.keys())
+            escaped_text = prompt_text
+            
+            # Escape all braces first
+            escaped_text = escaped_text.replace('{', '{{').replace('}', '}}')
+            
+            # Then unescape our actual placeholders
+            for placeholder in placeholders:
+                escaped_text = escaped_text.replace(f'{{{{{placeholder}}}}}', f'{{{placeholder}}}')
+            
             # Format the prompt with context
-            formatted_prompt = prompt_text.format(**context)
+            formatted_prompt = escaped_text.format(**context)
             return formatted_prompt
             
         except KeyError as e:

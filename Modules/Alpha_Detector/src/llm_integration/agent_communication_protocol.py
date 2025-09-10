@@ -161,7 +161,7 @@ class AgentCommunicationProtocol:
             }
             
             # Insert into database
-            result = self.supabase_manager.client.table('AD_strands').insert(strand_record).execute()
+            result = self.supabase_manager.client.table('ad_strands').insert(strand_record).execute()
             
             if result.data:
                 self.logger.info(f"Published finding with message ID: {message_id}")
@@ -229,7 +229,7 @@ class AgentCommunicationProtocol:
             }
             
             # Insert into database
-            result = self.supabase_manager.client.table('AD_strands').insert(strand_record).execute()
+            result = self.supabase_manager.client.table('ad_strands').insert(strand_record).execute()
             
             if result.data:
                 self.logger.info(f"Tagged agent '{target_agent}' with message ID: {message_id}")
@@ -285,7 +285,7 @@ class AgentCommunicationProtocol:
             }
             
             # Insert into database
-            result = self.supabase_manager.client.table('AD_strands').insert(strand_record).execute()
+            result = self.supabase_manager.client.table('ad_strands').insert(strand_record).execute()
             
             if result.data:
                 self.logger.info(f"Responded to message {original_message_id} with response ID: {response_id}")
@@ -385,8 +385,8 @@ class AgentCommunicationProtocol:
             two_minutes_ago = datetime.now(timezone.utc).timestamp() - 120
             
             # Query for messages tagged for this agent
-            result = self.supabase_manager.client.table('AD_strands').select('*').or_(
-                f"target_agent.eq.{self.agent_name},tags.like.agent:{self.agent_name}%"
+            result = self.supabase_manager.client.table('ad_strands').select('*').or_(
+                f"target_agent.eq.{self.agent_name},tags.cs.[\"agent\",\"{self.agent_name}\"]"
             ).gte('created_at', two_minutes_ago).order('created_at', desc=True).limit(50).execute()
             
             return result.data if result.data else []
@@ -540,8 +540,8 @@ class AgentCommunicationProtocol:
             five_minutes_ago = datetime.now(timezone.utc).timestamp() - 300
             
             # Query for responses to our messages
-            result = self.supabase_manager.client.table('AD_strands').select('*').like(
-                'tags', f'%response%to:%'
+            result = self.supabase_manager.client.table('ad_strands').select('*').contains(
+                'tags', ['response', 'to']
             ).gte('created_at', five_minutes_ago).order('created_at', desc=True).limit(20).execute()
             
             if result.data:

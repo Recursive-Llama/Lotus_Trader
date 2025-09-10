@@ -89,8 +89,11 @@ class TimeBasedPatternDetector:
             analysis_results['significant_time_pattern'] = len(significant_patterns) > 0
             analysis_results['pattern_details'] = significant_patterns
             
-            # 8. Calculate overall confidence
-            analysis_results['confidence'] = self._calculate_time_analysis_confidence(analysis_results)
+            # 8. Calculate overall confidence based on whether patterns were found
+            if analysis_results['significant_time_pattern']:
+                analysis_results['confidence'] = self._calculate_time_analysis_confidence(analysis_results)
+            else:
+                analysis_results['confidence'] = 0.0
             
             return analysis_results
             
@@ -129,17 +132,29 @@ class TimeBasedPatternDetector:
                 'close': ['mean', 'std'] if 'close' in market_data.columns else ['mean']
             }).round(4)
             
+            # Replace NaN values with 0
+            hourly_stats = hourly_stats.fillna(0)
+            
             # Flatten column names
             hourly_stats.columns = ['_'.join(col).strip() for col in hourly_stats.columns]
             
-            # Calculate pattern strength
+            # Calculate pattern strength with NaN handling
             if 'volume_mean' in hourly_stats.columns:
                 volume_by_hour = hourly_stats['volume_mean']
-                results['pattern_strength'] = volume_by_hour.std() / volume_by_hour.mean() if volume_by_hour.mean() > 0 else 0
+                volume_std = volume_by_hour.std()
+                volume_mean = volume_by_hour.mean()
+                
+                # Handle NaN values
+                if np.isnan(volume_std):
+                    volume_std = 0.0
+                if np.isnan(volume_mean):
+                    volume_mean = 0.0
+                
+                results['pattern_strength'] = volume_std / volume_mean if volume_mean > 0 else 0
                 
                 # Identify peak and low activity hours
-                volume_threshold_high = volume_by_hour.mean() + volume_by_hour.std()
-                volume_threshold_low = volume_by_hour.mean() - volume_by_hour.std()
+                volume_threshold_high = volume_mean + volume_std
+                volume_threshold_low = volume_mean - volume_std
                 
                 results['peak_hours'] = volume_by_hour[volume_by_hour > volume_threshold_high].index.tolist()
                 results['low_activity_hours'] = volume_by_hour[volume_by_hour < volume_threshold_low].index.tolist()
@@ -197,10 +212,20 @@ class TimeBasedPatternDetector:
                 ]
                 
                 if not session_data.empty:
+                    # Calculate session stats with NaN handling
+                    volume_mean = session_data['volume'].mean() if 'volume' in session_data.columns else 0
+                    volume_std = session_data['volume'].std() if 'volume' in session_data.columns else 0
+                    
+                    # Handle NaN values
+                    if np.isnan(volume_mean):
+                        volume_mean = 0.0
+                    if np.isnan(volume_std):
+                        volume_std = 0.0
+                    
                     session_stats = {
                         'data_points': len(session_data),
-                        'volume_mean': session_data['volume'].mean() if 'volume' in session_data.columns else 0,
-                        'volume_std': session_data['volume'].std() if 'volume' in session_data.columns else 0,
+                        'volume_mean': volume_mean,
+                        'volume_std': volume_std,
                         'price_volatility': 0.0
                     }
                     
@@ -361,10 +386,20 @@ class TimeBasedPatternDetector:
                 ]
                 
                 if not period_data.empty:
+                    # Calculate period stats with NaN handling
+                    volume_mean = period_data['volume'].mean() if 'volume' in period_data.columns else 0
+                    volume_std = period_data['volume'].std() if 'volume' in period_data.columns else 0
+                    
+                    # Handle NaN values
+                    if np.isnan(volume_mean):
+                        volume_mean = 0.0
+                    if np.isnan(volume_std):
+                        volume_std = 0.0
+                    
                     period_stats = {
                         'data_points': len(period_data),
-                        'volume_mean': period_data['volume'].mean() if 'volume' in period_data.columns else 0,
-                        'volume_std': period_data['volume'].std() if 'volume' in period_data.columns else 0,
+                        'volume_mean': volume_mean,
+                        'volume_std': volume_std,
                         'price_volatility': 0.0
                     }
                     
@@ -532,11 +567,25 @@ class TimeBasedPatternDetector:
             
             # Volatility by hour
             hourly_volatility = market_data.groupby('hour')['price_change'].agg(['mean', 'std', 'count'])
-            results['volatility_by_hour'] = hourly_volatility.to_dict('index')
+            # Convert to dict and handle NaN values
+            hourly_dict = hourly_volatility.to_dict('index')
+            for hour, stats in hourly_dict.items():
+                if np.isnan(stats['std']):
+                    stats['std'] = 0.0
+                if np.isnan(stats['mean']):
+                    stats['mean'] = 0.0
+            results['volatility_by_hour'] = hourly_dict
             
             # Volatility by day of week
             daily_volatility = market_data.groupby('day_of_week')['price_change'].agg(['mean', 'std', 'count'])
-            results['volatility_by_day'] = daily_volatility.to_dict('index')
+            # Convert to dict and handle NaN values
+            daily_dict = daily_volatility.to_dict('index')
+            for day, stats in daily_dict.items():
+                if np.isnan(stats['std']):
+                    stats['std'] = 0.0
+                if np.isnan(stats['mean']):
+                    stats['mean'] = 0.0
+            results['volatility_by_day'] = daily_dict
             
             # Calculate volatility trend
             if len(market_data) >= self.volatility_window:

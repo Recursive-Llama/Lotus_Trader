@@ -5,7 +5,22 @@
 -- MARKET DATA TABLE
 -- =============================================
 
--- alpha_market_data_1m table - Raw 1-minute OHLCV data from Hyperliquid
+-- alpha_market_data_ticks table - Raw tick data from WebSocket
+CREATE TABLE IF NOT EXISTS alpha_market_data_ticks (
+    -- Core tick data
+    tick_id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    price DECIMAL(20,8) NOT NULL,
+    volume DECIMAL(20,8) NOT NULL,
+    
+    -- Tick metadata
+    data_quality_score DECIMAL(3,2) DEFAULT 1.0,
+    source VARCHAR(50) DEFAULT 'hyperliquid',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- alpha_market_data_1m table - Rolled-up 1-minute OHLCV data from ticks
 CREATE TABLE IF NOT EXISTS alpha_market_data_1m (
     -- Core OHLCV data
     symbol VARCHAR(20) NOT NULL,
@@ -27,6 +42,11 @@ CREATE TABLE IF NOT EXISTS alpha_market_data_1m (
 -- =============================================
 -- INDEXES
 -- =============================================
+
+-- Tick data indexes
+CREATE INDEX IF NOT EXISTS idx_alpha_market_data_ticks_symbol_timestamp ON alpha_market_data_ticks(symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_alpha_market_data_ticks_timestamp ON alpha_market_data_ticks(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_alpha_market_data_ticks_symbol ON alpha_market_data_ticks(symbol);
 
 -- Performance indexes for market data queries
 CREATE INDEX IF NOT EXISTS idx_alpha_market_data_1m_symbol_timestamp ON alpha_market_data_1m(symbol, timestamp DESC);

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     session_bucket TEXT,                     -- Session identifier
     regime TEXT,                             -- Market regime
     tags JSONB,                              -- Communication tags (REQUIRED)
+    target_agent TEXT,                       -- Target agent for communication
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     
@@ -134,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_kind ON AD_strands(kind);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_sigma ON AD_strands(sig_sigma);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_braid_level ON AD_strands((trading_plan->>'braid_level'));
 CREATE INDEX IF NOT EXISTS idx_ad_strands_tags ON AD_strands USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_target_agent ON AD_strands(target_agent);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_confidence ON AD_strands(sig_confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_generic_confidence ON AD_strands(confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_created_at ON AD_strands(created_at DESC);

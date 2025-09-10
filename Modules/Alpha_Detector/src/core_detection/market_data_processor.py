@@ -17,6 +17,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'utils'))
 
 from supabase_manager import SupabaseManager
+from .tick_processor import TickProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,12 @@ class MarketDataProcessor:
     def __init__(self, db_manager: SupabaseManager = None):
         self.db_manager = db_manager or SupabaseManager()
         self.data_quality_validator = DataQualityValidator()
+        self.tick_processor = TickProcessor(db_manager, self._async_store_callback)
         self.processed_count = 0
         self.error_count = 0
         
     async def process_ohlcv_data(self, raw_data: Dict) -> bool:
-        """Process raw OHLCV data and store in database"""
+        """Process raw OHLCV data as tick and convert to 1m candles"""
         try:
             # Validate data quality
             if not self.data_quality_validator.validate(raw_data):
@@ -38,23 +40,20 @@ class MarketDataProcessor:
                 self.error_count += 1
                 return False
             
-            # Prepare data for database insertion
-            db_data = self.prepare_db_data(raw_data)
-            
-            # Store in market_data_1m table
-            success = self.store_market_data(db_data)
+            # Process as tick data (will be converted to 1m candles automatically)
+            success = await self.tick_processor.process_tick(raw_data)
             
             if success:
                 self.processed_count += 1
-                logger.debug(f"Processed market data for {raw_data['symbol']}: {raw_data['close']}")
+                logger.debug(f"Processed tick for {raw_data['symbol']}: {raw_data['close']}")
             else:
                 self.error_count += 1
-                logger.error(f"Failed to store market data for {raw_data['symbol']}")
+                logger.error(f"Failed to process tick for {raw_data['symbol']}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Error processing OHLCV data: {e}")
+            logger.error(f"Error processing tick data: {e}")
             self.error_count += 1
             return False
     
@@ -133,12 +132,29 @@ class MarketDataProcessor:
             logger.error(f"Error getting market data count: {e}")
             return 0
     
+    async def start_tick_processing(self):
+        """Start the tick processing system"""
+        await self.tick_processor.start_processing()
+    
+    async def stop_tick_processing(self):
+        """Stop the tick processing system"""
+        await self.tick_processor.stop_processing()
+    
+    async def _async_store_callback(self, candle_data):
+        """Async callback for storing 1m candles"""
+        return self.store_market_data(candle_data)
+    
+    def get_tick_buffer_stats(self) -> Dict:
+        """Get tick buffer statistics"""
+        return self.tick_processor.get_buffer_stats()
+    
     def get_processing_stats(self) -> Dict:
         """Get processing statistics"""
         return {
             'processed_count': self.processed_count,
             'error_count': self.error_count,
-            'success_rate': self.processed_count / (self.processed_count + self.error_count) if (self.processed_count + self.error_count) > 0 else 0
+            'success_rate': self.processed_count / (self.processed_count + self.error_count) if (self.processed_count + self.error_count) > 0 else 0,
+            'tick_buffers': self.get_tick_buffer_stats()
         }
 
 

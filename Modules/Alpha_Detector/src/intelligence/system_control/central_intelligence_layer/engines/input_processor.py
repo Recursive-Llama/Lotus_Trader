@@ -223,7 +223,7 @@ class InputProcessor:
             print(f"Error processing CIL inputs: {e}")
             return {'error': str(e), 'processing_timestamp': datetime.now(timezone.utc)}
     
-    async def process_agent_outputs(self) -> List[AgentOutput]:
+    async def process_agent_outputs(self, strands: List[Dict[str, Any]] = None, context: Dict[str, Any] = None) -> List[AgentOutput]:
         """
         Process agent outputs from recent strands
         

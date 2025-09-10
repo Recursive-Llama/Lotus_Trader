@@ -6,6 +6,7 @@ Phase 1.3.1: Roll up 1-minute OHLCV data to multiple timeframes
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
+from typing import Dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,18 @@ class MultiTimeframeProcessor:
             '1h': '1h'      # Long-term trend confirmation
         }
         self.min_data_points = {
-            '1m': 100,   # 100 minutes
-            '5m': 100,   # 500 minutes (8+ hours)
-            '15m': 100,  # 1500 minutes (25+ hours)
-            '1h': 100    # 100 hours (4+ days)
+            '1m': 20,    # 20 minutes - enough for short-term patterns
+            '5m': 20,    # 100 minutes - good for momentum
+            '15m': 15,   # 225 minutes - trend analysis
+            '1h': 10     # 10 hours - long-term context
+        }
+        
+        # Countdown tracking for each timeframe
+        self.countdown_status = {
+            '1m': {'needed': 20, 'current': 0, 'ready': False},
+            '5m': {'needed': 20, 'current': 0, 'ready': False},
+            '15m': {'needed': 15, 'current': 0, 'ready': False},
+            '1h': {'needed': 10, 'current': 0, 'ready': False}
         }
     
     def process_multi_timeframe(self, data_1m):
@@ -46,19 +55,34 @@ class MultiTimeframeProcessor:
         for tf_name, tf_freq in self.timeframes.items():
             # Roll up 1m data to target timeframe
             ohlc_data = self._roll_up_ohlc(data_1m, tf_freq)
+            data_count = len(ohlc_data)
+            
+            # Update countdown status
+            self.countdown_status[tf_name]['current'] = data_count
+            self.countdown_status[tf_name]['ready'] = data_count >= self.min_data_points[tf_name]
             
             # Check if we have enough data
-            if len(ohlc_data) < self.min_data_points[tf_name]:
-                logger.warning(f"Insufficient data for {tf_name}: {len(ohlc_data)} < {self.min_data_points[tf_name]}")
+            if data_count < self.min_data_points[tf_name]:
+                remaining = self.min_data_points[tf_name] - data_count
+                logger.info(f"⏳ {tf_name.upper()}: {data_count}/{self.min_data_points[tf_name]} points (need {remaining} more)")
                 continue
             
+            logger.info(f"✅ {tf_name.upper()}: Ready with {data_count} points")
             results[tf_name] = {
                 'ohlc': ohlc_data,
                 'timeframe': tf_name,
-                'data_points': len(ohlc_data)
+                'data_points': data_count
             }
         
         return results
+    
+    def get_countdown_status(self) -> Dict[str, Dict]:
+        """Get countdown status for all timeframes"""
+        return self.countdown_status.copy()
+    
+    def is_ready_for_analysis(self) -> bool:
+        """Check if we have enough data for at least one timeframe"""
+        return any(status['ready'] for status in self.countdown_status.values())
     
     def _roll_up_ohlc(self, data_1m, target_freq):
         """

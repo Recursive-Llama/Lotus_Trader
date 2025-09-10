@@ -165,7 +165,7 @@ class IntegratedLearningSystem:
             self.logger.info("Processing universal learning")
             
             # Get recent strands (last 24 hours)
-            recent_strands = await self._get_recent_strands(hours=24)
+            recent_strands = self._get_recent_strands(hours=24)
             
             if not recent_strands:
                 self.logger.info("No recent strands found for universal learning")
@@ -314,10 +314,7 @@ class IntegratedLearningSystem:
                 (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
             ).order('created_at', desc=True).limit(1000).execute()
             
-            if result.data:
-                return result.data
-            else:
-                return []
+            return result.data if result.data else []
                 
         except Exception as e:
             self.logger.error(f"Error getting recent strands: {e}")
