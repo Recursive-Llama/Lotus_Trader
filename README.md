@@ -2,20 +2,20 @@
 
 *A revolutionary approach to trading intelligence through organic teams, mathematical resonance, and data-driven activation*
 
-## 🎯 **What is Lotus Trader?**
+## ⚘ **What is Lotus Trader?**
 
 Lotus Trader is an **organic intelligence trading system** that eliminates traditional module boundaries in favor of specialized teams that naturally coordinate through:
 
-- **💓 Data-driven heartbeat** - Market data arrival triggers all teams organically
-- **🧮 Mathematical resonance** - Teams influence each other through φ, ρ, θ calculations  
-- **🧠 Strategic coordination** - Central Intelligence Layer provides panoramic insights
-- **🔄 Unified learning** - All teams contribute to the same strand-braid learning system
+- **↻ Data-driven heartbeat** - Market data arrival triggers all teams organically
+- **Ξ Mathematical resonance** - Teams influence each other through φ, ρ, θ calculations  
+- **Ω Strategic coordination** - Central Intelligence Layer provides panoramic insights
+- **∮ Unified learning** - All teams contribute to the same strand-braid learning system
 
 **Key Innovation**: Instead of separate modules with complex communication protocols, we have **organic intelligence teams** that work together seamlessly through a shared database and natural influence patterns.
 
-## 🏗️ **System Architecture Overview**
+## ⟁ **System Architecture Overview**
 
-### **The Organic Intelligence Teams**
+### **Data Flow Pipeline**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -25,74 +25,77 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ RAW DATA        │  │ SOCIAL DATA     │  │ USER            │
-│ INTELLIGENCE    │  │ INTELLIGENCE    │  │ INTELLIGENCE    │
-│ TEAM ✅         │  │ TEAM 📋         │  │ TEAM 📋         │
-│                 │  │                 │  │                 │
-│ • Market        │  │ • Social        │  │ • User          │
-│   Microstructure│  │   Media Scanner │  │   Preference    │
-│ • Volume        │  │ • Sentiment     │  │   Analyzer      │
-│   Analyzer      │  │   Analyzer      │  │ • Behavior      │
-│ • Time Patterns │  │ • Chart         │  │   Pattern       │
-│ • Cross-Asset   │  │   Understanding │  │   Detector      │
-│ • Divergence    │  │ • News Impact   │  │ • Custom        │
-│   Detector      │  │   Analyzer      │  │   Strategy      │
-│ • Coordinator   │  │ • Social        │  │ • Risk Profile  │
-│                 │  │   Coordinator   │  │ • User          │
-│                 │  │                 │  │   Coordinator   │
-└─────────┬───────┘  └─────────┬───────┘  └─────────┬───────┘
-          │                    │                    │
-          └────────────────────┼────────────────────┘
-                               │
-                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              CENTRAL INTELLIGENCE LAYER (CIL) ✅            │
-│  • Global Synthesis Engine         • Experiment Orchestrator│
-│  • Learning Feedback Engine        • Autonomy Adaptation    │
-│  • Output Directive System         • Governance System      │
-│  • Input Processor                 • System Resonance Mgr   │
-│  • CIL Orchestrator               • Strategic Pattern Miner │
+│              RAW DATA INTELLIGENCE TEAM ☀                  │
+│  • Market Microstructure Analyzer    • Volume Pattern Analyzer│
+│  • Time-Based Pattern Detector       • Cross-Asset Analyzer   │
+│  • Raw Data Divergence Detector      • Team Coordinator       │
 └─────────────────────┬───────────────────────────────────────┘
-                      │ (immediate triggers)
+                      │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              DECISION MAKER TEAM 🚧                        │
-│  • Risk Assessment Agent          • Portfolio Optimization  │
-│  • Plan Evaluation Agent          • Compliance Agent        │
-│  • Decision Coordinator           (Architecture Complete)   │
+│              CENTRAL INTELLIGENCE LAYER (CIL) ☀            │
+│  • Prediction Engine (Active)        • Learning System (Active)│
+│  • Outcome Tracker (Active)          • Advanced Engines (Built)│
+│  • Global Synthesis Engine           • Experiment Orchestrator │
+│  • System Resonance Manager          • Strategic Pattern Miner │
 └─────────────────────┬───────────────────────────────────────┘
-                      │ (immediate triggers)
+                      │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              TRADER TEAM 🚧                                 │
-│  • Order Manager                 • Performance Analyzer     │
-│  • Position Tracker              • Hyperliquid Integration  │
-│  • Venue Fallback Manager        • Trader Coordinator       │
-│  • CIL Integration               (Architecture Complete)    │
-└─────────────────────────────────────────────────────────────┘
+│              CONDITIONAL TRADE PLANNER (CTP) ☿             │
+│  • Trading Plan Generation           • Plan Validation        │
+│  • Risk Assessment                   • Plan Optimization      │
+│  • Feedback Integration              • Performance Tracking   │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│              DECISION MAKER (DM) ☿                         │
+│  • Plan Evaluation                  • Risk Management        │
+│  • Portfolio Optimization           • Compliance Checking    │
+│  • Decision Coordination            • Approval Workflow      │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│              TRADER (TD) ☿                                 │
+│  • Order Execution                  • Position Management    │
+│  • Venue Selection                  • Performance Analysis   │
+│  • Hyperliquid Integration          • Execution Monitoring   │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│              FEEDBACK LOOP ↻                               │
+│  • Performance Data                 • Outcome Analysis       │
+│  • Learning Integration             • System Improvement     │
+│  • CTP Updates                      • Continuous Refinement  │
+└─────────────────────┘
 ```
 
-### **How Teams Coordinate**
+### **Data Flow Process**
 
-- **Parallel intelligence teams** - Raw Data, Social Data, and User Intelligence teams all feed directly into CIL
-- **Event-driven activation** - Teams activate immediately when triggered by other teams
-- **Fallback intervals** - Teams activate on intervals only if no triggers received
-- **Shared communication** - All teams use the same `AD_strands` database table
-- **Resonance enhancement** - High-resonance patterns naturally strengthen across teams
-- **CIL synthesis** - Central Intelligence Layer synthesizes insights from all intelligence teams
+- **Raw Data Processing** - Market data flows through 5 specialized analyzers
+- **Pattern Detection** - Multi-timeframe analysis across 1m, 5m, 15m, 1h timeframes
+- **CIL Prediction Review** - Patterns become predictions with confidence scoring
+- **CTP Plan Generation** - Confident patterns become conditional trading plans
+- **DM Decision Making** - Plans evaluated for risk, compliance, and optimization
+- **TD Execution** - Approved plans executed with real-time monitoring
+- **Feedback Loop** - Performance data flows back to improve future predictions
 
-## 📊 **Current System Status**
+## ⟁ **Current System Status**
 
-### **✅ Fully Implemented & Production Ready**
-- **Raw Data Intelligence Team** - Complete with 6 specialized agents and full CIL integration
+### **☀ Fully Implemented & Production Ready**
+- **Raw Data Intelligence Team** - Complete with 5 specialized analyzers
   - Market Microstructure Analyzer, Volume Pattern Analyzer, Time-Based Pattern Detector
-  - Cross-Asset Pattern Analyzer, Raw Data Divergence Detector, Raw Data Coordinator
-  - Enhanced agent base with organic CIL influence and uncertainty-driven exploration
-- **Central Intelligence Layer Team** - Complete with 8 advanced engines
-  - Global Synthesis Engine, Experiment Orchestration Engine, Learning Feedback Engine
-  - Autonomy Adaptation Engine, Output Directive System, Governance System
-  - Input Processor, System Resonance Manager, CIL Orchestrator
+  - Cross-Asset Pattern Analyzer, Raw Data Divergence Detector
+  - Team Coordination, LLM Coordination, Strand Creation systems
+- **Core CIL System** - Prediction engine, learning system, outcome tracking
+  - Prediction Engine (Active) - Creates predictions from patterns
+  - Learning Feedback Engine (Active) - Continuous learning from outcomes
+  - Prediction Outcome Tracker (Active) - Monitors prediction performance
+  - Multi-cluster Learning Orchestrator (Active) - Advanced learning coordination
 - **Core Detection Engine** - Multi-timeframe signal detection with 35+ indicators
 - **LLM Integration** - Complete OpenRouter client with prompt management and context system
 - **Communication System** - Database-centric messaging with agent discovery and routing
@@ -101,36 +104,39 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 - **Database Schema** - Complete PostgreSQL schema with all team-specific fields
 - **Production Data Flow** - Real-time WebSocket to database pipeline with full error handling
 
-### **📋 Planned Intelligence Teams**
+### **☽ Advanced CIL Features (Built, Available for Activation)**
+- **Global Synthesis Engine** - Cross-agent pattern synthesis and meta-analysis
+- **Experiment Orchestration Engine** - Automated hypothesis testing and validation
+- **System Resonance Manager** - Mathematical resonance field monitoring
+- **Autonomy Adaptation Engine** - Self-improving system adaptation
+- **Governance System** - Decision ownership and conflict resolution
+- **Output Directive System** - Strategic directive generation and distribution
+- **Meta-Signal System** - Confluence detection, lead-lag prediction, transfer hits
+- **LLM Components** - Analogy engine, counterfactual critic, motif miner
+
+### **♄ Planned Intelligence Teams**
 - **Social Data Intelligence Team** - Social media and sentiment analysis
   - Social Media Scanner, Sentiment Analyzer, Chart Understanding Agent
   - News Impact Analyzer, Social Pattern Detector, Community Intelligence Agent
-  - Social Coordinator (Architecture planned, not yet implemented)
 - **User Intelligence Team** - User preferences and behavior analysis
   - User Preference Analyzer, Behavior Pattern Detector, Custom Strategy Agent
   - Risk Profile Analyzer, User Feedback Processor, Personalization Engine
-  - User Coordinator (Architecture planned, not yet implemented)
 
-### **🔄 Advanced Implementation (Phase 2)**
-- **Enhanced Agent Capabilities** - Organic intelligence integration with motif creation
-- **Cross-Team Learning** - Advanced learning orchestration and knowledge transfer
-- **Strategic Intelligence** - Panoramic view integration and cross-agent awareness
-- **Doctrine Integration** - Organic knowledge evolution and pattern persistence
+### **☿ In Development**
+- **Conditional Trade Planner (CTP)** - Trading plan generation from confident patterns
+- **Decision Maker (DM)** - Risk management and plan evaluation
+- **Trader (TD)** - Order execution and performance tracking
+- **Feedback Loop Integration** - Performance data flow back to CTP
 
-### **🚧 In Development**
-- **Decision Maker Team** - Risk management and plan evaluation (architecture complete)
-- **Trader Team** - Order execution and performance tracking (architecture complete)
-- **Event-Driven Triggers** - Immediate team activation system (foundation ready)
-
-### **📈 Production Capabilities**
+### **⚙ Production Capabilities**
 - **Real-time Market Data Processing** - 1-minute heartbeat with WebSocket integration
 - **Multi-timeframe Analysis** - 1m, 5m, 15m, 1h, 4h, 1d timeframes
 - **Pattern Detection** - 35+ technical indicators with composite pattern analysis
+- **Prediction & Learning** - Continuous prediction creation and outcome learning
 - **Intelligence Coordination** - Organic team coordination through mathematical resonance
-- **Learning & Adaptation** - Continuous system evolution through strand-braid learning
 - **Performance Monitoring** - Comprehensive telemetry and system health tracking
 
-## 🚀 **Getting Started**
+## ⚙ **Getting Started**
 
 ### **Quick Start**
 ```bash
@@ -196,23 +202,23 @@ python test_raw_data_statistical_focus.py
 - **Market Data**: Hyperliquid WebSocket connection
 - **Environment**: See `.env.example` for required variables
 
-## 📚 **Documentation Guide**
+## ⟁ **Documentation Guide**
 
-### **🏗️ Architecture & Design**
+### **⚙ Architecture & Design**
 - **[System Architecture](docs/architecture/ORGANIC_INTELLIGENCE_SYSTEM_ARCHITECTURE.md)** - Complete architectural overview
 - **[CIL Integration](docs/architecture/central_intelligence_layer(CIL).md)** - Central Intelligence Layer details
 - **[Raw Data Intelligence](docs/architecture/RAW_DATA_INTELLIGENCE_CIL_INTEGRATION.md)** - Raw data team integration
 
-### **🔧 Implementation Plans**
+### **⚙ Implementation Plans**
 - **[Trader Team](docs/implementation/TRADER_TEAM_CIL_INTEGRATION.md)** - Execution team plan
 - **[Build Plan](docs/implementation/BUILD_IMPLEMENTATION_PLAN.md)** - Step-by-step implementation
 
-### **📖 Original Vision**
+### **⚙ Original Vision**
 - **[Original Architecture](docs/original/SYSTEM_ARCHITECTURE.md)** - Initial garden philosophy
 - **[Unified Architecture](docs/original/UNIFIED_SYSTEM_ARCHITECTURE.md)** - Enhanced architectural concepts
 - **[Operational Guide](docs/original/ENHANCED_OPERATIONAL_GUIDE.md)** - System operation procedures
 
-## 🧮 **Key Concepts**
+## Ξ **Key Concepts**
 
 ### **Mathematical Resonance**
 - **φ (fractal self-similarity)** - Patterns that repeat across scales
@@ -229,7 +235,7 @@ python test_raw_data_statistical_focus.py
 - **Event-driven activation** - Teams activate immediately when triggered, fallback to intervals
 - **Continuous learning** - System becomes more intelligent through every interaction
 
-## 🚀 **Production Features & Capabilities**
+## ⚙ **Production Features & Capabilities**
 
 ### **Real-Time Market Intelligence**
 - **Multi-timeframe Analysis** - 1m, 5m, 15m, 1h, 4h, 1d comprehensive analysis
@@ -260,73 +266,46 @@ python test_raw_data_statistical_focus.py
 - **Signal Generation** - Confidence-scored signals with risk assessment
 - **Learning Integration** - Continuous pattern learning and adaptation across all data sources
 
-## 🎯 **Development Roadmap**
+## ☀ **Development Roadmap**
 
-### **✅ Phase 1: Core Intelligence Foundation (COMPLETED)**
-- ✅ Raw Data Intelligence Team - 6 specialized agents with CIL integration
-- ✅ Central Intelligence Layer - 8 advanced engines with full coordination
-- ✅ Multi-timeframe Detection Engine - 35+ indicators across 6 timeframes
-- ✅ LLM Integration - Complete OpenRouter client with context management
-- ✅ Database Schema - Full PostgreSQL implementation with team tables
-- ✅ Testing Infrastructure - 80+ comprehensive test files
-- ✅ Production Data Flow - Real-time WebSocket to database pipeline
+### **☀ Phase 1: Core Intelligence Foundation (COMPLETED)**
+- ☀ Raw Data Intelligence Team - 5 specialized analyzers with team coordination
+- ☀ Core CIL System - Prediction engine, learning system, outcome tracking
+- ☀ Multi-timeframe Detection Engine - 35+ indicators across 6 timeframes
+- ☀ LLM Integration - Complete OpenRouter client with context management
+- ☀ Database Schema - Full PostgreSQL implementation with team tables
+- ☀ Testing Infrastructure - 80+ comprehensive test files
+- ☀ Production Data Flow - Real-time WebSocket to database pipeline
 
-### **✅ Phase 2: Advanced Intelligence Systems (COMPLETED)**
-- ✅ Enhanced Agent Capabilities - Organic CIL influence and uncertainty handling
-- ✅ Cross-Team Learning - Advanced learning orchestration and knowledge transfer
-- ✅ Strategic Intelligence - Panoramic view integration and cross-agent awareness
-- ✅ Doctrine Integration - Organic knowledge evolution and pattern persistence
-- ✅ Experiment Orchestration - Automated hypothesis testing and validation
-- ✅ System Resonance - Mathematical resonance calculations and organic evolution
+### **☽ Phase 2: Advanced CIL Features (BUILT, AVAILABLE)**
+- ☽ Global Synthesis Engine - Cross-agent pattern synthesis and meta-analysis
+- ☽ Experiment Orchestration Engine - Automated hypothesis testing and validation
+- ☽ System Resonance Manager - Mathematical resonance field monitoring
+- ☽ Autonomy Adaptation Engine - Self-improving system adaptation
+- ☽ Governance System - Decision ownership and conflict resolution
+- ☽ Output Directive System - Strategic directive generation and distribution
+- ☽ Meta-Signal System - Confluence detection, lead-lag prediction, transfer hits
+- ☽ LLM Components - Analogy engine, counterfactual critic, motif miner
 
-### **🚧 Phase 3: Decision Maker Team (IN PROGRESS)**
-- 🚧 Risk Assessment Agent - Portfolio risk analysis and management
-- 🚧 Portfolio Optimization Agent - Position sizing and allocation
-- 🚧 Plan Evaluation Agent - Trading plan validation and scoring
-- 🚧 Compliance Agent - Regulatory compliance and monitoring
-- 🚧 Decision Coordinator - Team coordination and CIL integration
-- **Status**: Architecture complete, implementation in progress
+### **☿ Phase 3: Data Flow Completion (IN PROGRESS)**
+- ☿ Conditional Trade Planner (CTP) - Trading plan generation from confident patterns
+- ☿ Decision Maker (DM) - Risk management and plan evaluation
+- ☿ Trader (TD) - Order execution and performance tracking
+- ☿ Feedback Loop Integration - Performance data flow back to CTP
+- **Status**: Core data flow pipeline completion
 
-### **🚧 Phase 4: Trader Team (IN PROGRESS)**
-- 🚧 Order Manager - Order execution and management
-- 🚧 Performance Analyzer - Trade performance tracking and analysis
-- 🚧 Position Tracker - Real-time position monitoring
-- 🚧 Hyperliquid Integration - Exchange connectivity and execution
-- 🚧 Venue Fallback Manager - Multi-venue execution strategies
-- 🚧 Trader Coordinator - Team coordination and CIL integration
-- **Status**: Architecture complete, implementation in progress
+### **♄ Phase 4: Additional Intelligence Teams (PLANNED)**
+- ♄ Social Data Intelligence Team - Social media and sentiment analysis
+- ♄ User Intelligence Team - User preferences and behavior analysis
+- **Status**: Architecture planned, implementation pending
 
-### **📋 Phase 5: Social Data Intelligence Team (PLANNED)**
-- 📋 Social Media Scanner - Real-time social media data collection
-- 📋 Sentiment Analyzer - Market sentiment analysis and scoring
-- 📋 Chart Understanding Agent - Social media chart analysis and interpretation
-- 📋 News Impact Analyzer - News event impact assessment
-- 📋 Social Pattern Detector - Social media pattern recognition
-- 📋 Community Intelligence Agent - Community behavior analysis
-- 📋 Social Coordinator - Team coordination and CIL integration
+### **♄ Phase 5: Advanced Features Activation (PLANNED)**
+- ♄ Advanced CIL Activation - Strategic coordination and meta-signals
+- ♄ Cross-Team Learning - Advanced learning orchestration and knowledge transfer
+- ♄ Strategic Intelligence - Panoramic view integration and cross-agent awareness
+- ♄ Event-Driven Triggers - Immediate team activation system
 
-### **📋 Phase 6: User Intelligence Team (PLANNED)**
-- 📋 User Preference Analyzer - User preference learning and adaptation
-- 📋 Behavior Pattern Detector - User behavior pattern recognition
-- 📋 Custom Strategy Agent - Personalized strategy generation
-- 📋 Risk Profile Analyzer - User risk tolerance analysis
-- 📋 User Feedback Processor - User feedback integration and learning
-- 📋 Personalization Engine - System personalization and adaptation
-- 📋 User Coordinator - Team coordination and CIL integration
-
-### **📋 Phase 7: Event-Driven Triggers (PLANNED)**
-- 📋 Immediate Team Activation - Event-driven trigger system
-- 📋 Cascading Effects - Cross-team influence and coordination
-- 📋 Organic Activation - Natural team coordination patterns
-- 📋 Fallback Intervals - Robust interval-based activation
-
-### **📋 Phase 8: Complete Organic Intelligence (PLANNED)**
-- 📋 Full Cross-Team Pattern Detection - Complete pattern sharing
-- 📋 Strategic Meta-Signal Generation - High-level intelligence synthesis
-- 📋 End-to-End Organic Flow - Complete system coordination
-- 📋 Performance Optimization - System tuning and monitoring
-
-## 🎯 **System Capabilities Summary**
+## ⚘ **System Capabilities Summary**
 
 ### **Core Intelligence Features**
 - **Multi-timeframe Analysis** - 6 timeframes (1m, 5m, 15m, 1h, 4h, 1d)
@@ -360,7 +339,7 @@ python test_raw_data_statistical_focus.py
 - **Cross-team Communication** - Database-centric messaging system
 - **Resonance Enhancement** - High-resonance patterns strengthen across teams
 
-## 🤝 **Contributing**
+## ⚙ **Contributing**
 
 ### **Development Setup**
 1. Fork the repository
@@ -374,29 +353,33 @@ python test_raw_data_statistical_focus.py
 - **Documentation**: Update relevant docs for changes
 - **Architecture**: Follow organic intelligence principles
 
-## 📞 **Support & Community**
+## ⚙ **Support & Community**
 
 - **Issues**: Report bugs and feature requests via GitHub Issues
 - **Discussions**: Join community discussions for questions and ideas
 - **Documentation**: Check the documentation guide above for detailed information
 
-## 📄 **License**
+## ⚙ **License**
 
 This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
 
 ### **Key Points:**
-- ✅ **Commercial use** - Use in commercial projects
-- ✅ **Modification** - Modify and distribute
-- ✅ **Distribution** - Distribute copies
-- ✅ **Patent use** - Use any patent claims
-- ✅ **Private use** - Use privately
+- ⚖ **Commercial use** - Use in commercial projects
+- ⚖ **Modification** - Modify and distribute
+- ⚖ **Distribution** - Distribute copies
+- ⚖ **Patent use** - Use any patent claims
+- ⚖ **Private use** - Use privately
 
 ### **Requirements:**
-- 📋 **License and copyright notice** - Include license and copyright
-- 📋 **State changes** - Document any changes made
-- 📋 **Same license** - Distribute under same license
+- ⚙ **License and copyright notice** - Include license and copyright
+- ⚙ **State changes** - Document any changes made
+- ⚙ **Same license** - Distribute under same license
 
 **Full license text**: [LICENSE](LICENSE)
+
+---
+
+**Glyph Key**: ☀ Gold (complete) | ☽ Silver (in progress) | ♄ Lead (planned) | ☿ Mercury (active) | ⚘ Lotus (organic) | ⟁ Architecture | Ξ Logic | Ω Intelligence | ↻ Cycles | ∮ Integration
 
 ---
 
