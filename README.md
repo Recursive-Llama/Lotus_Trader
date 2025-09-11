@@ -18,23 +18,34 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 ### **Data Flow Pipeline**
 
 ```
+                    DATA SOURCES (1-min heartbeat)
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│   MARKET    │  │   SOCIAL    │  │    USER     │
+│    DATA     │  │    MEDIA    │  │    INPUT    │
+│     ∇       │  │     ℵ       │  │     ⨋       │
+│ WebSocket   │  │ Channels    │  │ Intelligence│
+│ Exchange    │  │ Charts      │  │ Patterns    │
+│ Data        │  │ Sentiment   │  │ Charts      │
+└─────┬───────┘  └─────┬───────┘  └─────┬───────┘
+      │                │                │
+      ▼                ▼                ▼
+                    INTELLIGENCE TEAMS
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│     RAW     │  │   SOCIAL    │  │    USER     │
+│     ⚸       │  │     𓂀      │  │     ⚕      │
+│• Microstructure│ • Sentiment │  │• Pattern    │
+│• Volume     │  │• Charts     │  │  Analysis   │
+│• Time-Based │  │• Community  │  │• Chart      │
+│• Cross-Asset│  │• News Impact│  │  Recognition│
+│• Divergence │  │• Social     │  │• User       │
+│             │  │  Patterns   │  │  Feedback   │
+└─────┬───────┘  └─────┬───────┘  └─────┬───────┘
+      │                │                │
+      └────────────────┼────────────────┘
+                       │
+                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    DATA SOURCES (1-min heartbeat)           │
-│  • Market Data (WebSocket)      • Social Media Channels     │
-│  • User Input & Preferences     • Multi-timeframe Processing│
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              RAW DATA INTELLIGENCE TEAM ☀                  │
-│  • Market Microstructure Analyzer    • Volume Pattern Analyzer│
-│  • Time-Based Pattern Detector       • Cross-Asset Analyzer   │
-│  • Raw Data Divergence Detector      • Team Coordinator       │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              CENTRAL INTELLIGENCE LAYER (CIL) ☀            │
+│              CENTRAL INTELLIGENCE LAYER (CIL) Ξ            │
 │  • Prediction Engine (Active)        • Learning System (Active)│
 │  • Outcome Tracker (Active)          • Advanced Engines (Built)│
 │  • Global Synthesis Engine           • Experiment Orchestrator │
@@ -43,7 +54,7 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              CONDITIONAL TRADE PLANNER (CTP) ☿             │
+│              CONDITIONAL TRADE PLANNER (CTP) ⚛             │
 │  • Trading Plan Generation           • Plan Validation        │
 │  • Risk Assessment                   • Plan Optimization      │
 │  • Feedback Integration              • Performance Tracking   │
@@ -51,7 +62,7 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              DECISION MAKER (DM) ☿                         │
+│              DECISION MAKER (DM) ⚚                         │
 │  • Plan Evaluation                  • Risk Management        │
 │  • Portfolio Optimization           • Compliance Checking    │
 │  • Decision Coordination            • Approval Workflow      │
@@ -59,7 +70,7 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              TRADER (TD) ☿                                 │
+│              TRADER (TD) ⚔                                 │
 │  • Order Execution                  • Position Management    │
 │  • Venue Selection                  • Performance Analysis   │
 │  • Hyperliquid Integration          • Execution Monitoring   │
