@@ -22,7 +22,7 @@ class LLMCoordination:
         self.prompt_manager = PromptManager()
         self.logger = logging.getLogger(f"{__name__}.llm_coordination")
     
-    async def perform_llm_coordination(self, team_analysis: Dict[str, Any], analysis_results: Dict[str, Any], market_data: pd.DataFrame) -> Dict[str, Any]:
+    def perform_llm_coordination(self, team_analysis: Dict[str, Any], analysis_results: Dict[str, Any], market_data: pd.DataFrame) -> Dict[str, Any]:
         """
         Use LLM to perform meta-analysis and coordination on team results
         

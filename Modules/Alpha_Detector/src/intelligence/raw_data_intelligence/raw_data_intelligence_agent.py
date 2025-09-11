@@ -328,7 +328,7 @@ class RawDataIntelligenceAgent:
             analysis_results['team_analysis'] = team_analysis
             
             # 3. USE LLM FOR META-ANALYSIS AND COORDINATION for this asset
-            llm_coordination_results = await self.llm_coordination.perform_llm_coordination(team_analysis, analysis_results, symbol_data)
+            llm_coordination_results = self.llm_coordination.perform_llm_coordination(team_analysis, analysis_results, symbol_data)
             analysis_results.update(llm_coordination_results)
             
             # 4. Publish findings for this asset
