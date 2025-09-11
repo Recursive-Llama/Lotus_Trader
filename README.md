@@ -305,7 +305,7 @@ python test_raw_data_statistical_focus.py
 - **Discussions**: Join community discussions for questions and ideas
 - **Documentation**: Check the documentation guide above
 
-## ⚖ License
+## 𖣩 License
 This project is licensed under the Apache License 2.0 — see LICENSE.
 
 - **Commercial use**
