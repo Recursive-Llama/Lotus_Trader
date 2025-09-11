@@ -109,13 +109,13 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 - ⚱ Prediction Outcome Tracker (Active) — Monitors prediction performance  
 - ⧉ Multi-cluster Learning Orchestrator (Active) — Advanced learning coordination  
 
-⌬ Core Detection Engine — Multi-timeframe signal detection with 35+ indicators  
-⚘ LLM Integration — Complete OpenRouter client with prompt management and context system  
-⚯ Communication System — Database-centric messaging with agent discovery and routing  
-φ Resonance System — Mathematical resonance calculations (φ, ρ, θ) with organic evolution  
-⋄ Comprehensive Testing Suite — 80+ test files with unit, integration, and production tests  
-⚳ Database Schema — Complete PostgreSQL schema with all team-specific fields  
-❂ Production Data Flow — Real-time WebSocket to database pipeline with full error handling  
+Core Detection Engine — Multi-timeframe signal detection with 35+ indicators  
+LLM Integration — Complete OpenRouter client with prompt management and context system  
+Communication System — Database-centric messaging with agent discovery and routing  
+Resonance System — Mathematical resonance calculations (φ, ρ, θ) with organic evolution  
+Comprehensive Testing Suite — 80+ test files with unit, integration, and production tests  
+Database Schema — Complete PostgreSQL schema with all team-specific fields  
+Production Data Flow — Real-time WebSocket to database pipeline with full error handling  
 
 ---
 
@@ -143,20 +143,20 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
 ---
 
 ## ☿ In Development
-❂ Conditional Trade Planner (CTP) — Trading plan generation from confident patterns  
-♃ Decision Maker (DM) — Risk management and plan evaluation  
-⚳ Trader (TD) — Order execution and performance tracking  
-↻ Feedback Loop Integration — Performance data flow back to CTP  
+Conditional Trade Planner (CTP) — Trading plan generation from confident patterns  
+Decision Maker (DM) — Risk management and plan evaluation  
+Trader (TD) — Order execution and performance tracking  
+Feedback Loop Integration — Performance data flow back to CTP  
 
 ---
 
 ## ⌬ Production Capabilities
-⚳ Real-time Market Data Processing — 1-minute heartbeat with WebSocket integration  
-φ Multi-timeframe Analysis — 1m, 5m, 15m, 1h, 4h, 1d timeframes  
-⋄ Pattern Detection — 35+ technical indicators with composite pattern analysis  
-Ω Prediction & Learning — Continuous prediction creation and outcome learning  
-⚯ Intelligence Coordination — Organic team coordination through mathematical resonance  
-❂ Performance Monitoring — Comprehensive telemetry and system health tracking  
+Real-time Market Data Processing — 1-minute heartbeat with WebSocket integration  
+Multi-timeframe Analysis — 1m, 5m, 15m, 1h, 4h, 1d timeframes  
+Pattern Detection — 35+ technical indicators with composite pattern analysis  
+Prediction & Learning — Continuous prediction creation and outcome learning  
+Intelligence Coordination — Organic team coordination through mathematical resonance  
+Performance Monitoring — Comprehensive telemetry and system health tracking  
 
 ---
 
@@ -248,39 +248,39 @@ python test_raw_data_statistical_focus.py
 
 ## ☼ Development Roadmap
 ### ☼ Phase 1: Core Intelligence Foundation (COMPLETED)
-- ☼ Raw Data Intelligence Team
-- ☼ Core CIL System
-- ☼ Multi-timeframe Detection Engine
-- ☼ LLM Integration
-- ☼ Database Schema
-- ☼ Testing Infrastructure
-- ☼ Production Data Flow
+- Raw Data Intelligence Team
+- Core CIL System
+- Multi-timeframe Detection Engine
+- LLM Integration
+- Database Schema
+- Testing Infrastructure
+- Production Data Flow
 
 ### ☽ Phase 2: Advanced CIL Features (BUILT, AVAILABLE)
-- ☽ Global Synthesis Engine
-- ☽ Experiment Orchestration Engine
-- ☽ System Resonance Manager
-- ☽ Autonomy Adaptation Engine
-- ☽ Governance System
-- ☽ Output Directive System
-- ☽ Meta-Signal System
-- ☽ LLM Components
+- Global Synthesis Engine
+- Experiment Orchestration Engine
+- System Resonance Manager
+- Autonomy Adaptation Engine
+- Governance System
+- Output Directive System
+- Meta-Signal System
+- LLM Components
 
 ### ☿ Phase 3: Data Flow Completion (IN PROGRESS)
-- ☿ Conditional Trade Planner (CTP)
-- ☿ Decision Maker (DM)
-- ☿ Trader (TD)
-- ☿ Feedback Loop Integration
+- Conditional Trade Planner (CTP)
+- Decision Maker (DM)
+- Trader (TD)
+- Feedback Loop Integration
 
 ### ♄ Phase 4: Additional Intelligence Teams (PLANNED)
-- ♄ Social Data Intelligence Team
-- ♄ User Intelligence Team
+- Social Data Intelligence Team
+- User Intelligence Team
 
 ### ♄ Phase 5: Advanced Features Activation (PLANNED)
-- ♄ Advanced CIL Activation
-- ♄ Cross-Team Learning
-- ♄ Strategic Intelligence
-- ♄ Event-Driven Triggers
+- Advanced CIL Activation
+- Cross-Team Learning
+- Strategic Intelligence
+- Event-Driven Triggers
 
 ## ⚘ System Capabilities Summary
 - **φ Core Intelligence Features**
@@ -308,11 +308,11 @@ python test_raw_data_statistical_focus.py
 ## ⚖ License
 This project is licensed under the Apache License 2.0 — see LICENSE.
 
-- ⚖ **Commercial use**
-- ⚖ **Modification**
-- ⚖ **Distribution**
-- ⚖ **Patent use**
-- ⚖ **Private use**
+- **Commercial use**
+- **Modification**
+- **Distribution**
+- **Patent use**
+- **Private use**
 
 ---
 
