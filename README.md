@@ -32,7 +32,7 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
                     INTELLIGENCE TEAMS
 ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
 │     RAW     │  │   SOCIAL    │  │    USER     │
-│     ⚸       │  │     𓂀      │  │     ⚕      │
+│     ⚸       │  │     𓂀      │  │     ⚕       │
 │• Microstructure│ • Sentiment │  │• Pattern    │
 │• Volume     │  │• Charts     │  │  Analysis   │
 │• Time-Based │  │• Community  │  │• Chart      │
@@ -45,44 +45,44 @@ Lotus Trader is an **organic intelligence trading system** that eliminates tradi
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              CENTRAL INTELLIGENCE LAYER (CIL) Ξ            │
-│  • Prediction Engine (Active)        • Learning System (Active)│
-│  • Outcome Tracker (Active)          • Advanced Engines (Built)│
-│  • Global Synthesis Engine           • Experiment Orchestrator │
-│  • System Resonance Manager          • Strategic Pattern Miner │
+│              CENTRAL INTELLIGENCE LAYER (CIL) Ξ             │
+│  • Prediction Engine (Active)     • Learning System (Active)│
+│  • Outcome Tracker (Active)       • Advanced Engines (Built)│
+│  • Global Synthesis Engine        • Experiment Orchestrator │
+│  • System Resonance Manager       • Strategic Pattern Miner │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              CONDITIONAL TRADE PLANNER (CTP) ⚛             │
-│  • Trading Plan Generation           • Plan Validation        │
-│  • Risk Assessment                   • Plan Optimization      │
-│  • Feedback Integration              • Performance Tracking   │
+│              CONDITIONAL TRADE PLANNER (CTP) ⚛              │
+│  • Trading Plan Generation         • Plan Validation        │
+│  • Risk Assessment                 • Plan Optimization      │
+│  • Feedback Integration            • Performance Tracking   │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              DECISION MAKER (DM) ⚚                         │
-│  • Plan Evaluation                  • Risk Management        │
-│  • Portfolio Optimization           • Compliance Checking    │
-│  • Decision Coordination            • Approval Workflow      │
+│              DECISION MAKER (DM) ⚚                          │
+│  • Plan Evaluation                 • Risk Management        │
+│  • Portfolio Optimization          • Compliance Checking    │
+│  • Decision Coordination           • Approval Workflow      │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              TRADER (TD) ⚔                                 │
-│  • Order Execution                  • Position Management    │
-│  • Venue Selection                  • Performance Analysis   │
-│  • Hyperliquid Integration          • Execution Monitoring   │
+│               TRADER (TD) ⚔                                 │
+│  • Order Execution                 • Position Management    │
+│  • Venue Selection                 • Performance Analysis   │
+│  • Hyperliquid Integration         • Execution Monitoring   │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              FEEDBACK LOOP ↻                               │
-│  • Performance Data                 • Outcome Analysis       │
-│  • Learning Integration             • System Improvement     │
-│  • CTP Updates                      • Continuous Refinement  │
-└─────────────────────┘
+│              FEEDBACK LOOP ↻                                │
+│  • Performance Data                • Outcome Analysis       │
+│  • Learning Integration            • System Improvement     │
+│  • CTP Updates                     • Continuous Refinement  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### **Data Flow Process**
