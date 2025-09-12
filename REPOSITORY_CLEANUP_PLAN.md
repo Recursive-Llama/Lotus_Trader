@@ -34,6 +34,13 @@
 - Chart vision code in `Module_Design/Specific_Modules/chart_vision_module/`
 - No clear separation between implementation and design
 
+**6. Universal Learning System (Critical Discovery)**
+- `Modules/Alpha_Detector/src/intelligence/universal_learning/` - **FOUNDATION LEARNING SYSTEM**
+- Contains universal scoring, clustering, and learning capabilities
+- Designed to work with ALL strand types (prediction_review, trade_outcome, pattern, etc.)
+- This is the centralized learning architecture described in the docs
+- **HIGH PRIORITY**: Must be preserved and integrated as the foundation learning system
+
 ## **Proposed Clean Structure**
 
 ```
@@ -56,6 +63,16 @@ Lotus_Trader⚘⟁/
 │   │   │   └── trading_plans.yaml
 │   │   ├── src/                     # Source code
 │   │   │   ├── intelligence/
+│   │   │   │   ├── learning/        # Universal Learning System (FOUNDATION)
+│   │   │   │   │   ├── universal_scoring.py
+│   │   │   │   │   ├── universal_clustering.py
+│   │   │   │   │   ├── universal_learning_system.py
+│   │   │   │   │   └── __init__.py
+│   │   │   │   ├── system_control/
+│   │   │   │   │   └── central_intelligence_layer/
+│   │   │   │   ├── conditional_trading_planner/
+│   │   │   │   ├── raw_data_intelligence/
+│   │   │   │   └── [other intelligence components]
 │   │   │   ├── llm_integration/
 │   │   │   ├── utils/
 │   │   │   └── ...
@@ -185,7 +202,7 @@ rm -rf tests/unit/        # Empty
 - `Module_Design/General_Module_Design/` → `docs/communication/` and `docs/learning/`
 - `Module_Design/Specific_Modules/` → `docs/modules/`
 
-### **Phase 2: Reorganize Source Code**
+### **Phase 2: Reorganize Source Code + Universal Learning Integration**
 
 **Move and Rename:**
 ```bash
@@ -200,10 +217,21 @@ mv Module_Design/Specific_Modules/chart_vision_module/ src/chart_vision/
 # mv Module_Design/Specific_Modules/trader_module/ src/trader/
 ```
 
+**Universal Learning System Integration:**
+```bash
+# Move universal learning to foundation learning system
+mv src/alpha_detector/src/intelligence/universal_learning/ src/alpha_detector/src/intelligence/learning/
+
+# Update all imports to use new learning system
+# Replace scattered learning components with universal learning
+# Integrate universal learning with CIL and other modules
+```
+
 **Update Import Statements:**
 - Update all Python imports to reflect new structure
 - Update configuration file paths
 - Update test file imports
+- **CRITICAL**: Update all learning system imports to use universal learning
 
 ### **Phase 3: Consolidate Documentation**
 
@@ -233,7 +261,8 @@ mv docs/original/ docs/original/
 
 **Test File Analysis (133 files in Alpha_Detector/tests/):**
 
-**Keep (High Value - ~60 files):**
+**Keep (High Value - ~65 files):**
+- `test_universal_learning.py` - **CRITICAL**: Universal learning system tests
 - `test_ctp_*.py` - CTP module tests
 - `test_cil_*.py` - CIL core functionality tests
 - `test_integration_*.py` - Integration flow tests
@@ -326,25 +355,31 @@ mv src/alpha_detector/tests/test_*_e2e.py tests/e2e/
 
 ## **Implementation Timeline**
 
-### **Week 1: Structure Setup**
+### **Week 1: Structure Setup + Universal Learning Integration**
 - [ ] Create new directory structure
+- [ ] Move `universal_learning/` to `src/alpha_detector/src/intelligence/learning/`
 - [ ] Move source code to new locations
-- [ ] Update import statements
+- [ ] Update import statements for universal learning
+- [ ] Test universal learning integration
 - [ ] Test basic functionality
 
 ### **Week 2: Documentation Consolidation**
 - [ ] Move all documentation to `docs/`
+- [ ] Update learning architecture docs to reflect universal learning
 - [ ] Update cross-references
 - [ ] Consolidate duplicate documents
 - [ ] Update README files
 
-### **Week 3: Test Cleanup**
+### **Week 3: Test Cleanup + Universal Learning Tests**
 - [ ] Analyze and categorize test files
+- [ ] **CRITICAL**: Integrate `test_universal_learning.py` as high-priority test
 - [ ] Delete low-value test files
 - [ ] Consolidate similar test files
 - [ ] Organize tests by type
 
-### **Week 4: Final Cleanup**
+### **Week 4: Final Integration + Cleanup**
+- [ ] Ensure all modules use universal learning system
+- [ ] Remove duplicate learning systems
 - [ ] Remove empty directories
 - [ ] Update CI/CD pipelines
 - [ ] Update documentation
@@ -376,6 +411,14 @@ mv src/alpha_detector/tests/test_*_e2e.py tests/e2e/
 - Follows Python project conventions
 - Clean, organized appearance
 - Industry-standard structure
+
+### **6. Universal Learning System Integration**
+- **Single Learning Foundation**: Universal learning system handles all strand types
+- **Strand-Agnostic**: Works with prediction_review, trade_outcome, pattern, etc.
+- **Centralized Architecture**: Exactly what the architecture docs describe
+- **Eliminates Duplication**: Replaces scattered learning components
+- **Mathematical Rigor**: Implements Simons resonance principles
+- **Future-Proof**: Designed to handle any new strand types
 
 ## **Risk Mitigation**
 

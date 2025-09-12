@@ -6,12 +6,14 @@ The Centralized Learning System is a **standalone, database-driven learning modu
 
 ## **Core Architecture Principle**
 
-**"One Learning System, Multiple Modules"**
+**"One Learning System, Subscription-Based Learning + Context Injection"**
 
-- **Learning System**: Standalone module that processes ANY strand type
-- **CIL**: Focuses ONLY on predictions, not learning
-- **CTP**: Focuses ONLY on trading plans, not learning  
-- **All Modules**: "Plug in" to learning through the database
+- **Learning System**: ONLY module that learns - does clustering and LLM compression into braids
+- **Modules Subscribe**: Each module specifies which strand types it needs context from
+- **Targeted Learning**: Learning system only braids subscribed strand types, not everything
+- **Smart Context Injection**: Modules get context only from their subscribed strand types
+- **Subscription Model**: CIL subscribes to `prediction_review`, CTP subscribes to `prediction_review` + `trade_outcome`, etc.
+- **No Module Learning**: Modules don't learn themselves - they just get injected context
 
 ## **Key Design Principles**
 
@@ -100,6 +102,445 @@ The Centralized Learning System is a **standalone, database-driven learning modu
 - **Input**: Learning insights and cluster data
 - **Process**: Creates braids at appropriate level
 - **Output**: New braid strands (level 2+)
+
+### **6. Context Injection Engine** ⭐
+- **Input**: Module request for specific strand type context
+- **Process**: Uses same clustering logic to find relevant insights
+- **Output**: Smart context injection for module's specific needs
+- **Key**: Each module gets context for their specific strand types only
+
+### **7. Mathematical Resonance Engine** ⭐
+- **φ (Fractal Self-Similarity)**: Ensures pattern quality across timeframes and strand types
+- **ρ (Recursive Feedback)**: Drives learning system evolution based on success
+- **θ (Global Field)**: Creates collective intelligence from all braids
+- **ω (Resonance Acceleration)**: Accelerates meta-learning and method evolution
+- **S_i (Selection Score)**: Mathematical fitness function for pattern survival
+- **Ensemble Diversity**: Ensures different pattern types remain orthogonal
+
+## **Context Injection Strategy**
+
+### **How Context Injection Works:**
+1. **Module calls** `get_context_for_strand_type(strand_type)`
+2. **Learning system** uses same clustering logic to find relevant clusters
+3. **Extracts insights** from existing braids and learning data
+4. **Returns context** that module can inject into their LLM prompts
+5. **No module-to-module calls** - just smart context injection
+
+### **Module-Specific Context:**
+- **CIL**: Gets context from `prediction_review` braids for prediction improvement
+- **CTP**: Gets context from `trade_outcome` braids for plan improvement  
+- **Decision Maker**: Gets context from `trading_decision` braids for decision quality
+- **Trader**: Gets context from `execution_outcome` braids for execution improvement
+
+### **Context Injection Timing:**
+- **Same time as LLM call** - context is injected when module needs it
+- **Not pre-computed** - context is fresh and relevant to current situation
+- **Automatic** - modules don't need to know about clustering, just call context injection
+
+## **Subscription Model**
+
+### **How Module Subscription Works:**
+1. **Module Registration**: Each module specifies which strand types it needs context from
+2. **Learning System Subscription**: Learning system only braids subscribed strand types
+3. **Targeted Context Injection**: Modules get context only from their subscribed types
+4. **Efficient Learning**: No wasted learning on irrelevant strand types
+
+### **Module Subscriptions:**
+- **CIL Module**: Subscribes to `prediction_review` strands
+- **CTP Module**: Subscribes to `prediction_review` + `trade_outcome` strands
+- **Decision Maker**: Subscribes to `trading_decision` strands
+- **Trader Module**: Subscribes to `execution_outcome` strands
+
+### **Learning System Behavior:**
+- **Only braids subscribed strands** - doesn't waste resources on irrelevant data
+- **Module-specific braids** - creates braids only for subscribed strand types
+- **Targeted context injection** - delivers relevant insights to each module
+- **Scalable approach** - more modules = more relevant data gets braided
+
+## **Mathematical Resonance Integration**
+
+### **The Learning System as Mathematical Consciousness**
+
+The centralized learning system embodies Simons' mathematical principles of intelligence through **universal formulas with module-specific inputs**:
+
+#### **Universal Resonance Formulas (φ, ρ, θ, ω)**
+
+The resonance equations are **mathematical DNA** that work everywhere - we just plug in different values for each module's specific context:
+
+**φ (Fractal Self-Similarity)**: "Does it work across scales?"
+- **RDI**: Does this pattern work on 1m, 5m, 15m, 1h?
+- **CIL**: Does this prediction work across different timeframes?
+- **CTP**: Does this plan work in different market conditions?
+- **DM**: Does this decision work across different portfolio sizes?
+- **TD**: Does this execution work across different order sizes?
+
+**ρ (Recursive Feedback)**: "Does it learn from what works?"
+- **RDI**: Does it strengthen patterns that actually work?
+- **CIL**: Does it strengthen prediction methods that actually work?
+- **CTP**: Does it strengthen plans that actually make money?
+- **DM**: Does it strengthen decisions that actually lead to good outcomes?
+- **TD**: Does it strengthen execution methods that actually work?
+
+**θ (Collective Intelligence)**: "Does it use collective wisdom?"
+- **RDI**: Does it combine multiple pattern types?
+- **CIL**: Does it combine multiple prediction methods?
+- **CTP**: Does it combine multiple plan types?
+- **DM**: Does it combine multiple decision factors?
+- **TD**: Does it combine multiple execution strategies?
+
+**ω (Meta-Evolution)**: "Does it get better at getting better?"
+- **RDI**: Does it improve its pattern detection over time?
+- **CIL**: Does it improve its prediction accuracy over time?
+- **CTP**: Does it improve its plan quality over time?
+- **DM**: Does it improve its decision quality over time?
+- **TD**: Does it improve its execution quality over time?
+
+#### **Module-Specific Resonance Scoring**
+
+Each module calculates resonance using the **same formulas** but with **different inputs** based on what they actually control. Here's how each module measures and calculates their specific metrics:
+
+##### **Measurement Definitions**
+
+**RDI (Raw Data Intelligence) - Pattern Detection Improvement:**
+- **Pattern Detection Accuracy**: How often detected patterns actually work
+- **Pattern Detection Precision**: How many false positives vs true positives  
+- **Pattern Detection Recall**: How many real patterns did we miss
+- **Cross-Timeframe Consistency**: Does the same pattern work on 1m, 5m, 15m?
+
+**CIL (Central Intelligence Layer) - Prediction Accuracy Improvement:**
+- **Prediction Accuracy**: How often predictions actually come true
+- **Prediction Precision**: How confident are we when we're right
+- **Prediction Recall**: How many market moves did we predict
+- **Method Consistency**: Does the same prediction method work across timeframes?
+
+**CTP (Conditional Trading Planner) - Plan Quality Improvement:**
+- **Plan Profitability**: How much money do our plans actually make
+- **Risk-Adjusted Returns**: How much risk for how much return
+- **Plan Success Rate**: How often do our plans work
+- **Market Condition Adaptability**: Do our plans work in different market conditions?
+
+**DM (Decision Maker) - Decision Quality Improvement:**
+- **Decision Outcome Quality**: How good are the outcomes of our decisions
+- **Risk Management Effectiveness**: How well do we manage risk
+- **Portfolio Performance**: How well do our decisions affect portfolio performance
+- **Decision Consistency**: Do our decisions work across different portfolio sizes?
+
+**TD (Trader) - Execution Quality Improvement:**
+- **Execution Success Rate**: How often do our orders actually get filled
+- **Slippage Minimization**: How close to target price do we get
+- **Execution Speed**: How fast do we execute
+- **Order Size Adaptability**: Do our execution methods work across different order sizes?
+
+##### **Raw Data Intelligence (RDI) - Detailed Calculations**
+
+```python
+def calculate_phi_rdi(strand):
+    """φ (Fractal Self-Similarity) - Cross-timeframe pattern consistency"""
+    pattern_type = strand['module_intelligence']['pattern_type']
+    
+    # Calculate φ across timeframes using actual pattern data
+    phi_1m = get_pattern_strength(pattern_type, '1m')
+    phi_5m = get_pattern_strength(pattern_type, '5m') 
+    phi_15m = get_pattern_strength(pattern_type, '15m')
+    
+    # Fractal consistency = how well pattern works across scales
+    return calculate_fractal_consistency(phi_1m, phi_5m, phi_15m)
+
+def calculate_rho_rdi(strand):
+    """ρ (Recursive Feedback) - Pattern success rate based on actual outcomes"""
+    success_rate = strand['module_intelligence']['success_rate']
+    confidence = strand['module_intelligence']['confidence']
+    
+    # ρ based on actual pattern performance
+    return success_rate * confidence
+
+def calculate_theta_rdi(strand):
+    """θ (Collective Intelligence) - Pattern type diversity and orthogonality"""
+    pattern_types = get_active_pattern_types()
+    current_type = strand['module_intelligence']['pattern_type']
+    
+    # θ based on pattern diversity
+    return calculate_pattern_diversity(pattern_types, current_type)
+
+def calculate_omega_rdi(strand):
+    """ω (Meta-Evolution) - Pattern detection improvement over time"""
+    pattern_type = strand['module_intelligence']['pattern_type']
+    historical_accuracy = get_historical_pattern_accuracy(pattern_type)
+    current_accuracy = strand['module_intelligence']['accuracy']
+    
+    # Calculate improvement rate
+    if historical_accuracy > 0:
+        improvement_rate = (current_accuracy - historical_accuracy) / historical_accuracy
+    else:
+        improvement_rate = 0
+    
+    # ω based on learning improvement (0.5 to 2.0 range)
+    if improvement_rate > 0:
+        return 1.0 + min(improvement_rate, 1.0)  # Cap at 2.0
+    else:
+        return 0.5 + (improvement_rate * 0.5)  # Floor at 0.0
+
+def get_historical_pattern_accuracy(pattern_type):
+    """Get historical accuracy for this pattern type"""
+    query = """
+    SELECT accuracy, created_at 
+    FROM AD_strands 
+    WHERE kind = 'pattern' 
+    AND module_intelligence->>'pattern_type' = %s
+    ORDER BY created_at DESC 
+    LIMIT 100
+    """
+    
+    results = db.execute(query, (pattern_type,))
+    if not results:
+        return 0.0
+    
+    # Calculate weighted average (recent patterns weighted more)
+    total_weight = 0
+    weighted_accuracy = 0
+    
+    for i, (accuracy, created_at) in enumerate(results):
+        weight = 1.0 / (i + 1)  # Recent patterns get higher weight
+        weighted_accuracy += accuracy * weight
+        total_weight += weight
+    
+    return weighted_accuracy / total_weight if total_weight > 0 else 0.0
+```
+
+##### **Central Intelligence Layer (CIL) - Detailed Calculations**
+
+```python
+def calculate_phi_cil(strand):
+    """φ (Fractal Self-Similarity) - Prediction consistency across timeframes"""
+    prediction_method = strand['content']['method']
+    
+    # Calculate φ across timeframes using actual prediction data
+    phi_1m = get_prediction_consistency(prediction_method, '1m')
+    phi_5m = get_prediction_consistency(prediction_method, '5m')
+    phi_15m = get_prediction_consistency(prediction_method, '15m')
+    
+    # Fractal consistency = how well prediction works across scales
+    return calculate_fractal_consistency(phi_1m, phi_5m, phi_15m)
+
+def calculate_rho_cil(strand):
+    """ρ (Recursive Feedback) - Prediction accuracy based on actual outcomes"""
+    success = strand['content']['success']
+    return_pct = strand['content']['return_pct']
+    
+    # ρ based on actual prediction outcomes
+    if success:
+        return 1.0 + (return_pct * 0.1)  # Strengthen success
+    else:
+        return 0.5  # Weaken failure
+
+def calculate_theta_cil(strand):
+    """θ (Collective Intelligence) - Prediction method diversity and ensemble"""
+    prediction_methods = get_active_prediction_methods()
+    current_method = strand['content']['method']
+    
+    # θ based on method diversity
+    return calculate_method_diversity(prediction_methods, current_method)
+
+def calculate_omega_cil(strand):
+    """ω (Meta-Evolution) - Prediction accuracy improvement over time"""
+    prediction_method = strand['content']['method']
+    historical_accuracy = get_historical_prediction_accuracy(prediction_method)
+    current_accuracy = strand['content']['confidence']
+    
+    # Calculate improvement rate
+    if historical_accuracy > 0:
+        improvement_rate = (current_accuracy - historical_accuracy) / historical_accuracy
+    else:
+        improvement_rate = 0
+    
+    # ω based on learning improvement
+    if improvement_rate > 0:
+        return 1.0 + min(improvement_rate, 1.0)
+    else:
+        return 0.5 + (improvement_rate * 0.5)
+
+def get_historical_prediction_accuracy(prediction_method):
+    """Get historical accuracy for this prediction method"""
+    query = """
+    SELECT success, confidence, created_at 
+    FROM AD_strands 
+    WHERE kind = 'prediction_review' 
+    AND content->>'method' = %s
+    ORDER BY created_at DESC 
+    LIMIT 100
+    """
+    
+    results = db.execute(query, (prediction_method,))
+    if not results:
+        return 0.0
+    
+    # Calculate weighted success rate
+    total_weight = 0
+    weighted_success = 0
+    
+    for i, (success, confidence, created_at) in enumerate(results):
+        weight = 1.0 / (i + 1)  # Recent predictions weighted more
+        if success:
+            weighted_success += weight
+        total_weight += weight
+    
+    return weighted_success / total_weight if total_weight > 0 else 0.0
+```
+
+##### **Conditional Trading Planner (CTP)**
+```python
+def calculate_phi_ctp(strand):
+    # Plan consistency across market conditions
+    plan_type = strand['content']['plan_type']
+    market_condition = strand['content']['market_condition']
+    
+    # Calculate φ across market conditions using actual plan data
+    phi_bull = get_plan_consistency(plan_type, 'bull_market')
+    phi_bear = get_plan_consistency(plan_type, 'bear_market')
+    phi_sideways = get_plan_consistency(plan_type, 'sideways_market')
+    
+    # Fractal consistency = how well plan works across market conditions
+    return calculate_fractal_consistency(phi_bull, phi_bear, phi_sideways)
+
+def calculate_rho_ctp(strand):
+    # Plan profitability based on actual outcomes
+    profitability = strand['content']['profitability']
+    risk_adjusted_return = strand['content']['risk_adjusted_return']
+    
+    # ρ based on actual plan performance
+    return profitability * risk_adjusted_return
+
+def calculate_theta_ctp(strand):
+    # Plan type diversity and strategy ensemble
+    plan_types = get_active_plan_types()
+    current_type = strand['content']['plan_type']
+    
+    # θ based on plan diversity
+    return calculate_plan_diversity(plan_types, current_type)
+
+def calculate_omega_ctp(strand):
+    # Plan quality improvement over time
+    historical_quality = get_historical_plan_quality()
+    current_quality = strand['content']['quality_score']
+    
+    # ω based on learning improvement
+    return calculate_learning_improvement(historical_quality, current_quality)
+```
+
+##### **Decision Maker (DM)**
+```python
+def calculate_phi_dm(strand):
+    # Decision consistency across portfolio sizes
+    decision_type = strand['content']['decision_type']
+    portfolio_size = strand['content']['portfolio_size']
+    
+    # Calculate φ across portfolio sizes using actual decision data
+    phi_small = get_decision_consistency(decision_type, 'small_portfolio')
+    phi_medium = get_decision_consistency(decision_type, 'medium_portfolio')
+    phi_large = get_decision_consistency(decision_type, 'large_portfolio')
+    
+    # Fractal consistency = how well decision works across scales
+    return calculate_fractal_consistency(phi_small, phi_medium, phi_large)
+
+def calculate_rho_dm(strand):
+    # Decision outcome quality based on actual results
+    outcome_quality = strand['content']['outcome_quality']
+    risk_management_effectiveness = strand['content']['risk_management_effectiveness']
+    
+    # ρ based on actual decision outcomes
+    return outcome_quality * risk_management_effectiveness
+
+def calculate_theta_dm(strand):
+    # Decision factor diversity and ensemble
+    decision_factors = get_active_decision_factors()
+    current_factors = strand['content']['decision_factors']
+    
+    # θ based on factor diversity
+    return calculate_factor_diversity(decision_factors, current_factors)
+
+def calculate_omega_dm(strand):
+    # Decision quality improvement over time
+    historical_quality = get_historical_decision_quality()
+    current_quality = strand['content']['decision_quality']
+    
+    # ω based on learning improvement
+    return calculate_learning_improvement(historical_quality, current_quality)
+```
+
+##### **Trader (TD)**
+```python
+def calculate_phi_td(strand):
+    # Execution consistency across order sizes
+    execution_method = strand['content']['execution_method']
+    order_size = strand['content']['order_size']
+    
+    # Calculate φ across order sizes using actual execution data
+    phi_small = get_execution_consistency(execution_method, 'small_order')
+    phi_medium = get_execution_consistency(execution_method, 'medium_order')
+    phi_large = get_execution_consistency(execution_method, 'large_order')
+    
+    # Fractal consistency = how well execution works across scales
+    return calculate_fractal_consistency(phi_small, phi_medium, phi_large)
+
+def calculate_rho_td(strand):
+    # Execution success based on actual results
+    execution_success = strand['content']['execution_success']
+    slippage_minimization = strand['content']['slippage_minimization']
+    
+    # ρ based on actual execution outcomes
+    return execution_success * slippage_minimization
+
+def calculate_theta_td(strand):
+    # Execution strategy diversity and ensemble
+    execution_strategies = get_active_execution_strategies()
+    current_strategy = strand['content']['execution_strategy']
+    
+    # θ based on strategy diversity
+    return calculate_strategy_diversity(execution_strategies, current_strategy)
+
+def calculate_omega_td(strand):
+    # Execution quality improvement over time
+    historical_quality = get_historical_execution_quality()
+    current_quality = strand['content']['execution_quality']
+    
+    # ω based on learning improvement
+    return calculate_learning_improvement(historical_quality, current_quality)
+```
+
+#### **Universal Resonance Calculation**
+
+The **same mathematical structure works everywhere** - we just change what we're measuring:
+
+```python
+# Universal formula structure
+def calculate_resonance(phi, rho, theta, omega):
+    return (phi * rho * theta * omega) / cost
+
+# But each module plugs in different values:
+# RDI: phi = cross_timeframe_consistency, rho = pattern_success_rate, etc.
+# CIL: phi = prediction_consistency, rho = prediction_accuracy, etc.
+# CTP: phi = plan_consistency, rho = plan_profitability, etc.
+# DM: phi = decision_consistency, rho = decision_outcome_quality, etc.
+# TD: phi = execution_consistency, rho = execution_success, etc.
+```
+
+#### **S_i (Selection Score) - Simons' Mathematical Fitness**
+
+**Formula**: `S_i = w_accuracy * sq_accuracy + w_precision * sq_precision + w_stability * sq_stability + w_orthogonality * sq_orthogonality - w_cost * sq_cost`
+
+**Module-Specific Implementation**:
+- **RDI**: `sq_accuracy` = pattern detection accuracy, `sq_precision` = pattern precision, `sq_stability` = cross-timeframe stability, `sq_orthogonality` = pattern type diversity
+- **CIL**: `sq_accuracy` = prediction accuracy, `sq_precision` = prediction precision, `sq_stability` = method stability, `sq_orthogonality` = prediction method diversity
+- **CTP**: `sq_accuracy` = plan profitability, `sq_precision` = risk precision, `sq_stability` = market condition stability, `sq_orthogonality` = plan type diversity
+- **DM**: `sq_accuracy` = decision outcome quality, `sq_precision` = risk management precision, `sq_stability` = portfolio size stability, `sq_orthogonality` = decision factor diversity
+- **TD**: `sq_accuracy` = execution success rate, `sq_precision` = slippage precision, `sq_stability` = order size stability, `sq_orthogonality` = execution strategy diversity
+
+#### **Ensemble Diversity**
+
+**Orthogonal Signals**: Different pattern types remain uncorrelated
+- **Implementation**: Ensures volume patterns, time patterns, microstructure patterns, etc. remain orthogonal
+- **Note**: Individual patterns of the same type can be correlated - that's natural and expected
+- **Module-Specific**: Each module maintains orthogonality within their domain (RDI: pattern types, CIL: prediction methods, CTP: plan types, DM: decision factors, TD: execution strategies)
 
 ## **Strand Type Support**
 
@@ -195,39 +636,46 @@ conditional_trading_plan_braiding:
 
 ### **CIL Module:**
 ```python
-# CIL focuses ONLY on predictions
+# CIL focuses ONLY on predictions + gets smart context injection
 class CILModule:
     def create_prediction_review(self, pattern_data):
-        # Create prediction_review strand
-        strand = self.create_strand('prediction_review', pattern_data)
-        # Learning system automatically processes it
+        # Get relevant learning context for prediction improvement
+        context = self.learning_system.get_context_for_strand_type('prediction_review')
+        
+        # Create prediction_review strand with injected context
+        strand = self.create_strand('prediction_review', pattern_data, context)
         return strand
 ```
 
 ### **CTP Module:**
 ```python
-# CTP focuses ONLY on trading plans
+# CTP focuses ONLY on trading plans + gets smart context injection
 class CTPModule:
     def create_conditional_trading_plan(self, prediction_data):
-        # Create conditional_trading_plan strand
-        strand = self.create_strand('conditional_trading_plan', prediction_data)
-        # Learning system automatically processes it
+        # Get relevant learning context for trading plan improvement
+        context = self.learning_system.get_context_for_strand_type('conditional_trading_plan')
+        
+        # Create conditional_trading_plan strand with injected context
+        strand = self.create_strand('conditional_trading_plan', prediction_data, context)
         return strand
 ```
 
-### **Learning System:**
+### **Learning System Context Injection:**
 ```python
-# Learning system processes ANY strand type
+# Learning system provides smart context injection for each module
 class CentralizedLearningSystem:
-    def process_strand(self, strand):
-        # Identify strand type
-        strand_type = strand['kind']
+    def get_context_for_strand_type(self, strand_type):
+        # Use same clustering logic to find relevant insights
+        clusters = self.get_relevant_clusters(strand_type)
         
-        # Get appropriate learning configuration
-        config = self.get_learning_config(strand_type)
+        # Extract learning insights from clusters
+        context = self.extract_learning_context(clusters, strand_type)
         
-        # Process through learning pipeline
-        return self.learning_pipeline(strand, config)
+        return context
+    
+    def get_relevant_clusters(self, strand_type):
+        # Same clustering logic as learning, but for context injection
+        return self.clustering_engine.get_clusters_for_context(strand_type)
 ```
 
 ## **Implementation Benefits**
@@ -257,48 +705,209 @@ class CentralizedLearningSystem:
 - Modules focus on their core functions
 - Learning system handles all learning
 
-## **Migration Plan**
+## **Comprehensive Build Plan**
 
-### **Phase 1: Consolidate Learning Infrastructure**
-1. Move all learning components to `src/learning_system/`
-2. Create unified learning pipeline
-3. Implement strand type detection
-4. Set up database triggers
+### **Phase 1: Foundation Setup (Week 1-2)**
 
-### **Phase 2: Update Module Integration**
-1. Remove learning logic from CIL module
-2. Remove learning logic from CTP module
-3. Update all modules to use database-driven learning
-4. Test end-to-end learning flow
+#### **1.1 Database Schema Updates**
+- [ ] **Update AD_strands table** with module-specific fields:
+  - Add `module_intelligence` JSONB for RDI pattern data
+  - Add `content` JSONB for CIL, CTP, DM, TD data
+  - Add `resonance_scores` JSONB for φ, ρ, θ, ω values
+  - Add `historical_metrics` JSONB for improvement tracking
 
-### **Phase 3: Enhance Prompt Management**
-1. Consolidate all learning prompts
-2. Implement task-specific prompt selection
-3. Add prompt versioning and governance
-4. Test prompt effectiveness
+#### **1.2 Mathematical Resonance Engine**
+- [ ] **Create `src/learning_system/mathematical_resonance_engine.py`**:
+  - Implement universal resonance calculation functions
+  - Add module-specific calculation methods (RDI, CIL, CTP, DM, TD)
+  - Add historical data retrieval functions
+  - Add weighted averaging and improvement rate calculations
 
-### **Phase 4: Optimize and Scale**
-1. Performance optimization
-2. Error handling improvements
-3. Monitoring and logging
-4. Documentation and training
+#### **1.3 Database Triggers and Learning Queue**
+- [ ] **Create `src/learning_system/database_triggers.sql`**:
+  - Implement strand creation triggers
+  - Set up learning queue table
+  - Add automatic resonance score calculation triggers
 
-## **Success Metrics**
+### **Phase 2: Module-Specific Scoring Implementation (Week 3-4)**
 
-### **Learning Quality**
-- Braid creation success rate > 95%
-- Learning insight relevance > 90%
-- Prompt effectiveness > 85%
+#### **2.1 RDI Pattern Detection Scoring**
+- [ ] **Implement pattern accuracy tracking**:
+  - Cross-timeframe pattern strength calculation
+  - Historical pattern accuracy with weighted averaging
+  - Pattern type diversity calculation
+  - Pattern detection improvement over time
 
-### **System Performance**
-- Learning processing time < 30 seconds
-- Database query performance < 5 seconds
-- Memory usage optimization
+#### **2.2 CIL Prediction Scoring**
+- [ ] **Implement prediction accuracy tracking**:
+  - Cross-timeframe prediction consistency
+  - Historical prediction success rate with weighted averaging
+  - Prediction method diversity calculation
+  - Prediction accuracy improvement over time
 
-### **Maintainability**
-- Code duplication reduction > 80%
-- Learning system complexity reduction > 70%
-- Module coupling reduction > 60%
+#### **2.3 CTP Plan Quality Scoring**
+- [ ] **Implement plan quality tracking**:
+  - Cross-market condition plan consistency
+  - Historical plan profitability with weighted averaging
+  - Plan type diversity calculation
+  - Plan quality improvement over time
+
+#### **2.4 DM Decision Quality Scoring**
+- [ ] **Implement decision quality tracking**:
+  - Cross-portfolio size decision consistency
+  - Historical decision outcome quality with weighted averaging
+  - Decision factor diversity calculation
+  - Decision quality improvement over time
+
+#### **2.5 TD Execution Quality Scoring**
+- [ ] **Implement execution quality tracking**:
+  - Cross-order size execution consistency
+  - Historical execution success rate with weighted averaging
+  - Execution strategy diversity calculation
+  - Execution quality improvement over time
+
+### **Phase 3: Universal Learning System Integration (Week 5-6)**
+
+#### **3.1 Update Universal Scoring System**
+- [ ] **Modify `src/intelligence/universal_learning/universal_scoring.py`**:
+  - Replace hardcoded values with module-specific calculations
+  - Integrate mathematical resonance engine
+  - Add module-specific input handling
+  - Implement proper persistence, novelty, and surprise calculations
+
+#### **3.2 Update Universal Clustering System**
+- [ ] **Modify `src/intelligence/universal_learning/universal_clustering.py`**:
+  - Add module-specific clustering logic
+  - Implement orthogonality checks for each module type
+  - Add quality thresholds based on resonance scores
+
+#### **3.3 Update Universal Learning System**
+- [ ] **Modify `src/intelligence/universal_learning/universal_learning_system.py`**:
+  - Integrate module-specific scoring
+  - Add subscription-based learning
+  - Implement context injection for each module
+  - Add braid promotion based on resonance scores
+
+### **Phase 4: Module Integration Updates (Week 7-8)**
+
+#### **4.1 RDI Module Updates**
+- [ ] **Update `src/intelligence/raw_data_intelligence/strand_creation.py`**:
+  - Add module-specific resonance score calculation
+  - Integrate with mathematical resonance engine
+  - Add historical accuracy tracking
+
+#### **4.2 CIL Module Updates**
+- [ ] **Update `src/intelligence/system_control/central_intelligence_layer/prediction_engine.py`**:
+  - Add module-specific resonance score calculation
+  - Integrate with mathematical resonance engine
+  - Add historical prediction accuracy tracking
+
+#### **4.3 CTP Module Updates**
+- [ ] **Update CTP strand creation**:
+  - Add module-specific resonance score calculation
+  - Integrate with mathematical resonance engine
+  - Add historical plan quality tracking
+
+#### **4.4 DM Module Updates**
+- [ ] **Update DM strand creation**:
+  - Add module-specific resonance score calculation
+  - Integrate with mathematical resonance engine
+  - Add historical decision quality tracking
+
+#### **4.5 TD Module Updates**
+- [ ] **Update TD strand creation**:
+  - Add module-specific resonance score calculation
+  - Integrate with mathematical resonance engine
+  - Add historical execution quality tracking
+
+### **Phase 5: Testing and Validation (Week 9-10)**
+
+#### **5.1 Unit Testing**
+- [ ] **Create comprehensive test suite**:
+  - Test each module's resonance calculation functions
+  - Test historical data retrieval and weighted averaging
+  - Test improvement rate calculations
+  - Test module-specific diversity calculations
+
+#### **5.2 Integration Testing**
+- [ ] **Test end-to-end learning flow**:
+  - Test strand creation with resonance scores
+  - Test learning system processing
+  - Test braid creation and promotion
+  - Test context injection for each module
+
+#### **5.3 Performance Testing**
+- [ ] **Optimize database queries**:
+  - Test historical data retrieval performance
+  - Optimize weighted averaging calculations
+  - Test learning system scalability
+  - Monitor memory usage and processing time
+
+### **Phase 6: Documentation and Deployment (Week 11-12)**
+
+#### **6.1 Documentation Updates**
+- [ ] **Update all module documentation**:
+  - Document new resonance scoring methods
+  - Update API documentation
+  - Create usage examples for each module
+  - Document configuration options
+
+#### **6.2 Deployment Preparation**
+- [ ] **Prepare for production deployment**:
+  - Create migration scripts for existing data
+  - Set up monitoring and logging
+  - Create rollback procedures
+  - Test deployment process
+
+#### **6.3 Training and Handover**
+- [ ] **Train team on new system**:
+  - Create training materials
+  - Conduct team training sessions
+  - Create troubleshooting guides
+  - Set up support procedures
+
+### **Success Metrics**
+
+#### **Technical Metrics**
+- [ ] **Resonance Score Accuracy**: > 95% correlation with actual module performance
+- [ ] **Learning System Performance**: < 30 seconds processing time per strand
+- [ ] **Database Query Performance**: < 5 seconds for historical data retrieval
+- [ ] **Memory Usage**: < 2GB for learning system operations
+
+#### **Business Metrics**
+- [ ] **Module Performance Improvement**: > 20% improvement in module-specific metrics
+- [ ] **Learning Quality**: > 90% of braids created are high-quality
+- [ ] **System Reliability**: > 99.5% uptime for learning system
+- [ ] **Maintainability**: > 80% reduction in code duplication
+
+### **Risk Mitigation**
+
+#### **Technical Risks**
+- **Database Performance**: Implement proper indexing and query optimization
+- **Memory Usage**: Implement efficient data structures and caching
+- **Calculation Complexity**: Use efficient algorithms and parallel processing
+- **Data Quality**: Implement validation and error handling
+
+#### **Business Risks**
+- **Module Disruption**: Implement gradual rollout and rollback procedures
+- **Learning Quality**: Implement quality gates and validation
+- **Performance Impact**: Monitor system performance and optimize as needed
+- **Team Adoption**: Provide comprehensive training and support
+
+### **Dependencies**
+
+#### **External Dependencies**
+- PostgreSQL database with JSONB support
+- Python 3.8+ with required packages
+- Sufficient database storage for historical data
+- Adequate server resources for learning system
+
+#### **Internal Dependencies**
+- Existing module implementations
+- Current database schema
+- Existing test infrastructure
+- Team availability for testing and validation
+
 
 ## **Summary**
 
