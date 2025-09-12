@@ -3,6 +3,7 @@ Multi-Cluster Grouping Engine - Phase 4
 
 Groups prediction reviews into 7 different cluster types for comprehensive learning.
 Each cluster type provides a different perspective on the data for learning insights.
+Now supports JSONB cluster_key with consumed status tracking.
 """
 
 import logging
@@ -78,9 +79,11 @@ class MultiClusterGroupingEngine:
                 cluster_key = self._extract_cluster_key(cluster_name, review)
                 
                 if cluster_key:
-                    if cluster_key not in groups:
-                        groups[cluster_key] = []
-                    groups[cluster_key].append(review)
+                    # Check if strand is not consumed for this cluster
+                    if not self._is_strand_consumed_for_cluster(review, cluster_name, cluster_key):
+                        if cluster_key not in groups:
+                            groups[cluster_key] = []
+                        groups[cluster_key].append(review)
                     
             except Exception as e:
                 self.logger.warning(f"Error processing review for cluster {cluster_name}: {e}")
@@ -91,6 +94,18 @@ class MultiClusterGroupingEngine:
         
         self.logger.info(f"Cluster {cluster_name}: {len(groups)} total groups, {len(filtered_groups)} with 3+ reviews")
         return filtered_groups
+    
+    def _is_strand_consumed_for_cluster(self, strand: Dict[str, Any], cluster_type: str, cluster_key: str) -> bool:
+        """Check if strand is consumed for specific cluster"""
+        
+        cluster_assignments = strand.get('cluster_key', [])
+        
+        for assignment in cluster_assignments:
+            if (assignment.get('cluster_type') == cluster_type and 
+                assignment.get('cluster_key') == cluster_key):
+                return assignment.get('consumed', False)
+        
+        return False
     
     def _extract_cluster_key(self, cluster_name: str, review: Dict[str, Any]) -> str:
         """Extract cluster key from prediction review based on cluster type"""
@@ -131,6 +146,59 @@ class MultiClusterGroupingEngine:
         else:
             self.logger.warning(f"Unknown cluster type: {cluster_name}")
             return None
+    
+    async def assign_strand_to_clusters(self, strand: Dict[str, Any]) -> Dict[str, Any]:
+        """Assign strand to all relevant clusters"""
+        
+        cluster_assignments = []
+        
+        for cluster_type in self.cluster_types.keys():
+            cluster_key = self._extract_cluster_key(cluster_type, strand)
+            if cluster_key:
+                cluster_assignments.append({
+                    "cluster_type": cluster_type,
+                    "cluster_key": cluster_key,
+                    "braid_level": strand.get('braid_level', 1),
+                    "consumed": False
+                })
+        
+        strand['cluster_key'] = cluster_assignments
+        return strand
+    
+    async def mark_strand_consumed_for_cluster(self, strand_id: str, cluster_type: str, cluster_key: str) -> bool:
+        """Mark strand as consumed for specific cluster"""
+        
+        try:
+            # Get current strand
+            query = "SELECT * FROM AD_strands WHERE id = %s"
+            result = await self.supabase_manager.execute_query(query, [strand_id])
+            
+            if not result:
+                return False
+            
+            strand = dict(result[0])
+            cluster_assignments = strand.get('cluster_key', [])
+            
+            # Update consumed status for specific cluster
+            for assignment in cluster_assignments:
+                if (assignment.get('cluster_type') == cluster_type and 
+                    assignment.get('cluster_key') == cluster_key):
+                    assignment['consumed'] = True
+                    break
+            
+            # Update strand in database
+            import json
+            await self.supabase_manager.execute_query("""
+                UPDATE AD_strands 
+                SET cluster_key = %s
+                WHERE id = %s
+            """, [json.dumps(cluster_assignments), strand_id])
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error marking strand consumed: {e}")
+            return False
     
     async def get_cluster_groups(self, cluster_type: str, cluster_key: str) -> List[Dict[str, Any]]:
         """Get all prediction reviews in a specific cluster group"""
@@ -268,7 +336,16 @@ class MultiClusterGroupingEngine:
                 raise ValueError(f"Unknown cluster type: {cluster_type}")
             
             result = await self.supabase_manager.execute_query(query)
-            return [row[0] for row in result if row[0]]
+            # Handle the result structure where data is in 'result' key
+            cluster_keys = []
+            for row in result:
+                if isinstance(row, dict) and 'result' in row:
+                    cluster_key = row['result'].get('cluster_key')
+                    if cluster_key:
+                        cluster_keys.append(cluster_key)
+                elif isinstance(row, list) and len(row) > 0:
+                    cluster_keys.append(row[0])
+            return cluster_keys
             
         except Exception as e:
             self.logger.error(f"Error getting cluster keys for {cluster_type}: {e}")

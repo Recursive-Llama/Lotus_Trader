@@ -6,6 +6,7 @@ Braid levels have no cap and provide unlimited compression and learning depth.
 """
 
 import logging
+import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 
@@ -91,8 +92,8 @@ class BraidLevelManager:
         
         base_query = """
             SELECT * FROM AD_strands 
-            WHERE (kind = 'prediction_review' OR kind = 'braid')
-            AND content->>'cluster_keys' ? %s
+            WHERE kind = 'prediction_review'
+            AND cluster_key @> %s
         """
         
         return base_query
@@ -115,15 +116,8 @@ class BraidLevelManager:
     def get_strand_braid_level(self, strand: Dict[str, Any]) -> int:
         """Get braid level from strand"""
         
-        kind = strand.get('kind', '')
-        
-        if kind == 'prediction_review':
-            return 0  # Base level - prediction reviews are level 0
-        elif kind == 'braid':
-            content = strand.get('content', {})
-            return content.get('braid_level', 1)
-        else:
-            return 0  # Default to level 0
+        # Get braid level from the strand's braid_level field
+        return strand.get('braid_level', 1)  # Default to level 1
     
     async def create_next_level_braid(self, current_level: int, strands: List[Dict[str, Any]], 
                                     cluster_type: str, cluster_key: str) -> Optional[str]:
@@ -147,23 +141,23 @@ class BraidLevelManager:
                 self.logger.info(f"Braid level {next_level} exceeds max level {self.max_braid_level}")
                 return None
             
-            # Create braid strand
+            # Create new prediction_review strand with higher braid level
             braid_strand = {
-                'id': f"braid_{cluster_type}_{cluster_key}_{next_level}_{int(datetime.now().timestamp())}",
-                'kind': 'braid',
+                'id': f"pred_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                'kind': 'prediction_review',  # Keep same kind!
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tags': ['cil', 'braid', f'level_{next_level}', f'cluster_{cluster_type}'],
+                'braid_level': next_level,
                 'content': {
-                    'braid_level': next_level,
                     'cluster_type': cluster_type,
                     'cluster_key': cluster_key,
                     'source_strands': [s['id'] for s in strands],
                     'source_level': current_level,
                     'strand_count': len(strands),
                     'created_at': datetime.now(timezone.utc).isoformat(),
-                    'cluster_keys': [f"braid_{cluster_type}_{cluster_key}_level_{next_level}"]
+                    'braid_level': next_level
                 },
-                'metadata': {
+                'module_intelligence': {
                     'cluster_type': cluster_type,
                     'cluster_key': cluster_key,
                     'braid_level': next_level,
@@ -195,15 +189,16 @@ class BraidLevelManager:
             
             # Store in database
             await self.supabase_manager.execute_query("""
-                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO AD_strands (id, kind, created_at, tags, braid_level, content, module_intelligence)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, [
                 braid_strand['id'],
                 braid_strand['kind'],
                 braid_strand['created_at'],
                 braid_strand['tags'],
+                braid_strand['braid_level'],
                 json.dumps(braid_strand['content']),
-                json.dumps(braid_strand['metadata'])
+                json.dumps(braid_strand['module_intelligence'])
             ])
             
             self.logger.info(f"Stored braid strand: {braid_strand['id']}")

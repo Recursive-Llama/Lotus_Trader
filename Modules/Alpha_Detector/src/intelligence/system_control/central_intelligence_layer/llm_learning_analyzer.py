@@ -7,6 +7,7 @@ Pulls in original pattern strands for full context: Pattern → Prediction → O
 
 import logging
 import json
+import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 
@@ -340,23 +341,26 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
         """Create learning braid strand from insights"""
         
         try:
+            # Create new prediction_review strand with braid_level + 1
             learning_braid = {
-                'id': f"learning_braid_{cluster_type}_{cluster_key}_{int(datetime.now().timestamp())}",
-                'kind': 'learning_braid',
+                'id': f"pred_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                'kind': 'prediction_review',  # Keep same kind!
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tags': ['cil', 'learning', 'braid', f'cluster_{cluster_type}'],
+                'braid_level': 2,  # Upgraded level
+                'lesson': learning_insights.get('insights', {}).get('lessons_learned', ''),  # Store LLM insights
                 'content': {
                     'cluster_type': cluster_type,
                     'cluster_key': cluster_key,
                     'learning_insights': learning_insights,
                     'created_at': datetime.now(timezone.utc).isoformat(),
-                    'braid_level': 1,  # Learning braids start at level 1
-                    'cluster_keys': [f"learning_{cluster_type}_{cluster_key}"]
+                    'braid_level': 2,
+                    'source_cluster': f"{cluster_type}_{cluster_key}"
                 },
-                'metadata': {
+                'module_intelligence': {
                     'cluster_type': cluster_type,
                     'cluster_key': cluster_key,
-                    'braid_level': 1,
+                    'braid_level': 2,
                     'analysis_timestamp': learning_insights.get('analysis_timestamp'),
                     'confidence': learning_insights.get('metadata', {}).get('confidence', 0.0)
                 }
@@ -375,16 +379,21 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
         """Store learning braid in database"""
         
         try:
+            import json
+            
+            # Store in database
             await self.supabase_manager.execute_query("""
-                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO AD_strands (id, kind, created_at, tags, braid_level, lesson, content, module_intelligence)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, [
                 learning_braid['id'],
                 learning_braid['kind'],
                 learning_braid['created_at'],
                 learning_braid['tags'],
+                learning_braid['braid_level'],
+                learning_braid['lesson'],
                 json.dumps(learning_braid['content']),
-                json.dumps(learning_braid['metadata'])
+                json.dumps(learning_braid['module_intelligence'])
             ])
             
             self.logger.info(f"Stored learning braid: {learning_braid['id']}")

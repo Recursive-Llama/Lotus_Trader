@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS AD_strands (
     persistence_score DECIMAL(5,4),          -- How reliable/consistent is this pattern (0-1)
     novelty_score DECIMAL(5,4),             -- How unique/new is this pattern (0-1)
     surprise_rating DECIMAL(5,4),           -- How unexpected was this outcome (0-1)
-    cluster_key VARCHAR(100),               -- Clustering key for grouping similar strands
+    cluster_key JSONB,                       -- Clustering assignments: [{"cluster_type": "asset", "cluster_key": "BTC", "braid_level": 1, "consumed": false}]
     strength_range VARCHAR(20),             -- Pattern strength classification
     rr_profile VARCHAR(20),                 -- Risk/reward profile classification
     market_conditions VARCHAR(20),          -- Market conditions classification
@@ -167,7 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_ad_strands_derivation_spec ON AD_strands(derivati
 CREATE INDEX IF NOT EXISTS idx_ad_strands_persistence_score ON AD_strands(persistence_score);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_novelty_score ON AD_strands(novelty_score);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_surprise_rating ON AD_strands(surprise_rating);
-CREATE INDEX IF NOT EXISTS idx_ad_strands_cluster_key ON AD_strands(cluster_key);
+CREATE INDEX IF NOT EXISTS idx_ad_strands_cluster_key_gin ON AD_strands USING GIN(cluster_key);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_strength_range ON AD_strands(strength_range);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_rr_profile ON AD_strands(rr_profile);
 CREATE INDEX IF NOT EXISTS idx_ad_strands_market_conditions ON AD_strands(market_conditions);

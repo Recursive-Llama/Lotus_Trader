@@ -113,6 +113,12 @@ class PerClusterLearningSystem:
             )
             
             if learning_braid:
+                # Mark source strands as consumed for this specific cluster
+                for strand in prediction_reviews:
+                    await self.cluster_grouper.mark_strand_consumed_for_cluster(
+                        strand['id'], cluster_type, cluster_key
+                    )
+                
                 # Update context system with new learnings
                 await self.update_context_system(learning_braid)
                 

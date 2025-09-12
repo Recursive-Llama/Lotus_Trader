@@ -369,7 +369,7 @@ class RawDataIntelligenceAgent:
                     # Collect confidence scores
                     team_analysis = result.get('team_analysis', {})
                     for analyzer, analysis in team_analysis.items():
-                        if 'error' not in analysis:
+                if 'error' not in analysis:
                             confidence = analysis.get('confidence', 0)
                             confidence_scores.append(confidence)
             

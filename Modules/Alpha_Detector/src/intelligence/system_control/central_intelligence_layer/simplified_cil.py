@@ -19,7 +19,7 @@ import pandas as pd
 from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.openrouter_client import OpenRouterClient
 from .prediction_engine import PredictionEngine
-from .engines.learning_feedback_engine import LearningFeedbackEngine
+from .per_cluster_learning_system import PerClusterLearningSystem
 from .engines.prediction_outcome_tracker import PredictionOutcomeTracker
 from .core.cil_plan_composer import CILPlanComposer
 
@@ -39,7 +39,7 @@ class SimplifiedCIL:
         
         # Core components
         self.prediction_engine = PredictionEngine(supabase_manager, llm_client)
-        self.learning_system = LearningFeedbackEngine(supabase_manager, llm_client)
+        self.learning_system = PerClusterLearningSystem(supabase_manager, llm_client)
         self.prediction_tracker = PredictionOutcomeTracker(supabase_manager, llm_client)
         self.outcome_analyzer = OutcomeAnalyzer(supabase_manager)
         self.plan_manager = CILPlanComposer(supabase_manager, llm_client)
@@ -148,8 +148,8 @@ class SimplifiedCIL:
                     # Analyze outcome
                     analysis = await self.outcome_analyzer.analyze_completed_prediction(prediction['id'])
                     
-                    # Update learning system
-                    await self.learning_system.process_prediction_outcome(analysis)
+                    # Update learning system - process all clusters
+                    await self.learning_system.process_all_clusters()
                     
                     # Check if we should create conditional plans
                     if self.should_create_conditional_plan(analysis):
@@ -176,7 +176,7 @@ class SimplifiedCIL:
                     group_analysis = await self.outcome_analyzer.analyze_prediction_group(pattern_group)
                     
                     # Update learning system with group insights
-                    await self.learning_system.process_group_analysis(group_analysis)
+                    await self.learning_system.process_all_clusters()
                     
                     # Check if group meets learning thresholds
                     if self.meets_learning_thresholds(group_analysis):

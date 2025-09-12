@@ -1,0 +1,450 @@
+# Data Flow Configuration
+# Comprehensive configuration for data flow between Raw Data Intelligence and Central Intelligence Layer
+# This YAML controls the inputs, outputs, and tagged data flow between system components
+
+# System Overview
+system_overview:
+  description: "Data flow configuration for Alpha Detector intelligence pipeline"
+  version: "1.0.0"
+  last_updated: "2024-12-19"
+  
+  # Main data flow pipeline
+  pipeline:
+    - stage: "raw_data_intelligence"
+      description: "Raw OHLCV data analysis and pattern detection"
+      inputs: ["raw_market_data"]
+      outputs: ["pattern_strands", "pattern_overview_strands"]
+      
+    - stage: "central_intelligence_layer"
+      description: "Pattern processing, prediction creation, and learning"
+      inputs: ["pattern_overview_strands"]
+      outputs: ["prediction_strands", "learning_strands"]
+      
+    - stage: "conditional_trading_planner"
+      description: "Trading plan creation from predictions (FUTURE)"
+      inputs: ["prediction_strands", "trade_outcome_strands"]
+      outputs: ["trading_plans"]
+
+# Raw Data Intelligence Module Configuration
+raw_data_intelligence:
+  module_name: "raw_data_intelligence"
+  description: "Monitors raw OHLCV data for patterns that traditional indicators miss"
+  
+  # Input Configuration
+  inputs:
+    raw_market_data:
+      kind: "raw_data"
+      source: "alpha_market_data_1m"
+      description: "Raw OHLCV market data from database"
+      format: "DataFrame"
+      required_fields: ["timestamp", "symbol", "open", "high", "low", "close", "volume"]
+      timeframes: ["1m", "5m", "15m", "1h"]
+      data_window: "4_hours"  # Analysis window
+      
+  # Output Configuration
+  outputs:
+    # Individual pattern strands from each analyzer
+    pattern_strands:
+      kind: "pattern"
+      description: "Individual pattern analysis from team members"
+      target_agent: null  # Individual strands don't target CIL directly
+      tags: ["intelligence:raw_data:{analysis_type}:{significance}", "analyzer:{analyzer}", "team_member_analysis"]
+      strand_type: "individual_analyzer"
+      
+      # Analyzer-specific outputs
+      analyzers:
+        microstructure:
+          analyzer: "MarketMicrostructureAnalyzer"
+          analysis_type: "microstructure"
+          confidence_threshold: 0.0  # Only create if patterns detected
+          significance_levels: ["low", "medium", "high"]
+          
+        volume:
+          analyzer: "VolumePatternAnalyzer"
+          analysis_type: "volume"
+          confidence_threshold: 0.0
+          significance_levels: ["low", "medium", "high"]
+          
+        time_patterns:
+          analyzer: "TimeBasedPatternDetector"
+          analysis_type: "time_patterns"
+          confidence_threshold: 0.0
+          significance_levels: ["low", "medium", "high"]
+          
+        cross_asset:
+          analyzer: "CrossAssetPatternAnalyzer"
+          analysis_type: "cross_asset"
+          confidence_threshold: 0.0
+          significance_levels: ["low", "medium", "high"]
+          
+        divergences:
+          analyzer: "RawDataDivergenceDetector"
+          analysis_type: "divergences"
+          confidence_threshold: 0.0
+          significance_levels: ["low", "medium", "high"]
+    
+    # Overview strand with LLM coordination
+    pattern_overview_strands:
+      kind: "pattern_overview"
+      description: "LLM-coordinated overview of all team analysis"
+      target_agent: "central_intelligence_layer"  # Direct CIL targeting
+      tags: ["intelligence:raw_data:overview:coordination", "cil", "overview_strand", "llm_coordination"]
+      strand_type: "llm_coordination_overview"
+      
+      # LLM coordination settings
+      llm_coordination:
+        enabled: true
+        prompt_template: "raw_data_intelligence"
+        max_tokens: 2000
+        temperature: 0.3
+        confidence_calculation: "meta_confidence"
+        
+      # CIL recommendations
+      cil_recommendations:
+        enabled: true
+        recommendation_types: ["pattern_grouping", "prediction_priority", "learning_opportunity"]
+        
+      # Fallback for no patterns detected
+      no_patterns_strand:
+        enabled: true
+        tags: ["intelligence:raw_data:no_patterns", "overview_strand", "no_patterns_detected"]
+        target_agent: null  # No CIL targeting for no patterns
+
+  # Team Coordination Configuration
+  team_coordination:
+    enabled: true
+    analyzers:
+      - name: "microstructure"
+        class: "MarketMicrostructureAnalyzer"
+        priority: 1
+        
+      - name: "volume"
+        class: "VolumePatternAnalyzer"
+        priority: 2
+        
+      - name: "time_patterns"
+        class: "TimeBasedPatternDetector"
+        priority: 3
+        
+      - name: "cross_asset"
+        class: "CrossAssetPatternAnalyzer"
+        priority: 4
+        
+      - name: "divergences"
+        class: "RawDataDivergenceDetector"
+        priority: 5
+
+# Central Intelligence Layer Configuration
+central_intelligence_layer:
+  module_name: "central_intelligence_layer"
+  description: "Processes pattern overviews and creates predictions with learning"
+  
+  # Input Configuration
+  inputs:
+    pattern_overview_strands:
+      kind: "pattern_overview"
+      source: "raw_data_intelligence"
+      description: "Pattern overview strands tagged for CIL processing"
+      tags: ["cil", "pattern_overview"]
+      processing_interval: "5_minutes"
+      max_batch_size: 50
+      
+  # Output Configuration
+  outputs:
+    # Prediction strands from pattern groups
+    prediction_strands:
+      kind: "prediction"
+      description: "Predictions created from pattern groups"
+      target_agent: "conditional_trading_planner"  # FUTURE: CTP targeting
+      tags: ["cil", "prediction", "pattern_group"]
+      strand_type: "prediction"
+      
+      # Prediction creation settings
+      prediction_engine:
+        enabled: true
+        pattern_grouping: true
+        similarity_matching: true
+        context_matching: true
+        
+      # Pattern grouping configuration
+      pattern_grouping:
+        categories: 6  # 6-category system
+        similarity_threshold: 0.7
+        context_matching: "exact_and_similar"
+        
+    # Learning strands from completed predictions
+    learning_strands:
+      kind: "learning_insight"
+      description: "Learning insights from prediction outcomes"
+      target_agent: null  # Internal learning
+      tags: ["cil", "learning", "pattern_group"]
+      strand_type: "learning_insight"
+      
+      # Learning configuration
+      learning_system:
+        enabled: true
+        feedback_engine: true
+        doctrine_management: true
+        cross_agent_distribution: true
+        
+      # Learning thresholds
+      learning_thresholds:
+        min_predictions_for_learning: 3
+        min_confidence: 0.1
+        min_sample_size: 3
+        
+    # Conditional plan strands (FUTURE)
+    conditional_plan_strands:
+      kind: "conditional_plan"
+      description: "Trading plans created from confident patterns"
+      target_agent: "trader_module"  # FUTURE: Trader module targeting
+      tags: ["cil", "conditional_plan", "trading_plan"]
+      strand_type: "conditional_plan"
+      
+      # Plan creation settings
+      plan_creation:
+        enabled: false  # FUTURE: Not yet implemented
+        confidence_threshold: 0.7
+        success_rate_threshold: 0.6
+
+  # CIL Core Components
+  core_components:
+    prediction_engine:
+      class: "PredictionEngine"
+      enabled: true
+      responsibilities: ["pattern_grouping", "prediction_creation", "similarity_matching"]
+      
+    learning_system:
+      class: "LearningFeedbackEngine"
+      enabled: true
+      responsibilities: ["outcome_analysis", "lesson_creation", "doctrine_management"]
+      
+    prediction_tracker:
+      class: "PredictionOutcomeTracker"
+      enabled: true
+      responsibilities: ["prediction_monitoring", "outcome_tracking"]
+      
+    outcome_analyzer:
+      class: "OutcomeAnalyzer"
+      enabled: true
+      responsibilities: ["prediction_analysis", "group_analysis"]
+      
+    plan_manager:
+      class: "CILPlanComposer"
+      enabled: false  # FUTURE: Not yet implemented
+      responsibilities: ["conditional_plan_creation"]
+
+# Conditional Trading Planner Configuration (FUTURE)
+conditional_trading_planner:
+  module_name: "conditional_trading_planner"
+  description: "Creates trading plans from predictions and trade outcomes"
+  status: "not_implemented"
+  
+  # Input Configuration
+  inputs:
+    prediction_strands:
+      kind: "prediction"
+      source: "central_intelligence_layer"
+      description: "Predictions from CIL"
+      tags: ["cil", "prediction"]
+      
+    trade_outcome_strands:
+      kind: "trade_outcome"
+      source: "trader_module"
+      description: "Trade execution outcomes"
+      tags: ["trader", "trade_outcome"]
+      
+  # Output Configuration
+  outputs:
+    trading_plans:
+      kind: "trading_plan"
+      description: "Executable trading plans"
+      target_agent: "trader_module"
+      tags: ["ctp", "trading_plan", "executable"]
+
+# Data Flow Tags and Routing
+data_flow_routing:
+  # Tag-based routing system
+  tag_routing:
+    # Raw Data Intelligence tags
+    "intelligence:raw_data:overview:coordination":
+      target: "central_intelligence_layer"
+      priority: "high"
+      processing_delay: "immediate"
+      
+    "intelligence:raw_data:no_patterns":
+      target: null  # No routing
+      priority: "low"
+      processing_delay: "none"
+      
+    # CIL tags
+    "cil:prediction":
+      target: "conditional_trading_planner"  # FUTURE
+      priority: "high"
+      processing_delay: "immediate"
+      
+    "cil:learning":
+      target: null  # Internal processing
+      priority: "medium"
+      processing_delay: "background"
+      
+    # CTP tags (FUTURE)
+    "ctp:trading_plan":
+      target: "trader_module"  # FUTURE
+      priority: "high"
+      processing_delay: "immediate"
+
+# Strand Database Schema
+strand_schema:
+  # Common fields for all strands
+  common_fields:
+    id: "string"
+    kind: "string"
+    module: "string"
+    agent_id: "string"
+    team_member: "string"
+    symbol: "string"
+    timeframe: "string"
+    session_bucket: "string"
+    regime: "string"
+    tags: "array"
+    target_agent: "string"
+    module_intelligence: "object"
+    sig_sigma: "float"
+    confidence: "float"
+    sig_direction: "string"
+    sig_confidence: "float"
+    prediction_score: "float"
+    outcome_score: "float"
+    created_at: "datetime"
+    
+  # Kind-specific fields
+  kind_specific_fields:
+    pattern:
+      analyzer: "string"
+      analysis_type: "string"
+      significance: "string"
+      
+    pattern_overview:
+      individual_strand_ids: "array"
+      team_analysis_summary: "object"
+      llm_meta_analysis: "object"
+      cil_recommendations: "array"
+      
+    prediction:
+      pattern_group: "object"
+      prediction_context: "object"
+      code_prediction: "object"
+      llm_prediction: "object"
+      tracking_status: "string"
+      
+    learning_insight:
+      pattern_group: "object"
+      group_analysis: "object"
+      learning_type: "string"
+      success_rate: "float"
+      total_predictions: "integer"
+      
+    conditional_plan:
+      prediction_id: "string"
+      plan_type: "string"
+      execution_parameters: "object"
+      risk_parameters: "object"
+
+# Processing Intervals and Timing
+processing_timing:
+  raw_data_intelligence:
+    analysis_interval: "5_minutes"
+    strand_creation: "immediate"
+    llm_coordination: "immediate"
+    
+  central_intelligence_layer:
+    pattern_processing: "5_minutes"
+    learning_cycle: "10_minutes"
+    prediction_tracking: "continuous"
+    
+  conditional_trading_planner:
+    plan_creation: "immediate"  # FUTURE
+    plan_review: "1_hour"  # FUTURE
+
+# Error Handling and Fallbacks
+error_handling:
+  raw_data_intelligence:
+    analysis_failure: "create_no_patterns_strand"
+    llm_coordination_failure: "create_basic_overview_strand"
+    strand_creation_failure: "log_error_and_continue"
+    
+  central_intelligence_layer:
+    prediction_creation_failure: "log_error_and_continue"
+    learning_failure: "log_error_and_continue"
+    pattern_processing_failure: "retry_with_backoff"
+
+# Monitoring and Metrics
+monitoring:
+  enabled: true
+  metrics:
+    - "strands_created_per_minute"
+    - "prediction_success_rate"
+    - "learning_effectiveness"
+    - "processing_latency"
+    - "error_rates"
+    
+  alerts:
+    - condition: "error_rate > 0.1"
+      action: "log_alert"
+    - condition: "processing_latency > 60_seconds"
+      action: "log_alert"
+    - condition: "prediction_success_rate < 0.3"
+      action: "log_alert"
+
+# Implementation Status
+implementation_status:
+  raw_data_intelligence:
+    status: "implemented"
+    completion: "100%"
+    notes: "Fully implemented with all analyzers and LLM coordination"
+    
+  central_intelligence_layer:
+    status: "partially_implemented"
+    completion: "80%"
+    notes: "Core prediction engine implemented, learning system partially complete"
+    
+  conditional_trading_planner:
+    status: "not_implemented"
+    completion: "0%"
+    notes: "Design phase only, not yet implemented"
+    
+  data_flow_yaml:
+    status: "implemented"
+    completion: "100%"
+    notes: "This configuration file is now implemented"
+
+# Missing Components Analysis
+missing_components:
+  conditional_trading_planner:
+    missing_modules:
+      - "ctp_main_agent.py"
+      - "plan_creation_engine.py"
+      - "risk_assessment_engine.py"
+      - "execution_planner.py"
+      
+  central_intelligence_layer:
+    missing_components:
+      - "Complete learning feedback system"
+      - "Doctrine management system"
+      - "Cross-agent distribution system"
+      
+  data_flow_integration:
+    missing_integrations:
+      - "CTP input handling for prediction_strands"
+      - "CTP input handling for trade_outcome_strands"
+      - "Trader module integration"
+      - "Complete end-to-end testing"
+
+# Future Enhancements
+future_enhancements:
+  - "Real-time data flow monitoring dashboard"
+  - "Automated data flow validation"
+  - "Dynamic configuration updates"
+  - "Performance optimization based on metrics"
+  - "Advanced error recovery mechanisms"
