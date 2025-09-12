@@ -1,0 +1,142 @@
+# CTP Configuration
+# Conditional Trading Planner module configuration
+
+# Module Settings
+module:
+  name: "conditional_trading_planner"
+  version: "1.0.0"
+  description: "Trading Strategy Intelligence Engine"
+
+# Learning System Integration
+learning_system:
+  # Reuse CIL learning infrastructure
+  reuse_cil_components: true
+  
+  # CTP-specific settings
+  target_strand_kind: "trade_outcome"
+  min_cluster_size: 3
+  braid_level_progression: true
+  
+  # Cluster types for trade outcomes
+  cluster_types:
+    - "pattern_timeframe"
+    - "asset" 
+    - "timeframe"
+    - "outcome"
+    - "pattern"
+    - "group_type"
+    - "method"
+
+# Trading Plan Generation
+trading_plans:
+  # Plan creation settings
+  min_confidence_threshold: 0.7
+  min_pattern_count: 2
+  max_plans_per_pattern: 5
+  
+  # Risk management defaults
+  default_stop_loss: "2%_below_entry"
+  default_target_price: "6%_above_entry"
+  max_drawdown_limit: "1%_of_portfolio"
+  max_duration_hours: 8
+  
+  # Plan types
+  plan_types:
+    - "basic_conditional"
+    - "advanced_conditional"
+    - "risk_managed"
+    - "dynamic_adaptive"
+
+# LLM Integration
+llm:
+  # CTP-specific prompts
+  prompts:
+    trade_outcome_analysis: |
+      Analyze this cluster of trade outcomes and extract trading strategy insights:
+      
+      CLUSTER: {cluster_key}
+      SUCCESS RATE: {success_rate:.2%}
+      AVG RETURN: {avg_return:.2%}
+      AVG DURATION: {avg_duration:.1f} hours
+      
+      TRADE OUTCOMES:
+      {trade_outcome_details}
+      
+      Focus on:
+      1. What trading conditions led to success vs failure?
+      2. How can we improve entry/exit timing?
+      3. What conditional trading rules should we add/modify?
+      4. What market conditions should we avoid?
+      5. How can we optimize risk management?
+      
+      Provide specific, actionable insights for improving trading strategies.
+    
+    trading_plan_optimization: |
+      Based on historical performance data, optimize this trading plan:
+      
+      PATTERN: {pattern_info}
+      HISTORICAL PERFORMANCE: {historical_performance}
+      CURRENT PLAN: {current_plan}
+      
+      Optimize for:
+      1. Better entry conditions
+      2. Improved risk management
+      3. Higher success probability
+      4. Better R/R ratio
+      
+      Provide specific improvements and reasoning.
+
+# Performance Monitoring
+monitoring:
+  # Success metrics
+  success_metrics:
+    plan_success_rate: 0.55
+    avg_rr_ratio: 2.0
+    plan_adoption_rate: 0.80
+  
+  # Performance thresholds
+  performance_thresholds:
+    plan_generation_time: 5  # seconds
+    learning_cycle_time: 30  # seconds
+    max_memory_usage: "512MB"
+  
+  # Alerting
+  alerts:
+    low_success_rate: true
+    high_generation_time: true
+    learning_system_errors: true
+
+# Database Integration
+database:
+  # Strand kinds
+  strand_kinds:
+    input: "prediction_review"
+    output: "conditional_trading_plan"
+    learning_input: "trade_outcome"
+    learning_output: "trade_outcome"  # with braid_level > 1
+  
+  # Query settings
+  query_settings:
+    max_historical_days: 90
+    batch_size: 100
+    timeout_seconds: 30
+
+# Error Handling
+error_handling:
+  # LLM retry settings
+  llm_retry:
+    max_attempts: 3
+    timeout_seconds: 30
+    backoff_multiplier: 2
+  
+  # Fallback strategies
+  fallbacks:
+    basic_plan_generation: true
+    skip_failed_clusters: true
+    use_cached_insights: true
+  
+  # Logging
+  logging:
+    level: "INFO"
+    log_llm_calls: true
+    log_performance_metrics: true

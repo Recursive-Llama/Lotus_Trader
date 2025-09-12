@@ -75,6 +75,18 @@ Raw Data Intelligence → CIL (Prediction Reviews) → CTP (Conditional Trading 
 }
 ```
 
+## **CTP's Dual Functions**
+
+### **Function 1: Trading Plan Creation**
+- **Input**: `kind: 'prediction_review'` strands from CIL
+- **Process**: Analyze prediction reviews to create conditional trading plans
+- **Output**: `kind: 'conditional_trading_plan'` strands for Decision Maker
+
+### **Function 2: Learning from Trade Execution**  
+- **Input**: `kind: 'trade_outcome'` strands from Trader module
+- **Process**: Use learning system to analyze trade execution success
+- **Output**: `kind: 'trade_outcome'` strands with `braid_level: 2+` for strategy improvement
+
 ## **CTP Decision-Making Process**
 
 ### **Step 1: New Prediction Review Trigger**
@@ -158,8 +170,7 @@ Based on historical analysis, create intelligent trading rules:
     "direction": "long",
     "entry_condition": "price_breaks_above_divergence_level",
     "stop_loss": "2%_below_entry",
-    "target_price": "6%_above_entry", 
-    "position_sizing": "confidence_weighted"
+    "target_price": "6%_above_entry"
   },
   "management_rules": {
     "if_volume_spikes_again": "take_50%_profit",
@@ -190,8 +201,7 @@ Based on historical analysis, create intelligent trading rules:
     "direction": "long",
     "entry_strategy": "limit_order_at_support",
     "stop_loss": "1.5%_below_support",
-    "target_price": "resistance_level",
-    "position_sizing": "kelly_criterion_based"
+    "target_price": "resistance_level"
   },
   "management_rules": {
     "if_price_drops_1%": "add_position_at_lower_support",
@@ -201,7 +211,6 @@ Based on historical analysis, create intelligent trading rules:
     "if_divergence_weakens": "exit_immediately"
   },
   "risk_management": {
-    "max_position_size": "2%_of_portfolio",
     "max_drawdown": "1%_of_portfolio", 
     "max_duration_hours": 8,
     "correlation_limit": "no_more_than_3_similar_trades"
@@ -211,10 +220,22 @@ Based on historical analysis, create intelligent trading rules:
 
 ## **Learning System Integration**
 
-### **Multi-Cluster Learning** (Reuse CIL System)
-CTP uses the same 7-cluster system as CIL for both Trade Outcomes and Trade Outcome Reviews:
+### **Reuse CIL Learning Infrastructure**
+CTP reuses the same learning system components as CIL, but points them at `trade_outcome` strands:
+
+#### **Shared Learning Components**
+1. **MultiClusterGroupingEngine** - Groups trade outcomes into 7 cluster types
+2. **PerClusterLearningSystem** - Independent learning per cluster with 3+ threshold  
+3. **LLMLearningAnalyzer** - CTP-specific LLM analysis for trade execution insights
+4. **BraidLevelManager** - Creates `trade_outcome` strands with `braid_level: 2+`
+
+#### **CTP-Specific Learning Focus**
+- **Input**: `kind: 'trade_outcome'` strands from Trader module
+- **Output**: `kind: 'trade_outcome'` strands with `braid_level: 2+` (not `trade_outcome_review`)
+- **Learning Focus**: Trading plan execution quality and strategy refinement
 
 #### **Trade Outcome Clustering**
+CTP uses the same 7-cluster system as CIL for trade outcomes:
 1. **Pattern+Timeframe**: Exact group signature matches
 2. **Asset**: All trades on same asset
 3. **Timeframe**: All trades in same timeframe  
@@ -223,143 +244,62 @@ CTP uses the same 7-cluster system as CIL for both Trade Outcomes and Trade Outc
 6. **Group Type**: Group classification
 7. **Method**: Code vs LLM performance
 
-#### **Trade Outcome Review Clustering**
-After creating Trade Outcome Reviews, they are clustered using the same 7 dimensions:
-- **Pattern+Timeframe**: Reviews from same pattern+timeframe
-- **Asset**: Reviews from same asset
-- **Timeframe**: Reviews from same timeframe
-- **Outcome**: Success vs failure review patterns
-- **Pattern**: Review pattern type
-- **Group Type**: Review group classification
-- **Method**: Review method type
-
 #### **Clustering Process**
 ```python
-# Step 1: Trade Outcomes → Trade Outcome Reviews
-for trade_outcome in trade_outcomes:
-    review = await create_trade_outcome_review(trade_outcome)
-    await store_review(review)
-
-# Step 2: Cluster Trade Outcome Reviews
+# Step 1: Cluster Trade Outcomes using CIL learning system
 for cluster_type in ['pattern_timeframe', 'asset', 'timeframe', 'outcome', 'pattern', 'group_type', 'method']:
-    clusters = await get_review_clusters(cluster_type)
+    clusters = await get_trade_outcome_clusters(cluster_type)
     for cluster in clusters:
         if len(cluster) >= 3:
-            await create_braid_level_1(cluster, cluster_type)
+            await create_trade_outcome_braid(cluster, cluster_type)  # Creates trade_outcome with braid_level: 2
 ```
 
 ### **Braid Level Progression**
 As CTP processes more trade outcomes and learns from performance:
 
-- **Level 1**: Individual trade outcomes → Trade Outcome Reviews
-- **Level 2**: Clusters of similar Trade Outcome Reviews (3+ reviews)
-- **Level 3**: Asset-specific trading patterns (3+ clusters)
-- **Level 4**: Market-wide trading strategies (3+ asset clusters)
+- **Level 1**: Individual `trade_outcome` strands from Trader module
+- **Level 2**: Clusters of similar trade outcomes (3+ outcomes) → `trade_outcome` braids
+- **Level 3**: Asset-specific trading patterns (3+ level 2 braids) → `trade_outcome` braids
+- **Level 4**: Market-wide trading strategies (3+ level 3 braids) → `trade_outcome` braids
 - **Level 5+**: Meta-strategies and market regime adaptation
 
-### **LLM Learning Analysis** (Multi-Phase)
-Use LLM to analyze trade outcome clusters in focused phases:
+### **CTP-Specific LLM Analysis**
+CTP uses the same `LLMLearningAnalyzer` but with specialized prompts for trade execution analysis:
 
 ```python
-class CTPLearningAnalyzer:
-    async def analyze_trade_outcome_cluster(self, cluster_type, cluster_key, trade_outcomes, candlestick_data):
-        """Analyze cluster of trade outcomes with candlestick data in focused phases"""
+class CTPLearningAnalyzer(LLMLearningAnalyzer):
+    def create_cluster_analysis_prompt(self, cluster_data):
+        """CTP-specific prompt for trade execution analysis"""
+        return f"""
+        Analyze this cluster of trade outcomes and extract trading strategy insights:
         
-        # Phase 1: Market Behavior Analysis
-        market_analysis = await self.analyze_market_behavior(cluster_key, trade_outcomes, candlestick_data)
+        CLUSTER: {cluster_data['cluster_key']}
+        SUCCESS RATE: {cluster_data['success_rate']:.2%}
+        AVG RETURN: {cluster_data['avg_return']:.2%}
         
-        # Phase 2: Entry/Exit Optimization
-        entry_exit_analysis = await self.analyze_entry_exit_optimization(cluster_key, trade_outcomes, candlestick_data)
-        
-        # Phase 3: Risk Management Insights
-        risk_analysis = await self.analyze_risk_management(cluster_key, trade_outcomes, candlestick_data)
-        
-        # Phase 4: Strategy Refinement
-        strategy_analysis = await self.analyze_strategy_refinement(cluster_key, trade_outcomes, candlestick_data)
-        
-        return {
-            "market_behavior": market_analysis,
-            "entry_exit": entry_exit_analysis,
-            "risk_management": risk_analysis,
-            "strategy_refinement": strategy_analysis
-        }
-    
-    async def analyze_market_behavior(self, cluster_key, trade_outcomes, candlestick_data):
-        """Phase 1: Focus on market behavior patterns"""
-        prompt = f"""
-        Analyze the market behavior patterns in this trade cluster:
-        
-        Cluster: {cluster_key}
-        Trade Count: {len(trade_outcomes)}
-        Success Rate: {self.calculate_success_rate(trade_outcomes):.2%}
-        
-        Trade Outcomes:
-        {self.format_trade_outcomes(trade_outcomes)}
-        
-        Candlestick Data:
-        {self.format_candlestick_analysis(candlestick_data, trade_outcomes)}
+        TRADE OUTCOMES:
+        {self.format_trade_outcome_details(cluster_data['predictions'])}
         
         Focus on:
-        1. What specific market conditions led to success vs failure?
-        2. How did volume, volatility, and price action differ between winners/losers?
-        3. What were the key reversal/continuation signals in the candlestick data?
-        4. How did support/resistance levels behave during these trades?
+        1. What trading conditions led to success vs failure?
+        2. How can we improve entry/exit timing?
+        3. What conditional trading rules should we add/modify?
+        4. What market conditions should we avoid?
         """
-        return await self.llm_client.generate_completion(prompt)
     
-    async def analyze_entry_exit_optimization(self, cluster_key, trade_outcomes, candlestick_data):
-        """Phase 2: Focus on entry/exit optimization"""
-        prompt = f"""
-        Analyze entry/exit optimization opportunities in this trade cluster:
-        
-        Cluster: {cluster_key}
-        Trade Outcomes:
-        {self.format_trade_outcomes(trade_outcomes)}
-        
-        Candlestick Data:
-        {self.format_candlestick_analysis(candlestick_data, trade_outcomes)}
-        
-        Focus on:
-        1. What were the optimal entry points based on candlestick patterns?
-        2. How could stop losses have been better positioned?
-        3. What exit signals were most reliable in the price action?
-        4. How did market microstructure affect execution?
-        """
-        return await self.llm_client.generate_completion(prompt)
+    def format_trade_outcome_details(self, trade_outcomes):
+        """Format trade outcome details for LLM analysis"""
+        formatted = []
+        for i, trade in enumerate(trade_outcomes[:10]):  # Limit to 10 examples
+            formatted.append(
+                f"  {i+1}. Success: {trade.get('success')}, "
+                f"Return: {trade.get('return_pct')}%, "
+                f"Entry: {trade.get('entry_price')}, "
+                f"Exit: {trade.get('exit_price')}, "
+                f"Duration: {trade.get('duration_hours')}h"
+            )
+        return "\n".join(formatted)
     
-    async def analyze_risk_management(self, cluster_key, trade_outcomes, candlestick_data):
-        """Phase 3: Focus on risk management insights"""
-        prompt = f"""
-        Analyze risk management opportunities in this trade cluster:
-        
-        Cluster: {cluster_key}
-        Trade Outcomes:
-        {self.format_trade_outcomes(trade_outcomes)}
-        
-        Focus on:
-        1. What position sizing would have maximized returns?
-        2. How could correlation risks have been better managed?
-        3. What market regime changes affected these trades?
-        4. How did news/events impact the price action during trades?
-        """
-        return await self.llm_client.generate_completion(prompt)
-    
-    async def analyze_strategy_refinement(self, cluster_key, trade_outcomes, candlestick_data):
-        """Phase 4: Focus on strategy refinement"""
-        prompt = f"""
-        Analyze strategy refinement opportunities in this trade cluster:
-        
-        Cluster: {cluster_key}
-        Trade Outcomes:
-        {self.format_trade_outcomes(trade_outcomes)}
-        
-        Focus on:
-        1. What new conditional rules should we add based on this analysis?
-        2. How can we better identify high-probability setups?
-        3. What market conditions should we avoid?
-        4. How can we improve our entry/exit timing?
-        """
-        return await self.llm_client.generate_completion(prompt)
 ```
 
 ## **CTP Module Structure**
@@ -380,18 +320,17 @@ class CTPLearningAnalyzer:
    - Processes trade outcome data
    - Compares prediction vs actual performance
    - Identifies execution improvements
-   - Pulls in candlestick data for analysis
 
 4. **Trading Plan Generator**
    - Creates conditional trading rules
    - Incorporates historical performance data
    - Generates risk management rules
 
-5. **Learning System** (Unified)
-   - Multi-cluster grouping of trade outcomes (reuse CIL system)
-   - Braid level progression: Trade Outcomes → Trade Outcome Reviews
-   - LLM analysis with candlestick data for deep insights
-   - Continuous plan optimization based on learning
+5. **Learning System** (Reused from CIL)
+   - MultiClusterGroupingEngine (target: trade_outcome strands)
+   - PerClusterLearningSystem (target: trade_outcome strands)
+   - LLMLearningAnalyzer (CTP-specific prompts)
+   - BraidLevelManager (creates trade_outcome braids)
 
 6. **Error Handler & Fallbacks**
    - LLM analysis failure handling (retry 3 times, 30-second timeout)
@@ -401,7 +340,7 @@ class CTPLearningAnalyzer:
 
 ### **Database Schema**
 
-#### **Trading Plans** (`kind: 'trading_plan'`)
+#### **Trading Plans** (`kind: 'conditional_trading_plan'`)
 ```json
 {
   "plan_id": "ctp_001",
@@ -416,28 +355,23 @@ class CTPLearningAnalyzer:
 }
 ```
 
-#### **Trade Outcome Reviews** (`kind: 'trade_outcome_review'`)
+#### **Trade Outcome Learning Strands** (`kind: 'trade_outcome'`)
 ```json
 {
-  "review_id": "trade_outcome_review_001",
-  "trade_outcome_id": "trade_789",
-  "ctp_id": "ctp_001",
-  "cluster_keys": [
-    "pattern_timeframe_BTC_1h_volume_spike_divergence",
-    "asset_BTC",
-    "timeframe_1h",
-    "outcome_success",
-    "pattern_multi_single",
-    "group_type_multi_single",
-    "method_code"
+  "id": "trade_outcome_20240115_143000_abc123",
+  "kind": "trade_outcome",
+  "braid_level": 2,
+  "cluster_key": [
+    {"cluster_type": "asset", "cluster_key": "BTC", "braid_level": 2, "consumed": false},
+    {"cluster_type": "timeframe", "cluster_key": "1h", "braid_level": 2, "consumed": false}
   ],
-  "analysis": {
-    "candlestick_insights": {...},
-    "market_conditions": {...},
-    "execution_quality": {...},
-    "improvement_suggestions": {...}
+  "content": {
+    "cluster_type": "asset",
+    "cluster_key": "BTC", 
+    "learning_insights": {...},
+    "source_trade_outcomes": ["trade_789", "trade_790"]
   },
-  "braid_level": 1,
+  "lesson": "LLM-generated trading strategy insights...",
   "created_at": "2024-01-15T14:45:00Z"
 }
 ```
@@ -451,10 +385,10 @@ class CTPLearningAnalyzer:
 - Simple conditional rules
 
 ### **Phase 2: Learning Integration** (Week 2)
-- Multi-cluster grouping system
-- Braid level progression
-- LLM learning analysis
-- Plan optimization
+- Integrate with existing CIL learning system
+- Configure learning components for trade_outcome strands
+- Implement CTP-specific LLM analysis prompts
+- Test end-to-end learning flow
 
 ### **Phase 3: Trade Outcome Integration** (Week 3)
 - Trade outcome analyzer
@@ -501,9 +435,9 @@ class CTPLearningAnalyzer:
 - **Future**: Receives trade outcomes for learning
 
 ### **Learning Integration**
-- **CIL Learning System**: Reuses multi-cluster grouping
-- **LLM**: Uses same OpenRouter client
-- **Database**: Uses same AD_strands table structure
+- **CIL Learning System**: Reuses same learning components (MultiClusterGroupingEngine, PerClusterLearningSystem, LLMLearningAnalyzer, BraidLevelManager)
+- **LLM**: Uses same OpenRouter client with CTP-specific prompts
+- **Database**: Uses same AD_strands table structure with `kind: 'trade_outcome'` strands
 
 ## **Risk Management**
 
@@ -531,7 +465,6 @@ class CTPLearningAnalyzer:
 ### **Advanced Features**
 - Multi-asset correlation analysis
 - Market regime adaptation
-- Dynamic position sizing
 - Real-time plan updates
 - Social sentiment integration
 

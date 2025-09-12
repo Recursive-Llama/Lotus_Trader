@@ -55,7 +55,7 @@ class LLMLearningAnalyzer:
             prompt = self.create_cluster_analysis_prompt(cluster_data)
             
             # 4. Get LLM analysis
-            llm_response = await self.llm_client.generate_completion(prompt)
+            llm_response = self.llm_client.generate_completion(prompt)
             
             # 5. Parse and structure the learning insights
             learning_insights = self.parse_learning_insights(llm_response, cluster_type, cluster_key)
@@ -71,13 +71,25 @@ class LLMLearningAnalyzer:
             return None
     
     async def get_original_pattern_context(self, prediction_reviews: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Get original pattern strands that led to these predictions"""
+        """Get original pattern strands that led to these predictions
+        
+        Reads from both 'content' and 'module_intelligence' fields for robust data access.
+        """
         
         pattern_contexts = []
         
         for pr in prediction_reviews:
             # Get original pattern strand IDs from prediction review
-            pattern_strand_ids = pr.get('content', {}).get('original_pattern_strand_ids', [])
+            # Try content first, then fall back to module_intelligence
+            pattern_strand_ids = []
+            
+            content = pr.get('content', {})
+            if isinstance(content, dict) and content.get('original_pattern_strand_ids'):
+                pattern_strand_ids = content.get('original_pattern_strand_ids', [])
+            else:
+                module_intelligence = pr.get('module_intelligence', {})
+                if isinstance(module_intelligence, dict) and module_intelligence.get('original_pattern_strand_ids'):
+                    pattern_strand_ids = module_intelligence.get('original_pattern_strand_ids', [])
             
             # Query database for each pattern strand
             for strand_id in pattern_strand_ids:
@@ -89,17 +101,13 @@ class LLMLearningAnalyzer:
         return pattern_contexts
     
     async def get_pattern_strand_by_id(self, strand_id: str) -> Optional[Dict[str, Any]]:
-        """Get pattern strand by ID from database"""
+        """Get pattern strand by ID from database using Supabase client"""
         
         try:
-            query = """
-                SELECT * FROM AD_strands 
-                WHERE id = %s AND kind = 'pattern'
-            """
-            result = await self.supabase_manager.execute_query(query, [strand_id])
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq('id', strand_id).eq('kind', 'pattern').execute()
             
-            if result:
-                return dict(result[0])
+            if result.data:
+                return result.data[0]
             else:
                 self.logger.warning(f"Pattern strand not found: {strand_id}")
                 return None
@@ -111,19 +119,42 @@ class LLMLearningAnalyzer:
     def prepare_cluster_data(self, cluster_type: str, cluster_key: str, 
                            prediction_reviews: List[Dict[str, Any]], 
                            pattern_contexts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Prepare structured data for LLM analysis"""
+        """Prepare structured data for LLM analysis
         
-        # Calculate cluster statistics
-        success_count = sum(1 for pr in prediction_reviews if pr.get('content', {}).get('success', False))
+        Reads from both 'content' and 'module_intelligence' fields for robust data access.
+        """
+        
+        # Helper function to get value from either field
+        def get_value(pr: Dict[str, Any], key: str, default=0):
+            # Try content first
+            content = pr.get('content', {})
+            if isinstance(content, dict) and content.get(key) is not None:
+                return content.get(key, default)
+            # Fall back to module_intelligence
+            module_intelligence = pr.get('module_intelligence', {})
+            if isinstance(module_intelligence, dict) and module_intelligence.get(key) is not None:
+                return module_intelligence.get(key, default)
+            return default
+        
+        # Calculate cluster statistics using robust data access
+        success_count = 0
+        for pr in prediction_reviews:
+            success = get_value(pr, 'success', False)
+            # Handle both boolean and string values
+            if isinstance(success, str):
+                success = success.lower() in ('true', '1', 'yes')
+            if success:
+                success_count += 1
+        
         success_rate = success_count / len(prediction_reviews) if prediction_reviews else 0
         
-        confidences = [pr.get('content', {}).get('confidence', 0) for pr in prediction_reviews]
+        confidences = [get_value(pr, 'confidence', 0) for pr in prediction_reviews]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0
         
-        returns = [pr.get('content', {}).get('return_pct', 0) for pr in prediction_reviews]
+        returns = [get_value(pr, 'return_pct', 0) for pr in prediction_reviews]
         avg_return = sum(returns) / len(returns) if returns else 0
         
-        drawdowns = [pr.get('content', {}).get('max_drawdown', 0) for pr in prediction_reviews]
+        drawdowns = [get_value(pr, 'max_drawdown', 0) for pr in prediction_reviews]
         avg_drawdown = sum(drawdowns) / len(drawdowns) if drawdowns else 0
         
         return {
@@ -204,20 +235,34 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
         return prompt
     
     def format_prediction_details(self, predictions: List[Dict[str, Any]]) -> str:
-        """Format prediction details for LLM prompt"""
+        """Format prediction details for LLM prompt
+        
+        Reads from both 'content' and 'module_intelligence' fields for robust data access.
+        """
         
         if not predictions:
             return "No prediction data available"
         
+        # Helper function to get value from either field
+        def get_value(pred: Dict[str, Any], key: str, default='N/A'):
+            # Try content first
+            content = pred.get('content', {})
+            if isinstance(content, dict) and content.get(key) is not None:
+                return content.get(key, default)
+            # Fall back to module_intelligence
+            module_intelligence = pred.get('module_intelligence', {})
+            if isinstance(module_intelligence, dict) and module_intelligence.get(key) is not None:
+                return module_intelligence.get(key, default)
+            return default
+        
         formatted = []
         for i, pred in enumerate(predictions[:10]):  # Limit to 10 examples
-            content = pred.get('content', {})
             formatted.append(
-                f"  {i+1}. Success: {content.get('success', 'N/A')}, "
-                f"Return: {content.get('return_pct', 'N/A')}%, "
-                f"Confidence: {content.get('confidence', 'N/A')}, "
-                f"Method: {content.get('method', 'N/A')}, "
-                f"Drawdown: {content.get('max_drawdown', 'N/A')}%"
+                f"  {i+1}. Success: {get_value(pred, 'success')}, "
+                f"Return: {get_value(pred, 'return_pct')}%, "
+                f"Confidence: {get_value(pred, 'confidence')}, "
+                f"Method: {get_value(pred, 'method')}, "
+                f"Drawdown: {get_value(pred, 'max_drawdown')}%"
             )
         
         return "\n".join(formatted)
@@ -250,20 +295,12 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
             else:
                 response_text = str(llm_response)
             
-            # Extract insights from response (simple parsing for now)
-            insights = {
-                'patterns_observed': self.extract_section(response_text, 'PATTERNS OBSERVED'),
-                'mistakes_identified': self.extract_section(response_text, 'MISTAKES IDENTIFIED'),
-                'success_factors': self.extract_section(response_text, 'SUCCESS FACTORS'),
-                'lessons_learned': self.extract_section(response_text, 'LESSONS LEARNED'),
-                'recommendations': self.extract_section(response_text, 'RECOMMENDATIONS')
-            }
-            
+            # Store full LLM response without parsing
             return {
                 'cluster_type': cluster_type,
                 'cluster_key': cluster_key,
                 'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
-                'insights': insights,
+                'llm_response': response_text,
                 'metadata': {
                     'llm_model': 'openrouter',
                     'analysis_type': 'cluster_learning',
@@ -367,7 +404,7 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
             }
             
             # Store learning braid in database
-            await self.store_learning_braid(learning_braid)
+            await self.store_learning_braid(learning_braid, cluster_type, cluster_key)
             
             return learning_braid
             
@@ -375,30 +412,51 @@ Focus on numbers, percentages, statistical relationships, and quantitative patte
             self.logger.error(f"Error creating learning braid: {e}")
             return None
     
-    async def store_learning_braid(self, learning_braid: Dict[str, Any]) -> bool:
-        """Store learning braid in database"""
+    async def store_learning_braid(self, learning_braid: Dict[str, Any], cluster_type: str, cluster_key: str) -> bool:
+        """Store learning braid in database using proper Supabase client method"""
         
         try:
-            import json
+            # Prepare strand data for Supabase client
+            strand_data = {
+                'id': learning_braid['id'],
+                'module': 'alpha',
+                'kind': learning_braid['kind'],
+                'symbol': learning_braid['content'].get('cluster_key', 'UNKNOWN'),
+                'timeframe': '1h',  # Default timeframe
+                'tags': learning_braid['tags'],
+                'created_at': learning_braid['created_at'],
+                'updated_at': learning_braid['created_at'],
+                'braid_level': learning_braid['braid_level'],
+                'lesson': learning_braid['content'].get('learning_insights', {}).get('llm_response', ''),
+                'content': learning_braid['content'],
+                'module_intelligence': learning_braid['module_intelligence'],
+                'cluster_key': self._create_braid_cluster_keys(cluster_type, cluster_key)  # Inherit from parent cluster
+            }
             
-            # Store in database
-            await self.supabase_manager.execute_query("""
-                INSERT INTO AD_strands (id, kind, created_at, tags, braid_level, lesson, content, module_intelligence)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, [
-                learning_braid['id'],
-                learning_braid['kind'],
-                learning_braid['created_at'],
-                learning_braid['tags'],
-                learning_braid['braid_level'],
-                learning_braid['lesson'],
-                json.dumps(learning_braid['content']),
-                json.dumps(learning_braid['module_intelligence'])
-            ])
+            # Use proper Supabase client method instead of raw SQL
+            result = self.supabase_manager.insert_strand(strand_data)
             
-            self.logger.info(f"Stored learning braid: {learning_braid['id']}")
-            return True
+            if result:
+                self.logger.info(f"Stored learning braid: {learning_braid['id']}")
+                return True
+            else:
+                self.logger.error(f"Failed to store learning braid: {learning_braid['id']}")
+                return False
             
         except Exception as e:
             self.logger.error(f"Error storing learning braid: {e}")
             return False
+    
+    def _create_braid_cluster_keys(self, cluster_type: str, cluster_key: str) -> List[Dict[str, Any]]:
+        """Create cluster keys for a braid strand based on its parent cluster
+        
+        The braid inherits the cluster key from its parent cluster, so it can be
+        grouped with other braids of the same type for future learning cycles.
+        """
+        
+        return [{
+            'cluster_type': cluster_type,
+            'cluster_key': cluster_key,
+            'braid_level': 2,  # This is a level 2 braid
+            'consumed': False  # Not yet consumed for further braiding
+        }]

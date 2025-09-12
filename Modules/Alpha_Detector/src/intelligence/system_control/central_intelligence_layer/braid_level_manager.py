@@ -74,29 +74,41 @@ class BraidLevelManager:
             return []
     
     async def get_cluster_strands(self, cluster_type: str, cluster_key: str) -> List[Dict[str, Any]]:
-        """Get all strands in a specific cluster"""
+        """Get all strands in a specific cluster using Direct Supabase Client"""
         
         try:
-            # Query for strands in this cluster
-            query = self._build_cluster_strands_query(cluster_type, cluster_key)
-            result = await self.supabase_manager.execute_query(query, [cluster_key])
+            # Use Direct Supabase Client instead of RPC
+            if cluster_type == 'pattern_timeframe':
+                # Split cluster_key into asset and group_signature
+                parts = cluster_key.split('_', 1)
+                if len(parts) == 2:
+                    asset, group_signature = parts
+                    result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>asset', asset).eq('content->>group_signature', group_signature).execute()
+                else:
+                    result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_signature', cluster_key).execute()
+            elif cluster_type == 'asset':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>asset', cluster_key).execute()
+            elif cluster_type == 'timeframe':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>timeframe', cluster_key).execute()
+            elif cluster_type == 'outcome':
+                success_value = cluster_key == 'success'
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>success', success_value).execute()
+            elif cluster_type == 'pattern':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_type', cluster_key).execute()
+            elif cluster_type == 'group_type':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_type', cluster_key).execute()
+            elif cluster_type == 'method':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>method', cluster_key).execute()
+            else:
+                self.logger.error(f"Unknown cluster type: {cluster_type}")
+                return []
             
-            return [dict(row) for row in result]
+            return result.data if result.data else []
             
         except Exception as e:
             self.logger.error(f"Error getting cluster strands for {cluster_type}:{cluster_key}: {e}")
             return []
     
-    def _build_cluster_strands_query(self, cluster_type: str, cluster_key: str) -> str:
-        """Build query to get strands in a specific cluster"""
-        
-        base_query = """
-            SELECT * FROM AD_strands 
-            WHERE kind = 'prediction_review'
-            AND cluster_key @> %s
-        """
-        
-        return base_query
     
     def group_by_braid_level(self, strands: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
         """Group strands by their braid level"""
@@ -182,27 +194,35 @@ class BraidLevelManager:
             return None
     
     async def store_braid_strand(self, braid_strand: Dict[str, Any]) -> Optional[str]:
-        """Store braid strand in database"""
+        """Store braid strand in database using proper Supabase client method"""
         
         try:
-            import json
+            # Prepare strand data for Supabase client
+            strand_data = {
+                'id': braid_strand['id'],
+                'module': 'alpha',
+                'kind': braid_strand['kind'],
+                'symbol': braid_strand['content'].get('cluster_key', 'UNKNOWN'),
+                'timeframe': '1h',  # Default timeframe
+                'tags': braid_strand['tags'],
+                'created_at': braid_strand['created_at'],
+                'updated_at': braid_strand['created_at'],
+                'braid_level': braid_strand['braid_level'],
+                'lesson': '',  # No lesson for general braids
+                'content': braid_strand['content'],
+                'module_intelligence': braid_strand['module_intelligence'],
+                'cluster_key': []  # Will be set by the calling system
+            }
             
-            # Store in database
-            await self.supabase_manager.execute_query("""
-                INSERT INTO AD_strands (id, kind, created_at, tags, braid_level, content, module_intelligence)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, [
-                braid_strand['id'],
-                braid_strand['kind'],
-                braid_strand['created_at'],
-                braid_strand['tags'],
-                braid_strand['braid_level'],
-                json.dumps(braid_strand['content']),
-                json.dumps(braid_strand['module_intelligence'])
-            ])
+            # Use proper Supabase client method instead of raw SQL
+            result = self.supabase_manager.insert_strand(strand_data)
             
-            self.logger.info(f"Stored braid strand: {braid_strand['id']}")
-            return braid_strand['id']
+            if result:
+                self.logger.info(f"Stored braid strand: {braid_strand['id']}")
+                return braid_strand['id']
+            else:
+                self.logger.error(f"Failed to store braid strand: {braid_strand['id']}")
+                return None
             
         except Exception as e:
             self.logger.error(f"Error storing braid strand: {e}")
@@ -219,16 +239,10 @@ class BraidLevelManager:
                     content['braid_references'] = []
                 content['braid_references'].append(braid_id)
                 
-                # Update strand in database
-                import json
-                await self.supabase_manager.execute_query("""
-                    UPDATE AD_strands 
-                    SET content = %s
-                    WHERE id = %s
-                """, [
-                    json.dumps(content),
-                    strand['id']
-                ])
+                # Update strand in database using Direct Supabase Client
+                self.supabase_manager.client.table('ad_strands').update({
+                    'content': content
+                }).eq('id', strand['id']).execute()
             
             self.logger.info(f"Updated {len(source_strands)} source strands with braid reference")
             return True
@@ -242,31 +256,13 @@ class BraidLevelManager:
         """Get braids in a specific cluster, optionally filtered by braid level"""
         
         try:
+            # Use Direct Supabase Client instead of RPC
             if braid_level is not None:
-                query = """
-                    SELECT * FROM AD_strands 
-                    WHERE kind = 'braid'
-                    AND content->>'cluster_type' = %s
-                    AND content->>'cluster_key' = %s
-                    AND content->>'braid_level' = %s
-                    ORDER BY created_at DESC
-                """
-                result = await self.supabase_manager.execute_query(query, [
-                    cluster_type, cluster_key, str(braid_level)
-                ])
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'braid').eq('content->>cluster_type', cluster_type).eq('content->>cluster_key', cluster_key).eq('content->>braid_level', str(braid_level)).order('created_at', desc=True).execute()
             else:
-                query = """
-                    SELECT * FROM AD_strands 
-                    WHERE kind = 'braid'
-                    AND content->>'cluster_type' = %s
-                    AND content->>'cluster_key' = %s
-                    ORDER BY content->>'braid_level'::int, created_at DESC
-                """
-                result = await self.supabase_manager.execute_query(query, [
-                    cluster_type, cluster_key
-                ])
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'braid').eq('content->>cluster_type', cluster_type).eq('content->>cluster_key', cluster_key).order('content->>braid_level', desc=False).order('created_at', desc=True).execute()
             
-            return [dict(row) for row in result]
+            return result.data if result.data else []
             
         except Exception as e:
             self.logger.error(f"Error getting braids in cluster {cluster_type}:{cluster_key}: {e}")
@@ -276,41 +272,39 @@ class BraidLevelManager:
         """Get statistics about braid levels and distribution"""
         
         try:
-            # Get all braids
-            query = """
-                SELECT 
-                    content->>'braid_level' as braid_level,
-                    content->>'cluster_type' as cluster_type,
-                    COUNT(*) as count
-                FROM AD_strands 
-                WHERE kind = 'braid'
-                GROUP BY content->>'braid_level', content->>'cluster_type'
-                ORDER BY content->>'braid_level'::int
-            """
+            # Get all braids using Direct Supabase Client
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'braid').execute()
             
-            result = await self.supabase_manager.execute_query(query)
+            if not result.data:
+                return {
+                    'total_braids': 0,
+                    'max_braid_level': 0,
+                    'level_distribution': {},
+                    'cluster_distribution': {}
+                }
             
             stats = {
-                'total_braids': len(result),
+                'total_braids': len(result.data),
                 'max_braid_level': 0,
                 'level_distribution': {},
                 'cluster_distribution': {}
             }
             
-            for row in result:
-                braid_level = int(row[0]) if row[0] else 0
-                cluster_type = row[1] or 'unknown'
-                count = row[2]
+            # Process braids to calculate statistics
+            for braid in result.data:
+                content = braid.get('content', {})
+                braid_level = int(content.get('braid_level', 0))
+                cluster_type = content.get('cluster_type', 'unknown')
                 
                 stats['max_braid_level'] = max(stats['max_braid_level'], braid_level)
                 
                 if braid_level not in stats['level_distribution']:
                     stats['level_distribution'][braid_level] = 0
-                stats['level_distribution'][braid_level] += count
+                stats['level_distribution'][braid_level] += 1
                 
                 if cluster_type not in stats['cluster_distribution']:
                     stats['cluster_distribution'][cluster_type] = 0
-                stats['cluster_distribution'][cluster_type] += count
+                stats['cluster_distribution'][cluster_type] += 1
             
             return stats
             

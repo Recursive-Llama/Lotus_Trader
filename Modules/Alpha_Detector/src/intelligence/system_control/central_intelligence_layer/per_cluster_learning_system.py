@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 
 from .multi_cluster_grouping_engine import MultiClusterGroupingEngine
 from .llm_learning_analyzer import LLMLearningAnalyzer
-from .braid_level_manager import BraidLevelManager
 
 
 class PerClusterLearningSystem:
@@ -34,7 +33,6 @@ class PerClusterLearningSystem:
         # Initialize components
         self.cluster_grouper = MultiClusterGroupingEngine(supabase_manager)
         self.llm_analyzer = LLMLearningAnalyzer(llm_client, supabase_manager)
-        self.braid_manager = BraidLevelManager(supabase_manager)
         
         # Learning thresholds
         self.cluster_thresholds = {
@@ -75,9 +73,6 @@ class PerClusterLearningSystem:
                 
                 all_learning_braids[cluster_type] = cluster_braids
                 self.logger.info(f"Created {len(cluster_braids)} learning braids for {cluster_type}")
-            
-            # Process braid level progression
-            await self.process_braid_progression(cluster_groups)
             
             self.logger.info(f"Per-cluster learning complete: {sum(len(braids) for braids in all_learning_braids.values())} total braids created")
             return all_learning_braids
@@ -204,54 +199,21 @@ class PerClusterLearningSystem:
             self.logger.error(f"Error updating context system: {e}")
             return False
     
-    async def process_braid_progression(self, cluster_groups: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> Dict[str, List[str]]:
-        """
-        Process braid level progression for all clusters
-        
-        Args:
-            cluster_groups: All cluster groups from multi-cluster grouping
-            
-        Returns:
-            Dictionary with cluster types as keys and created braid IDs as values
-        """
-        try:
-            self.logger.info("Processing braid level progression")
-            
-            # Process braid creation for all clusters
-            created_braids = await self.braid_manager.process_all_clusters(cluster_groups)
-            
-            total_braids = sum(len(braids) for braids in created_braids.values())
-            self.logger.info(f"Created {total_braids} braids through level progression")
-            
-            return created_braids
-            
-        except Exception as e:
-            self.logger.error(f"Error processing braid progression: {e}")
-            return {}
     
     async def get_learning_statistics(self) -> Dict[str, Any]:
         """Get statistics about the learning system"""
         
         try:
-            # Get braid statistics
-            braid_stats = await self.braid_manager.get_braid_statistics()
-            
             # Get cluster statistics
             cluster_groups = await self.cluster_grouper.get_all_cluster_groups()
             cluster_stats = self.cluster_grouper.get_cluster_statistics(cluster_groups)
             
-            # Get learning braid count
-            learning_braid_query = """
-                SELECT COUNT(*) as count
-                FROM AD_strands 
-                WHERE kind = 'learning_braid'
-            """
-            result = await self.supabase_manager.execute_query(learning_braid_query)
-            learning_braid_count = result[0][0] if result else 0
+            # Get learning braid count using Direct Supabase Client
+            result = self.supabase_manager.client.table('ad_strands').select('id', count='exact').eq('kind', 'prediction_review').gte('braid_level', 2).execute()
+            learning_braid_count = result.count if result.count else 0
             
             return {
                 'learning_braids': learning_braid_count,
-                'braid_statistics': braid_stats,
                 'cluster_statistics': cluster_stats,
                 'learning_thresholds': self.cluster_thresholds,
                 'timestamp': datetime.now(timezone.utc).isoformat()

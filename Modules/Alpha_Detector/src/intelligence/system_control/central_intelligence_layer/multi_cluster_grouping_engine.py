@@ -40,6 +40,7 @@ class MultiClusterGroupingEngine:
             'method': 'method'
         }
     
+    
     async def group_prediction_reviews(self, prediction_reviews: List[Dict[str, Any]]) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """
         Group prediction reviews into 7 cluster types
@@ -108,40 +109,59 @@ class MultiClusterGroupingEngine:
         return False
     
     def _extract_cluster_key(self, cluster_name: str, review: Dict[str, Any]) -> str:
-        """Extract cluster key from prediction review based on cluster type"""
+        """Extract cluster key from prediction review based on cluster type
         
+        Reads from both 'content' and 'module_intelligence' fields for robust data access.
+        Falls back gracefully if either field is missing.
+        """
+        
+        # Try content first, then fall back to module_intelligence
         content = review.get('content', {})
+        module_intelligence = review.get('module_intelligence', {})
+        
+        # Helper function to get value from either field
+        def get_value(key: str, default=''):
+            # Try content first
+            if isinstance(content, dict) and content.get(key) is not None:
+                return content.get(key, default)
+            # Fall back to module_intelligence
+            if isinstance(module_intelligence, dict) and module_intelligence.get(key) is not None:
+                return module_intelligence.get(key, default)
+            return default
         
         if cluster_name == 'pattern_timeframe':
             # Pattern + Timeframe: group_signature + asset
-            group_signature = content.get('group_signature', '')
-            asset = content.get('asset', '')
+            group_signature = get_value('group_signature')
+            asset = get_value('asset')
             return f"{asset}_{group_signature}" if group_signature and asset else None
             
         elif cluster_name == 'asset':
             # Asset only
-            return content.get('asset', '')
+            return get_value('asset')
             
         elif cluster_name == 'timeframe':
             # Timeframe only
-            return content.get('timeframe', '')
+            return get_value('timeframe')
             
         elif cluster_name == 'outcome':
             # Success or Failure
-            success = content.get('success', False)
+            success = get_value('success', False)
+            # Handle both boolean and string values
+            if isinstance(success, str):
+                success = success.lower() in ('true', '1', 'yes')
             return 'success' if success else 'failure'
             
         elif cluster_name == 'pattern':
             # Pattern only (group_type)
-            return content.get('group_type', '')
+            return get_value('group_type')
             
         elif cluster_name == 'group_type':
             # Group Type (single_single, multi_single, etc.)
-            return content.get('group_type', '')
+            return get_value('group_type')
             
         elif cluster_name == 'method':
             # Method (Code vs LLM)
-            return content.get('method', '')
+            return get_value('method')
             
         else:
             self.logger.warning(f"Unknown cluster type: {cluster_name}")
@@ -166,17 +186,16 @@ class MultiClusterGroupingEngine:
         return strand
     
     async def mark_strand_consumed_for_cluster(self, strand_id: str, cluster_type: str, cluster_key: str) -> bool:
-        """Mark strand as consumed for specific cluster"""
+        """Mark strand as consumed for specific cluster using Direct Supabase Client"""
         
         try:
-            # Get current strand
-            query = "SELECT * FROM AD_strands WHERE id = %s"
-            result = await self.supabase_manager.execute_query(query, [strand_id])
+            # Get current strand using Direct Supabase Client
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq('id', strand_id).execute()
             
-            if not result:
+            if not result.data:
                 return False
             
-            strand = dict(result[0])
+            strand = result.data[0]
             cluster_assignments = strand.get('cluster_key', [])
             
             # Update consumed status for specific cluster
@@ -186,13 +205,10 @@ class MultiClusterGroupingEngine:
                     assignment['consumed'] = True
                     break
             
-            # Update strand in database
-            import json
-            await self.supabase_manager.execute_query("""
-                UPDATE AD_strands 
-                SET cluster_key = %s
-                WHERE id = %s
-            """, [json.dumps(cluster_assignments), strand_id])
+            # Update strand in database using Direct Supabase Client
+            self.supabase_manager.client.table('ad_strands').update({
+                'cluster_key': cluster_assignments
+            }).eq('id', strand_id).execute()
             
             return True
             
@@ -201,155 +217,100 @@ class MultiClusterGroupingEngine:
             return False
     
     async def get_cluster_groups(self, cluster_type: str, cluster_key: str) -> List[Dict[str, Any]]:
-        """Get all prediction reviews in a specific cluster group"""
+        """Get all prediction reviews in a specific cluster group using Direct Supabase Client"""
         
         try:
-            query = self._build_cluster_query(cluster_type, cluster_key)
-            result = await self.supabase_manager.execute_query(query, [cluster_key])
+            # Use Direct Supabase Client instead of RPC
+            if cluster_type == 'pattern_timeframe':
+                # Split cluster_key into asset and group_signature
+                parts = cluster_key.split('_', 1)
+                if len(parts) == 2:
+                    asset, group_signature = parts
+                    result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>asset', asset).eq('content->>group_signature', group_signature).execute()
+                else:
+                    result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_signature', cluster_key).execute()
+            elif cluster_type == 'asset':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>asset', cluster_key).execute()
+            elif cluster_type == 'timeframe':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>timeframe', cluster_key).execute()
+            elif cluster_type == 'outcome':
+                success_value = cluster_key == 'success'
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>success', success_value).execute()
+            elif cluster_type == 'pattern':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_type', cluster_key).execute()
+            elif cluster_type == 'group_type':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>group_type', cluster_key).execute()
+            elif cluster_type == 'method':
+                result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').eq('content->>method', cluster_key).execute()
+            else:
+                self.logger.error(f"Unknown cluster type: {cluster_type}")
+                return []
             
-            return [dict(row) for row in result]
+            return result.data if result.data else []
             
         except Exception as e:
             self.logger.error(f"Error getting cluster groups for {cluster_type}:{cluster_key}: {e}")
             return []
     
-    def _build_cluster_query(self, cluster_type: str, cluster_key: str) -> str:
-        """Build SQL query for specific cluster type and key"""
-        
-        base_query = "SELECT * FROM AD_strands WHERE kind = 'prediction_review'"
-        
-        if cluster_type == 'pattern_timeframe':
-            # Split cluster_key into asset and group_signature
-            parts = cluster_key.split('_', 1)
-            if len(parts) == 2:
-                asset, group_signature = parts
-                return f"{base_query} AND content->>'asset' = %s AND content->>'group_signature' = %s"
-            else:
-                return f"{base_query} AND content->>'group_signature' = %s"
-                
-        elif cluster_type == 'asset':
-            return f"{base_query} AND content->>'asset' = %s"
-            
-        elif cluster_type == 'timeframe':
-            return f"{base_query} AND content->>'timeframe' = %s"
-            
-        elif cluster_type == 'outcome':
-            success_value = 'true' if cluster_key == 'success' else 'false'
-            return f"{base_query} AND content->>'success' = %s"
-            
-        elif cluster_type == 'pattern':
-            return f"{base_query} AND content->>'group_type' = %s"
-            
-        elif cluster_type == 'group_type':
-            return f"{base_query} AND content->>'group_type' = %s"
-            
-        elif cluster_type == 'method':
-            return f"{base_query} AND content->>'method' = %s"
-            
-        else:
-            raise ValueError(f"Unknown cluster type: {cluster_type}")
     
     async def get_all_cluster_groups(self) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
-        """Get all cluster groups across all cluster types"""
+        """Get all cluster groups across all cluster types using Supabase client"""
         
         all_clusters = {}
         
-        for cluster_type in self.cluster_types.keys():
-            try:
-                # Get all unique cluster keys for this type
-                cluster_keys = await self._get_cluster_keys(cluster_type)
-                
-                cluster_groups = {}
-                for cluster_key in cluster_keys:
-                    groups = await self.get_cluster_groups(cluster_type, cluster_key)
-                    if groups:  # Only include non-empty groups
-                        cluster_groups[cluster_key] = groups
-                
-                all_clusters[cluster_type] = cluster_groups
-                
-            except Exception as e:
-                self.logger.error(f"Error getting cluster groups for {cluster_type}: {e}")
-                all_clusters[cluster_type] = {}
-        
-        return all_clusters
-    
-    async def _get_cluster_keys(self, cluster_type: str) -> List[str]:
-        """Get all unique cluster keys for a specific cluster type"""
-        
         try:
-            if cluster_type == 'pattern_timeframe':
-                query = """
-                    SELECT DISTINCT 
-                        CONCAT(content->>'asset', '_', content->>'group_signature') as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'group_signature' IS NOT NULL
-                    AND content->>'asset' IS NOT NULL
-                """
-            elif cluster_type == 'asset':
-                query = """
-                    SELECT DISTINCT content->>'asset' as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'asset' IS NOT NULL
-                """
-            elif cluster_type == 'timeframe':
-                query = """
-                    SELECT DISTINCT content->>'timeframe' as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'timeframe' IS NOT NULL
-                """
-            elif cluster_type == 'outcome':
-                query = """
-                    SELECT DISTINCT 
-                        CASE 
-                            WHEN content->>'success' = 'true' THEN 'success'
-                            ELSE 'failure'
-                        END as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'success' IS NOT NULL
-                """
-            elif cluster_type == 'pattern':
-                query = """
-                    SELECT DISTINCT content->>'group_type' as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'group_type' IS NOT NULL
-                """
-            elif cluster_type == 'group_type':
-                query = """
-                    SELECT DISTINCT content->>'group_type' as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'group_type' IS NOT NULL
-                """
-            elif cluster_type == 'method':
-                query = """
-                    SELECT DISTINCT content->>'method' as cluster_key
-                    FROM AD_strands 
-                    WHERE kind = 'prediction_review' 
-                    AND content->>'method' IS NOT NULL
-                """
-            else:
-                raise ValueError(f"Unknown cluster type: {cluster_type}")
+            # Get all prediction_review strands
+            result = self.supabase_manager.client.table('ad_strands').select('*').eq('kind', 'prediction_review').execute()
             
-            result = await self.supabase_manager.execute_query(query)
-            # Handle the result structure where data is in 'result' key
-            cluster_keys = []
-            for row in result:
-                if isinstance(row, dict) and 'result' in row:
-                    cluster_key = row['result'].get('cluster_key')
-                    if cluster_key:
-                        cluster_keys.append(cluster_key)
-                elif isinstance(row, list) and len(row) > 0:
-                    cluster_keys.append(row[0])
-            return cluster_keys
+            if not result.data:
+                self.logger.warning("No prediction_review strands found")
+                return {}
+            
+            prediction_reviews = result.data
+            self.logger.info(f"Found {len(prediction_reviews)} prediction_review strands")
+            
+            # Group by each cluster type
+            for cluster_type in self.cluster_types.keys():
+                cluster_groups = {}
+                
+                # Group prediction reviews by cluster type
+                for review in prediction_reviews:
+                    try:
+                        # Ensure review has the required structure
+                        if not isinstance(review, dict):
+                            self.logger.warning(f"Review is not a dict: {type(review)}")
+                            continue
+                        
+                        # Ensure we have data to work with (either content or module_intelligence)
+                        if not review.get('content') and not review.get('module_intelligence'):
+                            self.logger.warning(f"Review missing both content and module_intelligence: {review.get('id', 'unknown')}")
+                            continue
+                        
+                        cluster_key = self._extract_cluster_key(cluster_type, review)
+                        
+                        if cluster_key:
+                            # Check if strand is not consumed for this cluster
+                            if not self._is_strand_consumed_for_cluster(review, cluster_type, cluster_key):
+                                if cluster_key not in cluster_groups:
+                                    cluster_groups[cluster_key] = []
+                                cluster_groups[cluster_key].append(review)
+                    
+                    except Exception as e:
+                        self.logger.warning(f"Error processing review for cluster {cluster_type}: {e}")
+                        continue
+                
+                # Filter groups with at least 3 reviews (learning threshold)
+                filtered_groups = {k: v for k, v in cluster_groups.items() if len(v) >= 3}
+                all_clusters[cluster_type] = filtered_groups
+                
+                self.logger.info(f"Cluster {cluster_type}: {len(cluster_groups)} total groups, {len(filtered_groups)} with 3+ reviews")
+            
+            return all_clusters
             
         except Exception as e:
-            self.logger.error(f"Error getting cluster keys for {cluster_type}: {e}")
-            return []
+            self.logger.error(f"Error getting all cluster groups: {e}")
+            return {}
+    
     
     def get_cluster_statistics(self, clusters: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> Dict[str, Any]:
         """Get statistics about cluster groupings"""

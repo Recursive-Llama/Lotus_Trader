@@ -34,6 +34,9 @@ class Stage6ADataCollector:
         # Current price (latest OHLC close)
         self.current_price = self._get_current_price()
         
+        # Cache for diagonal "now" prices
+        self._diag_now_cache = {}
+        
         # Missing data flags
         self.missing_data = []
         
@@ -49,42 +52,30 @@ class Stage6ADataCollector:
         return latest_candle[4]  # Close price
     
     def calculate_diagonal_price_at_time(self, element: Dict[str, Any], timestamp: int) -> float:
-        """Calculate diagonal line price at a specific timestamp using price_time_points"""
-        price_time_points = element.get('price_time_points', [])
-        if not price_time_points:
+        """Calculate diagonal line price at a specific timestamp with edge case guards"""
+        pts = element.get('price_time_points', [])
+        if len(pts) == 0:
             return 0.0
-        
-        # Convert timestamp to seconds (if it's in milliseconds)
-        timestamp_sec = timestamp / 1000 if timestamp > 1e10 else timestamp
-        
-        # Find the two points to interpolate between
-        for i in range(len(price_time_points) - 1):
-            time1, price1 = price_time_points[i]
-            time2, price2 = price_time_points[i + 1]
-            
-            if time1 <= timestamp_sec <= time2:
-                # Linear interpolation
-                ratio = (timestamp_sec - time1) / (time2 - time1)
-                price = price1 + ratio * (price2 - price1)
-                return price
-        
-        # If timestamp is before first point, extrapolate backwards
-        if timestamp_sec < price_time_points[0][0]:
-            time1, price1 = price_time_points[0]
-            time2, price2 = price_time_points[1]
-            slope = (price2 - price1) / (time2 - time1)
-            price = price1 + slope * (timestamp_sec - time1)
-            return price
-        
-        # If timestamp is after last point, extrapolate forwards
-        if timestamp_sec > price_time_points[-1][0]:
-            time1, price1 = price_time_points[-2]
-            time2, price2 = price_time_points[-1]
-            slope = (price2 - price1) / (time2 - time1)
-            price = price2 + slope * (timestamp_sec - time2)
-            return price
-        
-        return 0.0
+        if len(pts) == 1:
+            return float(pts[0][1])
+
+        ts = timestamp / 1000 if timestamp > 1e10 else timestamp
+        # ensure sorted
+        pts = sorted(pts, key=lambda p: p[0])
+
+        for (t1, p1), (t2, p2) in zip(pts, pts[1:]):
+            if t1 <= ts <= t2:
+                dt = (t2 - t1) or 1e-9
+                return p1 + (ts - t1) * (p2 - p1) / dt
+
+        # extrapolate
+        (t1, p1), (t2, p2) = pts[:2]
+        if ts < t1:
+            dt = (t2 - t1) or 1e-9
+            return p1 + (ts - t1) * (p2 - p1) / dt
+        (t1, p1), (t2, p2) = pts[-2:]
+        dt = (t2 - t1) or 1e-9
+        return p2 + (ts - t2) * (p2 - p1) / dt
     
     def analyze_element_sequence(self, element_id: str, element: Dict[str, Any], ohlcv: List[List]) -> Dict[str, Any]:
         """Analyze the sequence of events for a single element with proper state transitions"""
@@ -387,8 +378,7 @@ class Stage6ADataCollector:
         # Section C: Last 1/6 of candles - per element analysis
         section_c_start = total_candles * 5 // 6
         section_c_events = self._analyze_recent_activity(
-            [e for e in events if e.get('candle_index', 0) >= section_c_start], 
-            ohlcv[section_c_start:]
+            [e for e in events if e.get('candle_index', 0) >= section_c_start]
         )
         
         return {
@@ -406,7 +396,7 @@ class Stage6ADataCollector:
         sorted_events = sorted(events, key=lambda x: x.get('volume', 0), reverse=True)
         return sorted_events[:max_events]
     
-    def _analyze_recent_activity(self, events: List[Dict[str, Any]], recent_ohlcv: List[List]) -> Dict[str, Any]:
+    def _analyze_recent_activity(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Analyze recent activity per element"""
         if not events:
             return {}
@@ -447,7 +437,7 @@ class Stage6ADataCollector:
         return recent_analysis
     
     def _calculate_element_sequences(self) -> Dict[str, Dict[str, Any]]:
-        """Calculate event sequences for all elements with improved structure"""
+        """Calculate event sequences for all elements with enhanced structure for Stage 6B"""
         element_sequences = {}
         ohlcv = self.ohlc_data.get('ohlcv', [])
         
@@ -482,7 +472,7 @@ class Stage6ADataCollector:
         # Apply 3-section filtering
         three_sections = self.filter_events_three_sections(all_events, ohlcv)
         
-        # Build final element sequences with improved structure
+        # Build final element sequences with enhanced structure for Stage 6B
         for element_id, sequence_data in element_data.items():
             if 'error' in sequence_data:
                 element_sequences[element_id] = {
@@ -498,14 +488,54 @@ class Stage6ADataCollector:
             # Get events for this element
             element_events = [e for e in sequence_data.get('events', [])]
             
-            # Format recent events (last 5)
-            recent_events = []
-            for event in element_events[-5:]:
-                date = event.get('date', 'unknown')
-                event_type = event.get('event', 'unknown')
-                close = event.get('close', 0)
-                volume = event.get('volume', 0)
-                recent_events.append(f"{date}: {event_type} (close: {close:.4f}, vol: {volume:,.0f})")
+            # Calculate enhanced data for Stage 6B
+            element = self.elements[element_id]
+            element_type = element.get('element_type', 'unknown')
+            
+            # Current diagonal price and distance for diagonal lines
+            current_diagonal_price = 0.0
+            pct_to_trigger = 0.0
+            window = {}
+            
+            if element_type == 'diagonal_line':
+                current_diagonal_price = self._get_current_diagonal_price(element)
+                if current_diagonal_price > 0:
+                    pct_to_trigger = abs((self.current_price - current_diagonal_price) / current_diagonal_price) * 100
+                
+                # Time window for diagonal
+                price_time_points = element.get('price_time_points', [])
+                if price_time_points:
+                    window = {
+                        "start": datetime.fromtimestamp(price_time_points[0][0], tz=timezone.utc).isoformat(),
+                        "end": datetime.fromtimestamp(price_time_points[-1][0], tz=timezone.utc).isoformat()
+                    }
+            
+            # Per-element volume baseline
+            element_volumes = [e.get('volume', 0) for e in element_events if e.get('volume', 0) > 0]
+            element_avg_vol = sum(element_volumes) / len(element_volumes) if element_volumes else 0
+            vol_gate_1p5x = element_avg_vol * 1.5
+            
+            # Retest detection
+            retest_detection = self._detect_retest(element_events, element_type)
+            
+            # Distances to levels
+            distances = self._calculate_distances_to_levels(element, element_type)
+            
+            # Normalized events with structured data
+            structured_events = []
+            ohlcv = self.ohlc_data.get('ohlcv', [])
+            for event in element_events[-5:]:  # Last 5 events
+                candle_index = event.get('candle_index', 0)
+                ts_ms = ohlcv[candle_index][0] if 0 <= candle_index < len(ohlcv) else None
+                structured_events.append({
+                    "event_kind": event.get('event', 'unknown'),
+                    "side": self._determine_event_side(event.get('event', '')),
+                    "price_at_event": event.get('close', 0),
+                    "volume": event.get('volume', 0),
+                    "candle_index": candle_index,
+                    "ts_ms": ts_ms,
+                    "date": datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc).isoformat() if ts_ms else event.get('date', 'unknown')
+                })
             
             # Calculate meaningful volume story with price context
             volume_story = self._calculate_meaningful_volume_story(element_events)
@@ -518,22 +548,114 @@ class Stage6ADataCollector:
             recent_events_refs = [e for e in three_sections.get('recent_significant', []) if e.get('element_id') == element_id]
             
             element_sequences[element_id] = {
+                # Basic info
                 "type": sequence_data.get('element_type', 'unknown'),
                 "trend_line_type": element.get('trend_line_type', ''),
                 "current_state": current_state,
                 "total_events": sequence_data.get('total_events', 0),
-                "recent_events": recent_events,
+                
+                # Enhanced data for Stage 6B
+                "now_price_at_element": current_diagonal_price if element_type == 'diagonal_line' else element.get('price', 0),
+                "pct_to_trigger": pct_to_trigger,
+                "window": window,
+                "volume_baseline": {
+                    "avg_events": element_avg_vol,
+                    "vol_gate_1p5x": vol_gate_1p5x
+                },
+                "retest_detection": retest_detection,
+                "distances": distances,
+                "structured_events": structured_events,
+                
+                # Legacy fields for compatibility
+                "recent_events": [f"{e['date']}: {e['event_kind']} (close: {e['price_at_event']:.4f}, vol: {e['volume']:,.0f})" for e in structured_events],
                 "volume_story": volume_story,
                 "global_events": global_events,
                 "recent_events_refs": recent_events_refs,
                 "current_activity": three_sections.get('current_activity', {}).get(element_id, {}),
-                # Add key level data for overview analysis
+                
+                # Key level data
                 "price": element.get('price', 0),
                 "price_top": element.get('price_top', 0),
                 "price_bottom": element.get('price_bottom', 0)
             }
         
-        return element_sequences
+        return element_sequences, all_events
+    
+    def _detect_retest(self, element_events: List[Dict[str, Any]], element_type: str) -> Dict[str, Any]:
+        """Detect retest patterns for an element"""
+        if not element_events:
+            return {"seen": False, "within_n": 0, "band_pct": 0.0, "last_retest_idx": None}
+        
+        # Look for breakout followed by retest within 10 candles
+        breakout_events = []
+        retest_events = []
+        
+        for i, event in enumerate(element_events):
+            event_kind = event.get('event', '')
+            if 'breakout' in event_kind.lower() or 'reclaim' in event_kind.lower():
+                breakout_events.append((i, event))
+            elif 'retest' in event_kind.lower() or 'failed' in event_kind.lower():
+                retest_events.append((i, event))
+        
+        if not breakout_events:
+            return {"seen": False, "within_n": 0, "band_pct": 0.0, "last_retest_idx": None}
+        
+        # Check for retest within 10 candles of last breakout
+        last_breakout_idx = breakout_events[-1][0]
+        recent_retests = [r for r in retest_events if r[0] > last_breakout_idx and r[0] - last_breakout_idx <= 10]
+        
+        if recent_retests:
+            last_retest_idx, last_retest = recent_retests[-1]
+            return {
+                "seen": True,
+                "within_n": last_retest_idx - last_breakout_idx,
+                "band_pct": 0.8,  # Default retest band
+                "last_retest_list_idx": last_retest_idx,
+                "last_retest_candle_index": last_retest.get('candle_index', 0)
+            }
+        
+        return {"seen": False, "within_n": 0, "band_pct": 0.0, "last_retest_idx": None}
+    
+    def _calculate_distances_to_levels(self, element: Dict[str, Any], element_type: str) -> Dict[str, float]:
+        """Calculate distances to key levels for an element"""
+        current_price = self.current_price
+        distances = {}
+        
+        if element_type == 'horizontal_line':
+            price = element.get('price', 0)
+            if price > 0:
+                distances["to_level"] = abs(current_price - price)
+                distances["to_level_pct"] = abs((current_price - price) / price) * 100
+        
+        elif element_type == 'zone':
+            price_top = element.get('price_top', 0)
+            price_bottom = element.get('price_bottom', 0)
+            if price_top > 0 and price_bottom > 0:
+                distances["to_top"] = abs(current_price - price_top)
+                distances["to_bottom"] = abs(current_price - price_bottom)
+                distances["to_top_pct"] = abs((current_price - price_top) / price_top) * 100
+                distances["to_bottom_pct"] = abs((current_price - price_bottom) / price_bottom) * 100
+        
+        elif element_type == 'diagonal_line':
+            current_diagonal_price = self._get_current_diagonal_price(element)
+            if current_diagonal_price > 0:
+                distances["to_line"] = abs(current_price - current_diagonal_price)
+                distances["to_line_pct"] = abs((current_price - current_diagonal_price) / current_diagonal_price) * 100
+        
+        return distances
+    
+    def _determine_event_side(self, event_kind: str) -> str:
+        """Determine if an event is bullish or bearish"""
+        bullish_events = ['breakout', 'reclaim', 'bounce']
+        bearish_events = ['breakdown', 'failed', 'breakbelow']
+        
+        event_lower = event_kind.lower()
+        if any(bull in event_lower for bull in bullish_events):
+            return 'bull'
+        elif any(bear in event_lower for bear in bearish_events):
+            return 'bear'
+        else:
+            return 'neutral'
     
     def _calculate_meaningful_volume_story(self, events: List[Dict[str, Any]]) -> str:
         """Calculate volume story with price context"""
@@ -601,9 +723,21 @@ class Stage6ADataCollector:
         # Look at last 3 events to determine current state
         recent_events = events[-3:] if len(events) >= 3 else events
         
+        # Define bullish and bearish event patterns
+        bullish_events = {'breakout', 'reclaim', 'bounce'}
+        bearish_events = {'breakdown', 'failed', 'breakbelow'}
+        
+        def is_bullish(event):
+            event_name = event.get('event', '').lower()
+            return any(pattern in event_name for pattern in bullish_events)
+        
+        def is_bearish(event):
+            event_name = event.get('event', '').lower()
+            return any(pattern in event_name for pattern in bearish_events)
+        
         # Check for recent breakouts/breakdowns
-        recent_breakouts = [e for e in recent_events if e.get('event') in ['breakout', 'breakout_above_zone']]
-        recent_breakdowns = [e for e in recent_events if e.get('event') in ['breakdown', 'breakdown_below_zone']]
+        recent_breakouts = [e for e in recent_events if is_bullish(e)]
+        recent_breakdowns = [e for e in recent_events if is_bearish(e)]
         
         if recent_breakouts and not recent_breakdowns:
             return "recent_breakout"
@@ -707,58 +841,7 @@ class Stage6ADataCollector:
             }
         }
     
-    def _calculate_execution_readiness(self) -> str:
-        """Determine if trade is ready for execution"""
-        # Simple logic for now - can be enhanced
-        element_sequences = self._calculate_element_sequences()
-        
-        # Check if price is above key support levels
-        above_support = True
-        for element_id, sequence_data in element_sequences.items():
-            if 'error' in sequence_data:
-                continue
-            if sequence_data.get('current_state') == 'below' and sequence_data.get('total_events', 0) > 0:
-                # Check if this is a support level that's been broken
-                recent_events = sequence_data.get('events', [])[-3:]  # Last 3 events
-                if any(e.get('event') == 'breakdown' for e in recent_events):
-                    above_support = False
-                    break
-        
-        if not above_support:
-            return "waiting"
-        
-        # Check if price is near resistance (potential entry)
-        near_resistance = False
-        for element_id, sequence_data in element_sequences.items():
-            if 'error' in sequence_data:
-                continue
-            if sequence_data.get('current_state') == 'below' and sequence_data.get('total_events', 0) > 0:
-                # Check if this is a resistance level that's been tested
-                recent_events = sequence_data.get('events', [])[-3:]  # Last 3 events
-                if any(e.get('event') == 'breakout' for e in recent_events):
-                    near_resistance = True
-                    break
-        
-        if near_resistance:
-            return "ready"
-        
-        return "waiting"
     
-    def _calculate_breakout_status(self) -> str:
-        """Determine breakout status"""
-        # Simplified logic - can be enhanced
-        element_sequences = self._calculate_element_sequences()
-        
-        # Check if price has broken above any resistance
-        for element_id, sequence_data in element_sequences.items():
-            if 'error' in sequence_data:
-                continue
-            if sequence_data.get('current_state') == 'above' and sequence_data.get('total_events', 0) > 0:
-                recent_events = sequence_data.get('events', [])[-3:]  # Last 3 events
-                if any(e.get('event') == 'breakout' for e in recent_events):
-                    return "broken"
-        
-        return "pending"
     
     def _calculate_volatility(self) -> Dict[str, Any]:
         """Calculate volatility analysis from OHLC data"""
@@ -867,6 +950,17 @@ class Stage6ADataCollector:
         
         return global_events, recent_events
     
+    def _get_global_and_recent_events_from_all(self, all_events: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Get global and recent significant events from pre-computed all_events"""
+        ohlcv = self.ohlc_data.get('ohlcv', [])
+        if not ohlcv:
+            return [], []
+        
+        # Apply 3-section filtering
+        three_sections = self.filter_events_three_sections(all_events, ohlcv)
+        
+        return three_sections.get('global_significant', []), three_sections.get('recent_significant', [])
+    
     def _calculate_overview_analysis(self, element_sequences: Dict[str, Dict[str, Any]], global_events: List[Dict[str, Any]], recent_events: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate overview analysis from element-level data"""
         
@@ -887,24 +981,27 @@ class Stage6ADataCollector:
             if current_state in ['recent_breakout', 'recent_breakdown', 'mixed_recent_activity']:
                 breakout_states.append(current_state)
             
-            # Analyze volume confirmation from recent events
+            # Analyze volume confirmation from recent events using per-element baselines
             recent_events_list = element_data.get('recent_events', [])
             if recent_events_list:
-                # Check if recent breakouts had high volume
-                for event_str in recent_events_list[-3:]:  # Last 3 events
-                    if 'breakout' in event_str or 'reclaim' in event_str:
-                        # Extract volume from event string
-                        if 'vol:' in event_str:
-                            try:
-                                vol_part = event_str.split('vol:')[1].split(')')[0].replace(',', '')
-                                volume = float(vol_part)
-                                # Check if this is high volume (above 5M for this example)
-                                if volume > 5000000:
-                                    volume_confirmations.append(True)
-                                else:
-                                    volume_confirmations.append(False)
-                            except:
-                                pass
+                # Get per-element volume baseline
+                gate = element_data.get("volume_baseline", {}).get("vol_gate_1p5x")
+                if gate is not None:
+                    # Check if recent breakouts had high volume
+                    for event_str in recent_events_list[-3:]:  # Last 3 events
+                        if 'breakout' in event_str or 'reclaim' in event_str:
+                            # Extract volume from event string
+                            if 'vol:' in event_str:
+                                try:
+                                    vol_part = event_str.split('vol:')[1].split(')')[0].replace(',', '')
+                                    volume = float(vol_part)
+                                    # Use per-element volume gate
+                                    if volume > gate:
+                                        volume_confirmations.append(True)
+                                    else:
+                                        volume_confirmations.append(False)
+                                except:
+                                    pass
             
             # Collect key levels
             if element_type == 'horizontal_line':
@@ -915,13 +1012,14 @@ class Stage6ADataCollector:
                     else:
                         key_levels["support"].append(price)
             elif element_type == 'diagonal_line':
-                # For diagonal lines, use trend_line_type to determine resistance/support
-                if trend_line_type == 'resistance':
-                    # Add a representative price for resistance diagonal
-                    key_levels["resistance"].append(1.12)  # Approximate current resistance level
-                elif trend_line_type == 'support':
-                    # Add a representative price for support diagonal
-                    key_levels["support"].append(0.93)  # Approximate current support level
+                # For diagonal lines, calculate current diagonal price
+                element = self.elements[element_id]
+                current_diagonal_price = self._get_current_diagonal_price(element)
+                if current_diagonal_price > 0:
+                    if trend_line_type == 'resistance':
+                        key_levels["resistance"].append(current_diagonal_price)
+                    elif trend_line_type == 'support':
+                        key_levels["support"].append(current_diagonal_price)
             elif element_type == 'zone':
                 # Get zone data directly from elements
                 element = self.elements.get(element_id, {})
@@ -964,7 +1062,7 @@ class Stage6ADataCollector:
         
         return {
             "breakout_status": breakout_status,
-            "breakout_confirmation": breakout_status in ["broken", "mixed"],
+            "breakout_confirmation": breakout_status in ["broken_out", "mixed"],
             "volume_confirmation": volume_confirmation,
             "momentum_direction": momentum_direction,
             "key_levels": {
@@ -980,11 +1078,25 @@ class Stage6ADataCollector:
             }
         }
     
-    def _get_current_diagonal_price(self, element_id: str, element_sequences: Dict[str, Dict[str, Any]]) -> float:
-        """Get current diagonal price for an element"""
-        # This is a simplified version - in practice, you'd calculate the current diagonal price
-        # For now, return 0 as we don't have the diagonal calculation in this context
-        return 0.0
+    def _get_current_diagonal_price(self, element: Dict[str, Any]) -> float:
+        """Get current diagonal price for an element with caching"""
+        if element.get('element_type') != 'diagonal_line':
+            return 0.0
+            
+        # Use element ID for caching
+        element_id = element.get('id') or id(element)
+        if element_id in self._diag_now_cache:
+            return self._diag_now_cache[element_id]
+            
+        # Get current timestamp
+        ohlcv = self.ohlc_data.get('ohlcv', [])
+        if not ohlcv:
+            return 0.0
+            
+        current_timestamp = ohlcv[-1][0]  # Latest candle timestamp
+        price = self.calculate_diagonal_price_at_time(element, current_timestamp)
+        self._diag_now_cache[element_id] = price
+        return price
     
     def _analyze_current_position(self, current_price: float, key_levels: Dict[str, List[float]]) -> str:
         """Analyze current price position relative to key levels"""
@@ -1030,7 +1142,7 @@ class Stage6ADataCollector:
             return "ready"
         
         # If inside zone, might be ready for range trading
-        if current_position == 'in_zone':
+        if current_position == 'inside_zone':
             return "ready"
         
         # If between levels, wait for retest
@@ -1249,6 +1361,9 @@ class Stage6ADataCollector:
         key_levels = overview_analysis.get('key_levels', {})
         zones = key_levels.get('zones', [])
         
+        # Get ATR for tolerance calculation
+        atr = self._calculate_atr(14) or 0
+        
         if current_position == 'inside_zone' and zones:
             current_price = self.current_price
             for zone in zones:
@@ -1256,15 +1371,45 @@ class Stage6ADataCollector:
                     zone_bottom = zone.get('bottom', 0)
                     # Prefer entry near zone bottom
                     preferred_entry = zone_bottom + (current_price - zone_bottom) * 0.3
+                    # ATR-aware tolerance
+                    tolerance = max(0.01 * self.current_price, 0.5 * atr)
                     return {
                         "preferred": round(preferred_entry, 3),
-                        "tolerance": 0.010
+                        "tolerance": round(tolerance, 6)
                     }
         
+        # ATR-aware tolerance
+        tolerance = max(0.01 * self.current_price, 0.5 * atr)
         return {
             "preferred": self.current_price,
-            "tolerance": 0.010
+            "tolerance": round(tolerance, 6)
         }
+    
+    def _calculate_atr(self, period: int = 14) -> float:
+        """Calculate Average True Range"""
+        ohlcv = self.ohlc_data.get('ohlcv', [])
+        if len(ohlcv) < period + 1:
+            return 0.0
+        
+        true_ranges = []
+        for i in range(1, len(ohlcv)):
+            high = ohlcv[i][2]
+            low = ohlcv[i][3]
+            prev_close = ohlcv[i-1][4]
+            
+            tr1 = high - low
+            tr2 = abs(high - prev_close)
+            tr3 = abs(low - prev_close)
+            
+            true_range = max(tr1, tr2, tr3)
+            true_ranges.append(true_range)
+        
+        if len(true_ranges) < period:
+            return 0.0
+        
+        # Calculate ATR as simple moving average of true ranges
+        recent_trs = true_ranges[-period:]
+        return sum(recent_trs) / len(recent_trs)
     
     def _calculate_risk_metrics(self, overview_analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Calculate risk metrics including suggested stop"""
@@ -1272,7 +1417,8 @@ class Stage6ADataCollector:
         key_levels = overview_analysis.get('key_levels', {})
         zones = key_levels.get('zones', [])
         
-        atr_value = 0.072  # TODO: Calculate actual ATR
+        # Calculate real ATR
+        atr_value = self._calculate_atr(14)
         suggested_stop = None
         
         if current_position == 'inside_zone' and zones:
@@ -1280,13 +1426,13 @@ class Stage6ADataCollector:
             for zone in zones:
                 if zone.get('bottom', 0) <= current_price <= zone.get('top', 0):
                     zone_bottom = zone.get('bottom', 0)
-                    # Conservative stop: zone bottom - 0.5 * ATR
-                    suggested_stop = round(zone_bottom - 0.5 * atr_value, 3)
+                    # ATR-aware stop: zone bottom - max(0.5*ATR, 0.3% of price)
+                    suggested_stop = round(zone_bottom - max(0.5 * atr_value, 0.003 * self.current_price), 6)
                     break
         
         return {
             "atr_n": 14,
-            "atr_value": atr_value,
+            "atr_value": round(atr_value, 6),
             "suggested_stop": suggested_stop,
             "invalidation_rule": "daily_close_below_zone_bottom",
             "position_size_hint": 0.5
@@ -1297,13 +1443,13 @@ class Stage6ADataCollector:
         logger.info("Starting Stage 6A data collection...")
         
         # Calculate all data
-        element_sequences = self._calculate_element_sequences()
+        element_sequences, all_events = self._calculate_element_sequences()
         volume_analysis = self._calculate_volume_analysis(element_sequences)
         volatility_analysis = self._calculate_volatility()
         pattern_start, pattern_end = self._get_pattern_formation_dates()
         
-        # Get global and recent significant events
-        global_events, recent_events = self._get_global_and_recent_events()
+        # Get global and recent significant events from pre-computed all_events
+        global_events, recent_events = self._get_global_and_recent_events_from_all(all_events)
         
         # Calculate overview analysis from element data
         overview_analysis = self._calculate_overview_analysis(element_sequences, global_events, recent_events)
@@ -1323,7 +1469,6 @@ class Stage6ADataCollector:
             "symbol": symbol,
             "quote_asset": quote_asset,
             "timeframe": self.ohlc_data.get('timeframe', None),
-            "side": None,  # Missing - flagged
             "pipeline": "vision",
             "source_tags": ["chart", "vision"],
             "content_hash": None,  # TODO: Calculate hash
@@ -1359,7 +1504,6 @@ class Stage6ADataCollector:
             "pattern_quality": None,  # LLM
             "market_structure": None,  # LLM
             "strategy_dsl": None,  # LLM
-            "rr_estimate": None,  # TODO: Calculate from elements
             
             # Price Position Analysis - IMPROVED STRUCTURE
             "price_position_analysis": {
@@ -1443,12 +1587,13 @@ def main():
     # Print summary
     print(f"\nStage 6A Analysis Summary:")
     print(f"Symbol: {analysis_data.get('symbol', 'Unknown')}")
-    print(f"Current Price: {analysis_data.get('current_price_position', 'Unknown')}")
+    print(f"Current Price: {analysis_data.get('current_price', 'Unknown')}")
+    print(f"Current Position: {analysis_data.get('price_position_analysis', {}).get('current_position', 'Unknown')}")
     print(f"Execution Readiness: {analysis_data.get('execution_readiness', 'Unknown')}")
     print(f"Breakout Status: {analysis_data.get('breakout_status', 'Unknown')}")
     # Count elements (excluding the analysis metadata fields)
     analysis_fields = {'breakout_confirmation', 'retest_status', 'volume_confirmation', 'momentum_direction'}
-    element_count = len([k for k in analysis_data.get('price_position_analysis', {}).keys() if k not in analysis_fields])
+    element_count = len([k for k in analysis_data.get('price_position_analysis', {}).get('elements', {}).keys() if k not in analysis_fields])
     print(f"Elements Analyzed: {element_count}")
     
     if analysis_data.get('missing_data_flags'):

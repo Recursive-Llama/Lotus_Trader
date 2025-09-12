@@ -8,6 +8,7 @@ and creates predictions with pattern grouping and similarity matching.
 import asyncio
 import logging
 import json
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
@@ -663,6 +664,27 @@ RESPONSE FORMAT (JSON):
         
         return cluster_keys
     
+    def _convert_cluster_keys_to_jsonb(self, cluster_keys: List[str]) -> List[Dict[str, Any]]:
+        """Convert cluster keys to JSONB format for database storage"""
+        
+        jsonb_cluster_keys = []
+        
+        for cluster_key in cluster_keys:
+            # Parse cluster key format: "cluster_type_cluster_value"
+            if '_' in cluster_key:
+                parts = cluster_key.split('_', 1)
+                cluster_type = parts[0]
+                cluster_value = parts[1]
+                
+                jsonb_cluster_keys.append({
+                    'cluster_type': cluster_type,
+                    'cluster_key': cluster_value,
+                    'braid_level': 1,
+                    'consumed': False
+                })
+        
+        return jsonb_cluster_keys
+    
     async def create_prediction_review_strand(self, prediction: Dict[str, Any], outcome: Dict[str, Any]) -> str:
         """Create prediction review strand for clustering and learning with cluster keys and original pattern links"""
         try:
@@ -680,7 +702,7 @@ RESPONSE FORMAT (JSON):
             
             # Create prediction review strand
             review_strand = {
-                'id': f"prediction_review_{int(datetime.now().timestamp())}",
+                'id': f"prediction_review_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}",
                 'kind': 'prediction_review',
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tags': ['cil', 'prediction_review', 'learning'],
@@ -712,18 +734,26 @@ RESPONSE FORMAT (JSON):
                 }
             }
             
-            # Store in database
-            await self.supabase_manager.execute_query("""
-                INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, [
-                review_strand['id'],
-                review_strand['kind'],
-                review_strand['created_at'],
-                review_strand['tags'],
-                json.dumps(review_strand['content']),
-                json.dumps(review_strand['metadata'])
-            ])
+            # Store in database using proper Supabase client method
+            strand_data = {
+                'id': review_strand['id'],
+                'module': 'alpha',
+                'kind': review_strand['kind'],
+                'symbol': review_strand['content'].get('asset', 'UNKNOWN'),
+                'timeframe': review_strand['content'].get('timeframe', '1h'),
+                'tags': review_strand['tags'],
+                'created_at': review_strand['created_at'],
+                'updated_at': review_strand['created_at'],
+                'braid_level': 1,
+                'lesson': '',
+                'content': review_strand['content'],
+                'module_intelligence': review_strand['metadata'],
+                'cluster_key': self._convert_cluster_keys_to_jsonb(cluster_keys)  # Convert cluster keys to JSONB format
+            }
+            
+            result = self.supabase_manager.insert_strand(strand_data)
+            if not result:
+                raise Exception("Failed to insert strand")
             
             self.logger.info(f"Created prediction review strand: {review_strand['id']}")
             return review_strand['id']

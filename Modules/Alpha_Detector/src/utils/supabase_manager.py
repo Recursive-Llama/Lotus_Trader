@@ -133,23 +133,29 @@ class SupabaseManager:
             List of result rows as dictionaries
         """
         try:
+            import json
+            
             # Clean up the query
             cleaned_query = query.strip()
             params = params or []
+            
+            # Convert params to JSONB format for RPC functions
+            # The RPC function expects a JSONB array, not a JSON string
+            params_jsonb = params  # Send as Python list, Supabase will convert to JSONB
             
             # Try RPC approach first
             try:
                 if cleaned_query.upper().startswith('SELECT'):
                     result = self.client.rpc('execute_select_query', {
                         'query_text': cleaned_query,
-                        'query_params': params
+                        'query_params': params_jsonb
                     }).execute()
                     return result.data if result.data else []
                     
                 elif cleaned_query.upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
                     result = self.client.rpc('execute_modify_query', {
                         'query_text': cleaned_query,
-                        'query_params': params
+                        'query_params': params_jsonb
                     }).execute()
                     return result.data if result.data else []
                     

@@ -79,7 +79,7 @@ STAGE 6A COMPREHENSIVE ANALYSIS:
 - Execution readiness: {stage6a_data.get('execution_readiness', 'Unknown')}
 - Side: {stage6a_data.get('side', 'Unknown')}
 
-VOLUME ANALYSIS:
+VOLUME ANALYSIS (with specific breakout thresholds):
 {json.dumps(stage6a_data.get('token_context', {}).get('volume_analysis', {}), indent=2)}
 
 VOLATILITY ANALYSIS:
@@ -108,6 +108,12 @@ RR ESTIMATE:
 
 ELEMENT SEQUENCES (detailed event tracking):
 {json.dumps(stage6a_data.get('price_position_analysis', {}).get('elements', {}), indent=2)}
+
+BREAKOUT VOLUME THRESHOLDS (for conditional scenarios):
+- Average breakout volume: {stage6a_data.get('token_context', {}).get('volume_analysis', {}).get('breakout_volume_analysis', {}).get('average_breakout_volume', 'Unknown')}
+- Max breakout volume: {stage6a_data.get('token_context', {}).get('volume_analysis', {}).get('breakout_volume_analysis', {}).get('max_breakout_volume', 'Unknown')}
+- Recent average volume: {stage6a_data.get('token_context', {}).get('volume_analysis', {}).get('recent_average', 'Unknown')}
+- Current volume: {stage6a_data.get('token_context', {}).get('volume_analysis', {}).get('current_volume', 'Unknown')}
 """
     
     async def _call_llm(self, prompt: str, data: str) -> str:
