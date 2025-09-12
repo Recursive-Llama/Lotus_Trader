@@ -120,8 +120,8 @@ class ConditionalTradingPlannerAgent:
         try:
             self.logger.info("Starting CTP learning cycle")
             
-            # Process all trade outcomes for learning
-            result = await self.learning_system.process_all_trade_outcomes()
+            # Process trade outcomes for learning using CTP learning system
+            result = await self.learning_system.process_trade_outcome_learning()
             
             self.logger.info(f"CTP learning cycle completed: {result}")
             return result
@@ -194,11 +194,14 @@ class ConditionalTradingPlannerAgent:
             trading_plans = self.supabase_manager.client.table('ad_strands').select('id').eq('kind', 'conditional_trading_plan').execute()
             trade_outcomes = self.supabase_manager.client.table('ad_strands').select('id').eq('kind', 'trade_outcome').execute()
             
+            # Count learning braids (trade_outcome strands with braid_level > 1)
+            learning_braids = self.supabase_manager.client.table('ad_strands').select('id').eq('kind', 'trade_outcome').gt('braid_level', 1).execute()
+            
             return {
                 "prediction_reviews": len(prediction_reviews.data),
                 "trading_plans": len(trading_plans.data),
                 "trade_outcomes": len(trade_outcomes.data),
-                "learning_braids": len([s for s in trade_outcomes.data if s.get('braid_level', 1) > 1])
+                "learning_braids": len(learning_braids.data)
             }
         except Exception as e:
             self.logger.warning(f"Error getting system statistics: {e}")

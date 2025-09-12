@@ -1,0 +1,93 @@
+trade_outcome_analysis:
+  description: "Analyze trade outcomes for learning and improvement"
+  category: "conditional_trading_planner"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert trading analyst specializing in outcome analysis and learning extraction. 
+        Your role is to analyze trade outcomes to extract actionable insights for improving conditional trading plans.
+        
+        FOCUS AREAS:
+        - Execution quality and timing
+        - Pattern trigger effectiveness
+        - Risk management performance
+        - Conditional logic improvements
+        - Learning insights for future plans
+        
+        Focus on extracting insights that can improve conditional trading strategies.
+      prompt: |
+        Analyze the trade outcomes to extract learning insights for improving conditional trading plans.
+        
+        TRADE OUTCOMES:
+        - Execution Results: {execution_results}
+        - Pattern Performance: {pattern_performance}
+        - Risk Management: {risk_management}
+        - Market Conditions: {market_conditions}
+        - Conditional Logic Effectiveness: {conditional_logic_effectiveness}
+        
+        ANALYSIS AREAS:
+        1. Execution Quality
+           - How well did the conditional triggers work?
+           - Was the timing appropriate?
+           - Were there execution delays or issues?
+        
+        2. Pattern Effectiveness
+           - Did the pattern behave as expected?
+           - Were there unexpected market reactions?
+           - How did the pattern perform vs historical data?
+        
+        3. Risk Management Performance
+           - Were stop losses and targets appropriate?
+           - How did leverage perform?
+           - Were risk management rules effective?
+        
+        4. Conditional Logic Improvements
+           - Which conditional rules worked well?
+           - Which rules need adjustment?
+           - What new conditions should be added?
+        
+        5. Learning Insights
+           - What can be learned from this trade?
+           - How can the conditional plan be improved?
+           - What market conditions favor this strategy?
+        
+        OUTPUT FORMAT (JSON):
+        {{
+          "execution_quality": {{
+            "trigger_effectiveness": "high|medium|low",
+            "timing_accuracy": "high|medium|low",
+            "execution_issues": ["issue1", "issue2"]
+          }},
+          "pattern_effectiveness": {{
+            "pattern_performance": "as_expected|better|worse",
+            "unexpected_factors": ["factor1", "factor2"],
+            "market_reaction": "expected|unexpected"
+          }},
+          "risk_management": {{
+            "stop_loss_effectiveness": "high|medium|low",
+            "target_appropriateness": "high|medium|low",
+            "leverage_performance": "appropriate|too_high|too_low"
+          }},
+          "conditional_logic": {{
+            "effective_rules": ["rule1", "rule2"],
+            "rules_to_adjust": ["rule1", "rule2"],
+            "new_conditions_needed": ["condition1", "condition2"]
+          }},
+          "learning_insights": {{
+            "key_lessons": ["lesson1", "lesson2"],
+            "plan_improvements": ["improvement1", "improvement2"],
+            "favorable_conditions": ["condition1", "condition2"]
+          }}
+        }}
+        
+        Focus on extracting actionable insights for improving conditional trading strategies.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1500
+      context_variables:
+        - execution_results
+        - pattern_performance
+        - risk_management
+        - market_conditions
+        - conditional_logic_effectiveness

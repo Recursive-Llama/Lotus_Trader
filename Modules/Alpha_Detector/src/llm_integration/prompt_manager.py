@@ -43,24 +43,40 @@ class PromptManager:
         logger.info(f"PromptManager initialized with {len(self.prompts)} templates")
     
     def _load_prompt_templates(self):
-        """Load all prompt templates from the prompts directory"""
+        """Load all prompt templates from the prompts directory and subdirectories"""
         
         if not self.prompts_dir.exists():
             logger.warning(f"Prompts directory does not exist: {self.prompts_dir}")
             return
         
+        # Load templates from root directory
         for yaml_file in self.prompts_dir.glob("*.yaml"):
-            try:
-                with open(yaml_file, 'r', encoding='utf-8') as f:
-                    templates = yaml.safe_load(f)
-                
-                if templates and 'name' in templates:
-                    template_name = templates['name']
-                    self.prompts[template_name] = templates
-                    logger.debug(f"Loaded prompt template: {template_name}")
-                
-            except Exception as e:
-                logger.error(f"Error loading prompt template from {yaml_file}: {e}")
+            self._load_template_file(yaml_file)
+        
+        # Load templates from subdirectories
+        for subdir in self.prompts_dir.iterdir():
+            if subdir.is_dir():
+                for yaml_file in subdir.glob("*.yaml"):
+                    self._load_template_file(yaml_file)
+    
+    def _load_template_file(self, yaml_file: Path):
+        """Load templates from a single YAML file"""
+        try:
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                templates = yaml.safe_load(f)
+            
+            if not templates:
+                return
+            
+            # Handle both single template and multiple templates in one file
+            if isinstance(templates, dict):
+                for template_name, template_data in templates.items():
+                    if isinstance(template_data, dict):
+                        self.prompts[template_name] = template_data
+                        logger.debug(f"Loaded prompt template: {template_name}")
+            
+        except Exception as e:
+            logger.error(f"Error loading prompt template from {yaml_file}: {e}")
     
     def get_prompt(self, template_name: str, version: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -123,7 +139,7 @@ class PromptManager:
         """
         
         template = self.get_prompt(template_name, version)
-        prompt_text = template.get('template', '')
+        prompt_text = template.get('prompt', '')
         
         try:
             # Format the prompt with context using safe substitution

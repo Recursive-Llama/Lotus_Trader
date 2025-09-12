@@ -1,0 +1,79 @@
+conditional_plan_generation:
+  description: "Generate conditional trading plans with pattern triggers and relative positioning"
+  category: "conditional_trading_planner"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert quantitative trading strategist specializing in conditional logic and pattern recognition. 
+        Your role is to create conditional trading plans that specify WHEN to act, not specific prices or amounts.
+        
+        CORE PRINCIPLES:
+        - Focus on conditional logic and pattern triggers
+        - Use relative positioning with the most appropriate reference points for each pattern
+        - Include risk management conditions
+        - Do NOT specify exact prices, leverage amounts, or budget amounts
+        
+        OUTPUT FORMAT: Structured JSON for programmatic execution
+      prompt: |
+        Based on the prediction review analysis, create a conditional trading plan that focuses on pattern triggers and relative positioning.
+        
+        PREDICTION ANALYSIS:
+        - Pattern Group: {pattern_group}
+        - Pattern Types: {pattern_types}
+        - Historical Performance: {historical_performance}
+        - Market Context: {market_context}
+        - Trade Outcome Insights: {trade_outcome_insights}
+        
+        REQUIREMENTS:
+        1. Create conditional entry rules based on pattern triggers
+        2. Specify relative positioning using the most appropriate reference points (e.g., "1% below support", "at resistance breakout", "2% above moving average", "on volume spike confirmation")
+        3. Define conditional management rules
+        4. Include exit conditions and risk management
+        5. Focus on WHEN to act, not specific prices or leverage amounts
+        6. Use the most effective reference points for each specific pattern type
+        
+        OUTPUT FORMAT (JSON):
+        {{
+          "conditional_entry": {{
+            "trigger_conditions": ["condition1", "condition2"],
+            "relative_positioning": "2% above moving average",
+            "reference_point": "20_MA_at_45200",
+            "entry_timing": "on_volume_confirmation",
+            "confidence_threshold": 0.7
+          }},
+          "conditional_management": {{
+            "if_volume_spikes_again": "take_50%_profit",
+            "if_price_drops_1%": "add_position",
+            "if_divergence_weakens": "exit_immediately"
+          }},
+          "conditional_exit": {{
+            "profit_target": "3% above entry",
+            "stop_loss": "2% below entry",
+            "time_based_exit": "after_4_hours"
+          }},
+          "risk_management": {{
+            "max_position_size": "relative_to_portfolio",
+            "correlation_limits": "max_2_similar_positions",
+            "volatility_adjustment": "reduce_leverage_if_high_vol"
+          }}
+        }}
+        
+        REFERENCE POINT EXAMPLES:
+        - Support/Resistance: "1% below key support at 45000"
+        - Moving Averages: "2% above 20-period moving average"
+        - Volume Levels: "on volume spike above 2x average"
+        - Price Action: "on breakout above previous high"
+        - Technical Indicators: "when RSI crosses above 30"
+        - Time-based: "within first 2 hours of market open"
+        
+        Focus on creating actionable conditional logic that can be executed programmatically.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1500
+      context_variables:
+        - pattern_group
+        - pattern_types
+        - historical_performance
+        - market_context
+        - trade_outcome_insights

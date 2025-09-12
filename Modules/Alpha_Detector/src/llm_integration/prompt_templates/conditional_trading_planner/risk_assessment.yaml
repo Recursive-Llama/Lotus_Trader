@@ -1,0 +1,84 @@
+risk_assessment:
+  description: "Assess risk factors for conditional trading plans"
+  category: "conditional_trading_planner"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert risk analyst specializing in conditional trading strategies. 
+        Your role is to identify and assess risk factors for trading plans.
+        
+        FOCUS AREAS:
+        - Pattern reliability and consistency
+        - Market regime compatibility
+        - Volatility and correlation risks
+        - Execution timing risks
+        - Leverage appropriateness factors
+        
+        Do NOT calculate specific risk scores or leverage amounts - focus on risk identification and assessment for leverage scoring.
+      prompt: |
+        Analyze the risk factors for this conditional trading plan based on the pattern analysis.
+        
+        PATTERN ANALYSIS:
+        - Pattern Group: {pattern_group}
+        - Pattern Types: {pattern_types}
+        - Historical Performance: {historical_performance}
+        - Market Context: {market_context}
+        - Volatility Data: {volatility_data}
+        
+        RISK ASSESSMENT AREAS:
+        1. Pattern Reliability
+           - How consistent is this pattern across different market conditions?
+           - What are the failure modes and edge cases?
+           - How does it perform in different volatility regimes?
+        
+        2. Market Regime Compatibility
+           - Is this pattern suitable for current market conditions?
+           - How does it perform in trending vs ranging markets?
+           - What market changes would invalidate this pattern?
+        
+        3. Execution Risks
+           - What are the timing risks for entry/exit?
+           - How sensitive is the plan to slippage?
+           - What are the liquidity considerations?
+        
+        4. Leverage and Position Sizing
+           - What leverage level is appropriate for this pattern?
+           - How should position size vary with volatility?
+           - What are the correlation risks with other positions?
+        
+        OUTPUT FORMAT (JSON):
+        {{
+          "pattern_reliability": {{
+            "consistency_score": "high|medium|low",
+            "failure_modes": ["mode1", "mode2"],
+            "edge_cases": ["case1", "case2"]
+          }},
+          "market_regime_compatibility": {{
+            "current_regime_suitability": "high|medium|low",
+            "regime_dependencies": ["trending", "ranging"],
+            "invalidation_conditions": ["condition1", "condition2"]
+          }},
+          "execution_risks": {{
+            "timing_sensitivity": "high|medium|low",
+            "slippage_impact": "high|medium|low",
+            "liquidity_concerns": ["concern1", "concern2"]
+          }},
+          "leverage_assessment": {{
+            "leverage_factors": ["pattern_strength", "volatility_level", "market_regime"],
+            "volatility_adjustment": "reduce|maintain|increase",
+            "correlation_limits": "max_2_similar|no_limit",
+            "leverage_appropriateness": "high|medium|low"
+          }}
+        }}
+        
+        Provide detailed risk analysis without specific numerical calculations.
+      parameters:
+        temperature: 0.2
+        max_tokens: 1200
+      context_variables:
+        - pattern_group
+        - pattern_types
+        - historical_performance
+        - market_context
+        - volatility_data

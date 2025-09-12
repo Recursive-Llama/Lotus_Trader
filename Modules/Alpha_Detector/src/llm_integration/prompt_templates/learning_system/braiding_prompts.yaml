@@ -1,0 +1,217 @@
+raw_data_braiding:
+  description: "Generate braids from raw data intelligence strands"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert market analyst analyzing raw data intelligence patterns. 
+        Your role is to compress similar market intelligence strands into actionable braid lessons.
+      prompt: |
+        STRANDS TO ANALYZE:
+        {strand_summary}
+        
+        TASK: Compress these similar market intelligence strands into a single, actionable braid lesson.
+        
+        Focus on:
+        1. What market patterns do these strands reveal?
+        2. What are the common characteristics of successful signals?
+        3. What conditions lead to these patterns?
+        4. What actionable insights can be extracted?
+        5. What are the key risk factors to watch?
+        
+        Format your response as a structured lesson with:
+        - Pattern Summary
+        - Key Conditions
+        - Actionable Insights
+        - Risk Factors
+        - Confidence Level
+        
+        Keep it concise but comprehensive.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1000
+      context_variables:
+        - strand_summary
+
+cil_braiding:
+  description: "Generate braids from central intelligence layer strands"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert strategic analyst synthesizing central intelligence layer insights. 
+        Your role is to create higher-level strategic insights from prediction review strands.
+      prompt: |
+        PREDICTION REVIEW STRANDS:
+        {strand_summary}
+        
+        TASK: Synthesize these prediction review strands into a strategic braid lesson.
+        
+        Focus on:
+        1. What strategic patterns emerge from these predictions?
+        2. How do these predictions relate to broader market intelligence?
+        3. What are the common success factors across predictions?
+        4. What strategic insights can guide future analysis?
+        5. What are the key uncertainties and risks?
+        
+        Format your response as a strategic lesson with:
+        - Strategic Summary
+        - Pattern Relationships
+        - Success Factors
+        - Strategic Insights
+        - Risk Considerations
+        
+        Focus on strategic-level insights that guide future analysis.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1200
+      context_variables:
+        - strand_summary
+
+conditional_trading_plan_braiding:
+  description: "Generate braids from conditional trading plan strands"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert conditional trading strategist analyzing trading plan performance. 
+        Your role is to extract strategic insights from conditional trading plan execution strands.
+      prompt: |
+        CONDITIONAL TRADING PLAN STRANDS:
+        {strand_summary}
+        
+        TASK: Synthesize these conditional trading plan strands into a strategic braid lesson.
+        
+        Focus on:
+        1. What conditional logic patterns emerge from these plans?
+        2. How do different reference points (support/resistance, MAs, volume) perform?
+        3. What are the common success factors in conditional plan execution?
+        4. What strategic insights can guide future conditional plan creation?
+        5. What are the key execution risks and challenges with conditional logic?
+        
+        Format your response as a conditional trading strategy lesson with:
+        - Conditional Logic Patterns
+        - Reference Point Performance
+        - Success Factors
+        - Strategic Insights
+        - Execution Considerations
+        
+        Focus on insights that improve future conditional trading plan creation.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1200
+      context_variables:
+        - strand_summary
+
+mixed_braiding:
+  description: "Generate braids from mixed strand types"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert system analyst synthesizing mixed intelligence strands. 
+        Your role is to create comprehensive insights from diverse strand types.
+      prompt: |
+        MIXED STRANDS:
+        {strand_summary}
+        
+        TASK: Synthesize these mixed strands into a comprehensive braid lesson.
+        
+        Focus on:
+        1. What cross-cutting patterns emerge across strand types?
+        2. How do different intelligence types complement each other?
+        3. What are the common themes and insights?
+        4. What strategic guidance emerges from the synthesis?
+        5. What are the key integration opportunities?
+        
+        Format your response as a comprehensive lesson with:
+        - Cross-Cutting Patterns
+        - Integration Insights
+        - Common Themes
+        - Strategic Guidance
+        - Integration Opportunities
+        
+        Focus on insights that emerge from the synthesis of different intelligence types.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1500
+      context_variables:
+        - strand_summary
+
+universal_braiding:
+  description: "Generate universal braids from any strand type"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert system analyst creating universal insights from any strand type. 
+        Your role is to extract fundamental patterns and principles.
+      prompt: |
+        STRANDS TO ANALYZE:
+        {strand_summary}
+        
+        TASK: Extract universal patterns and principles from these strands.
+        
+        Focus on:
+        1. What fundamental patterns emerge?
+        2. What are the core principles that apply across contexts?
+        3. What universal insights can guide future analysis?
+        4. What are the fundamental success factors?
+        5. What are the core risks and challenges?
+        
+        Format your response as a universal lesson with:
+        - Fundamental Patterns
+        - Core Principles
+        - Universal Insights
+        - Success Factors
+        - Core Risks
+        
+        Focus on insights that apply universally across different contexts and strand types.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1000
+      context_variables:
+        - strand_summary
+
+trade_outcome_braiding:
+  description: "Generate braids from trade outcome strands for CTP learning"
+  category: "learning_system"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert trade execution analyst specializing in conditional trading plan performance. 
+        Your role is to extract learning insights from trade outcome strands to improve conditional trading strategies.
+      prompt: |
+        TRADE OUTCOME STRANDS:
+        {strand_summary}
+        
+        TASK: Synthesize these trade outcome strands into actionable learning insights for conditional trading plan improvement.
+        
+        Focus on:
+        1. What conditional logic patterns led to successful trades?
+        2. How did different reference points (support/resistance, MAs, volume) perform in execution?
+        3. What were the common failure modes in conditional plan execution?
+        4. How did leverage scores correlate with actual trade performance?
+        5. What execution timing insights can improve future conditional plans?
+        6. What risk management patterns were most effective?
+        
+        Format your response as a trade execution learning lesson with:
+        - Successful Conditional Logic Patterns
+        - Reference Point Performance Analysis
+        - Execution Failure Modes
+        - Leverage Score Effectiveness
+        - Timing and Risk Management Insights
+        - Actionable Improvements for Future Plans
+        
+        Focus on extracting specific, actionable insights that directly improve conditional trading plan creation and execution.
+      parameters:
+        temperature: 0.3
+        max_tokens: 1500
+      context_variables:
+        - strand_summary

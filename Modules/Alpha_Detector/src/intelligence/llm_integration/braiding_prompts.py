@@ -16,6 +16,7 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
 import json
+from .prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +26,26 @@ class BraidingPrompts:
     Manages LLM prompts for braid creation and learning insights
     """
     
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, prompt_manager=None):
         """
         Initialize braiding prompts
         
         Args:
             llm_client: LLM client for generating braids (optional)
+            prompt_manager: Prompt manager for centralized prompt handling
         """
         self.llm_client = llm_client
+        self.prompt_manager = prompt_manager or PromptManager()
         self.logger = logging.getLogger(__name__)
         
-        # Prompt templates for different braid types
+        # Prompt template names for different braid types
         self.prompt_templates = {
-            'raw_data_intelligence': self._get_raw_data_prompt,
-            'central_intelligence_layer': self._get_cil_prompt,
-            'trading_plan': self._get_trading_plan_prompt,
-            'mixed_braid': self._get_mixed_braid_prompt,
-            'universal_braid': self._get_universal_braid_prompt
+            'raw_data_intelligence': 'raw_data_braiding',
+            'central_intelligence_layer': 'cil_braiding',
+            'conditional_trading_plan': 'conditional_trading_plan_braiding',
+            'trade_outcome': 'trade_outcome_braiding',
+            'mixed_braid': 'mixed_braiding',
+            'universal_braid': 'universal_braiding'
         }
     
     async def generate_braid_lesson(self, strands: List[Dict[str, Any]], braid_type: str = 'universal_braid') -> str:
@@ -60,8 +64,16 @@ class BraidingPrompts:
                 return self._generate_fallback_lesson(strands, braid_type)
             
             # Get appropriate prompt template
-            prompt_func = self.prompt_templates.get(braid_type, self._get_universal_braid_prompt)
-            prompt = prompt_func(strands)
+            template_name = self.prompt_templates.get(braid_type, 'universal_braiding')
+            
+            # Prepare context for prompt formatting
+            strand_summary = self._summarize_strands(strands)
+            context = {
+                'strand_summary': strand_summary
+            }
+            
+            # Format prompt using PromptManager
+            prompt = self.prompt_manager.format_prompt(template_name, context)
             
             # Generate lesson using LLM
             response = await self.llm_client.generate_completion(

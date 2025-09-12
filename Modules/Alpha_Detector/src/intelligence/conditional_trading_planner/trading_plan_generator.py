@@ -9,6 +9,7 @@ import logging
 import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
+from ...llm_integration.prompt_manager import PromptManager
 
 
 class TradingPlanGenerator:
@@ -22,16 +23,20 @@ class TradingPlanGenerator:
     4. Store trading plans as strands
     """
     
-    def __init__(self, supabase_manager, llm_client):
+    def __init__(self, supabase_manager, llm_client, learning_system=None, prompt_manager=None):
         """
         Initialize trading plan generator.
         
         Args:
             supabase_manager: Database manager for strand operations
             llm_client: LLM client for plan generation
+            learning_system: CTP learning system for trade outcome insights
+            prompt_manager: Prompt manager for centralized prompt handling
         """
         self.supabase_manager = supabase_manager
         self.llm_client = llm_client
+        self.learning_system = learning_system
+        self.prompt_manager = prompt_manager or PromptManager()
         self.logger = logging.getLogger(f"{__name__}.plan_generator")
     
     async def create_conditional_trading_plan(self, analysis: Dict[str, Any]) -> Optional[str]:
@@ -47,18 +52,21 @@ class TradingPlanGenerator:
         try:
             self.logger.info(f"Creating trading plan for: {analysis.get('prediction_review_id')}")
             
-            # Step 1: Generate trading rules based on analysis
-            trading_rules = await self._generate_trading_rules(analysis)
+            # Step 1: Get trade outcome learning insights for the same clusters
+            trade_outcome_insights = await self._get_trade_outcome_insights(analysis)
             
-            # Step 2: Generate management rules
-            management_rules = await self._generate_management_rules(analysis)
+            # Step 2: Generate trading rules based on analysis and trade outcome insights
+            trading_rules = await self._generate_trading_rules(analysis, trade_outcome_insights)
             
-            # Step 3: Generate performance expectations
-            performance_expectations = self._generate_performance_expectations(analysis)
+            # Step 3: Generate management rules
+            management_rules = await self._generate_management_rules(analysis, trade_outcome_insights)
             
-            # Step 4: Create trading plan strand
+            # Step 4: Generate performance expectations
+            performance_expectations = self._generate_performance_expectations(analysis, trade_outcome_insights)
+            
+            # Step 5: Create trading plan strand
             trading_plan_id = await self._create_trading_plan_strand(
-                analysis, trading_rules, management_rules, performance_expectations
+                analysis, trading_rules, management_rules, performance_expectations, trade_outcome_insights
             )
             
             if trading_plan_id:
@@ -70,12 +78,45 @@ class TradingPlanGenerator:
             self.logger.error(f"Error creating trading plan: {e}")
             return None
     
-    async def _generate_trading_rules(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_trade_outcome_insights(self, analysis: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Generate trading rules based on pattern analysis and historical performance.
+        Get trade outcome learning insights for the same clusters as the prediction review.
         
         Args:
             analysis: Analysis data from PredictionReviewAnalyzer
+            
+        Returns:
+            Dictionary mapping cluster keys to learning insights
+        """
+        try:
+            if not self.learning_system:
+                self.logger.warning("No learning system available for trade outcome insights")
+                return {}
+            
+            # Get cluster keys from prediction review
+            cluster_keys = analysis.get('prediction_review_cluster_keys', [])
+            
+            if not cluster_keys:
+                self.logger.warning("No cluster keys available for trade outcome insights")
+                return {}
+            
+            # Get learning insights for these clusters
+            insights = await self.learning_system.get_learning_insights_for_clusters(cluster_keys)
+            
+            self.logger.info(f"Retrieved trade outcome insights for {len(insights)} clusters")
+            return insights
+            
+        except Exception as e:
+            self.logger.error(f"Error getting trade outcome insights: {e}")
+            return {}
+    
+    async def _generate_trading_rules(self, analysis: Dict[str, Any], trade_outcome_insights: Dict[str, List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Generate trading rules based on pattern analysis, historical performance, and trade outcome insights.
+        
+        Args:
+            analysis: Analysis data from PredictionReviewAnalyzer
+            trade_outcome_insights: Trade outcome learning insights for the same clusters
             
         Returns:
             Dictionary with trading rules
@@ -95,6 +136,10 @@ class TradingPlanGenerator:
             # Add advanced rules if historical data is available
             if historical_performance:
                 trading_rules.update(self._generate_advanced_rules(pattern_info, historical_performance))
+            
+            # Incorporate trade outcome learning insights
+            if trade_outcome_insights:
+                trading_rules.update(self._incorporate_trade_outcome_insights(trade_outcome_insights))
             
             return trading_rules
             

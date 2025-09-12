@@ -1,25 +1,45 @@
 """
-Central Intelligence Layer (CIL) - Simplified
+CIL Learning System Package
 
-Simplified CIL with 5 core components:
-1. Prediction Engine - Main prediction creation and tracking
-2. Learning System - Continuous learning from predictions  
-3. Prediction Tracker - Track all predictions and outcomes
-4. Outcome Analysis - Analyze completed predictions
-5. Conditional Plan Manager - Create trading plans from confident patterns
+This package provides CIL-specific learning capabilities that build on the universal learning foundation.
+It includes trading-specific clustering, prediction tracking, outcome analysis, and conditional plan management.
 
-Advanced CIL components have been moved to advanced_cil module.
+Modules:
+- cil_clustering: CIL-specific two-tier clustering with trading features
+- prediction_tracker: Tracks trading predictions until completion
+- outcome_analysis_engine: Analyzes prediction outcomes for learning
+- conditional_plan_manager: Manages conditional trading plans and evolution
 """
 
-from .simplified_cil import SimplifiedCIL
-from .prediction_engine import PredictionEngine, PatternGroupingSystem, PredictionTracker
+from .cil_clustering import CILClustering, CILPatternClusterer
+from .prediction_tracker import PredictionTracker, PredictionStatus, PredictionOutcome, PredictionData
+from .outcome_analysis_engine import OutcomeAnalysisEngine, AnalysisType, AnalysisResult, PredictionOutcome as OutcomeAnalysisPredictionOutcome
+from .conditional_plan_manager import ConditionalPlanManager, PlanStatus, PlanType, ConditionalPlan
+from .cil_learning_system import CILLearningSystem
 
 __all__ = [
-    'SimplifiedCIL',
-    'PredictionEngine', 
-    'PatternGroupingSystem',
-    'PredictionTracker'
+    # CIL Clustering
+    'CILClustering',
+    'CILPatternClusterer',
+    
+    # Prediction Tracking
+    'PredictionTracker',
+    'PredictionStatus',
+    'PredictionOutcome',
+    'PredictionData',
+    
+    # Outcome Analysis
+    'OutcomeAnalysisEngine',
+    'AnalysisType',
+    'AnalysisResult',
+    'OutcomeAnalysisPredictionOutcome',
+    
+    # Conditional Plan Management
+    'ConditionalPlanManager',
+    'PlanStatus',
+    'PlanType',
+    'ConditionalPlan',
+    
+    # CIL Learning System
+    'CILLearningSystem'
 ]
-
-__version__ = "2.0.0"
-__author__ = "Lotus Trader Team"

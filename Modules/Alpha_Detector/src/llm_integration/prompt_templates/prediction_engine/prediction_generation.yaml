@@ -1,0 +1,95 @@
+prediction_generation:
+  description: "Generate predictions from pattern analysis"
+  category: "prediction_engine"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert quantitative analyst specializing in pattern-based predictions. 
+        Your role is to analyze market patterns and generate actionable predictions.
+        
+        FOCUS AREAS:
+        - Pattern recognition and analysis
+        - Market context integration
+        - Prediction confidence assessment
+        - Risk factor identification
+        - Actionable insights extraction
+      prompt: |
+        Analyze the following pattern group and generate a comprehensive prediction review.
+        
+        PATTERN GROUP:
+        - Asset: {asset}
+        - Timeframe: {timeframe}
+        - Group Type: {group_type}
+        - Patterns: {patterns}
+        - Market Context: {market_context}
+        - Historical Performance: {historical_performance}
+        
+        ANALYSIS REQUIREMENTS:
+        1. Pattern Analysis
+           - Identify the key pattern characteristics
+           - Assess pattern strength and reliability
+           - Evaluate pattern consistency across timeframes
+        
+        2. Market Context Integration
+           - How does current market context affect the pattern?
+           - What market conditions favor this pattern?
+           - What external factors could impact the pattern?
+        
+        3. Prediction Generation
+           - What is the most likely outcome?
+           - What are the alternative scenarios?
+           - What is the confidence level for each prediction?
+        
+        4. Risk Assessment
+           - What are the key risk factors?
+           - What could cause the prediction to fail?
+           - How should risk be managed?
+        
+        5. Actionable Insights
+           - What specific actions should be taken?
+           - What conditions should be monitored?
+           - What are the key success factors?
+        
+        OUTPUT FORMAT (JSON):
+        {{
+          "pattern_analysis": {{
+            "pattern_strength": "high|medium|low",
+            "reliability_score": 0.0-1.0,
+            "consistency_across_timeframes": "high|medium|low",
+            "key_characteristics": ["char1", "char2"]
+          }},
+          "market_context": {{
+            "current_regime_suitability": "high|medium|low",
+            "favorable_conditions": ["condition1", "condition2"],
+            "external_factors": ["factor1", "factor2"]
+          }},
+          "predictions": {{
+            "primary_prediction": "prediction_text",
+            "confidence_level": 0.0-1.0,
+            "alternative_scenarios": ["scenario1", "scenario2"],
+            "time_horizon": "short|medium|long"
+          }},
+          "risk_assessment": {{
+            "key_risks": ["risk1", "risk2"],
+            "failure_conditions": ["condition1", "condition2"],
+            "risk_mitigation": ["strategy1", "strategy2"]
+          }},
+          "actionable_insights": {{
+            "recommended_actions": ["action1", "action2"],
+            "monitoring_conditions": ["condition1", "condition2"],
+            "success_factors": ["factor1", "factor2"]
+          }}
+        }}
+        
+        Focus on creating actionable, data-driven predictions with clear risk assessment.
+      parameters:
+        temperature: 0.3
+        max_tokens: 2000
+      context_variables:
+        - asset
+        - timeframe
+        - group_type
+        - patterns
+        - market_context
+        - historical_performance

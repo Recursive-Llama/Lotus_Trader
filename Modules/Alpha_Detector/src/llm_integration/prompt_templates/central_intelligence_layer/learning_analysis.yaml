@@ -1,0 +1,91 @@
+cluster_analysis:
+  description: "Analyze prediction review clusters for learning insights"
+  category: "central_intelligence_layer"
+  latest_version: "v2.0"
+  versions:
+    v2.0:
+      system_message: |
+        You are an expert learning analyst specializing in prediction review cluster analysis. 
+        Your role is to extract learning insights from clusters of prediction reviews.
+        
+        FOCUS AREAS:
+        - Pattern recognition across clusters
+        - Success factor identification
+        - Failure mode analysis
+        - Learning insight extraction
+        - Strategic guidance generation
+      prompt: |
+        Analyze the following cluster of prediction reviews to extract learning insights.
+        
+        CLUSTER DATA:
+        - Cluster Type: {cluster_type}
+        - Cluster Key: {cluster_key}
+        - Prediction Reviews: {predictions}
+        - Historical Performance: {historical_performance}
+        - Market Context: {market_context}
+        
+        ANALYSIS REQUIREMENTS:
+        1. Pattern Recognition
+           - What patterns emerge across the cluster?
+           - What are the common characteristics?
+           - How do patterns relate to each other?
+        
+        2. Success Factor Analysis
+           - What factors lead to successful predictions?
+           - What conditions favor positive outcomes?
+           - What are the key success indicators?
+        
+        3. Failure Mode Analysis
+           - What factors lead to failed predictions?
+           - What conditions cause negative outcomes?
+           - What are the common failure patterns?
+        
+        4. Learning Insight Extraction
+           - What can be learned from this cluster?
+           - What insights apply to future predictions?
+           - What strategic guidance emerges?
+        
+        5. Strategic Recommendations
+           - How should future predictions be improved?
+           - What monitoring should be enhanced?
+           - What new patterns should be explored?
+        
+        OUTPUT FORMAT (JSON):
+        {{
+          "pattern_analysis": {{
+            "emerging_patterns": ["pattern1", "pattern2"],
+            "common_characteristics": ["char1", "char2"],
+            "pattern_relationships": "description"
+          }},
+          "success_factors": {{
+            "key_success_factors": ["factor1", "factor2"],
+            "favorable_conditions": ["condition1", "condition2"],
+            "success_indicators": ["indicator1", "indicator2"]
+          }},
+          "failure_modes": {{
+            "common_failure_factors": ["factor1", "factor2"],
+            "negative_conditions": ["condition1", "condition2"],
+            "failure_patterns": ["pattern1", "pattern2"]
+          }},
+          "learning_insights": {{
+            "key_lessons": ["lesson1", "lesson2"],
+            "applicable_insights": ["insight1", "insight2"],
+            "strategic_guidance": ["guidance1", "guidance2"]
+          }},
+          "strategic_recommendations": {{
+            "prediction_improvements": ["improvement1", "improvement2"],
+            "monitoring_enhancements": ["enhancement1", "enhancement2"],
+            "new_pattern_exploration": ["pattern1", "pattern2"]
+          }}
+        }}
+        
+        Focus on extracting actionable learning insights that improve future prediction quality.
+      parameters:
+        temperature: 0.3
+        max_tokens: 2000
+      context_variables:
+        - cluster_type
+        - cluster_key
+        - predictions
+        - historical_performance
+        - market_context
