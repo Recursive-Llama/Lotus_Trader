@@ -17,6 +17,8 @@ import numpy as np
 from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.database_driven_context_system import DatabaseDrivenContextSystem
 from src.llm_integration.openrouter_client import OpenRouterClient
+from src.learning_system.module_specific_scoring import ModuleSpecificScoring
+from src.learning_system.centralized_learning_system import CentralizedLearningSystem
 
 
 class PredictionEngine:
@@ -41,6 +43,10 @@ class PredictionEngine:
         
         # Prediction tracking
         self.prediction_tracker = PredictionTracker(supabase_manager)
+        
+        # Learning system integration
+        self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        self.learning_system = CentralizedLearningSystem(supabase_manager, llm_client, None)
         
         # Learning thresholds
         self.learning_thresholds = {
@@ -590,6 +596,32 @@ RESPONSE FORMAT (JSON):
                 }
             }
             
+            # Calculate module-specific resonance scores
+            try:
+                scores = await self.module_scoring.calculate_module_scores(strand_data, 'cil')
+                strand_data['persistence_score'] = scores.get('persistence_score', 0.5)
+                strand_data['novelty_score'] = scores.get('novelty_score', 0.5)
+                strand_data['surprise_rating'] = scores.get('surprise_rating', 0.5)
+                strand_data['resonance_score'] = scores.get('resonance_score', 0.5)
+                
+                # Store resonance scores in content for detailed tracking
+                strand_data['content']['resonance_scores'] = {
+                    'phi': scores.get('phi', 0.5),
+                    'rho': scores.get('rho', 0.5),
+                    'theta': scores.get('theta', 0.5),
+                    'omega': scores.get('omega', 0.5)
+                }
+                
+                self.logger.info(f"Calculated CIL resonance scores: φ={scores.get('phi', 0.5):.3f}, ρ={scores.get('rho', 0.5):.3f}, θ={scores.get('theta', 0.5):.3f}, ω={scores.get('omega', 0.5):.3f}")
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate resonance scores: {e}")
+                # Set default scores
+                strand_data['persistence_score'] = 0.5
+                strand_data['novelty_score'] = 0.5
+                strand_data['surprise_rating'] = 0.5
+                strand_data['resonance_score'] = 0.5
+            
             # Store in database
             await self.supabase_manager.execute_query("""
                 INSERT INTO AD_strands (id, kind, created_at, tags, content, metadata)
@@ -734,6 +766,32 @@ RESPONSE FORMAT (JSON):
                 }
             }
             
+            # Calculate module-specific resonance scores for prediction review
+            try:
+                scores = await self.module_scoring.calculate_module_scores(review_strand, 'cil')
+                review_strand['persistence_score'] = scores.get('persistence_score', 0.5)
+                review_strand['novelty_score'] = scores.get('novelty_score', 0.5)
+                review_strand['surprise_rating'] = scores.get('surprise_rating', 0.5)
+                review_strand['resonance_score'] = scores.get('resonance_score', 0.5)
+                
+                # Store resonance scores in content for detailed tracking
+                review_strand['content']['resonance_scores'] = {
+                    'phi': scores.get('phi', 0.5),
+                    'rho': scores.get('rho', 0.5),
+                    'theta': scores.get('theta', 0.5),
+                    'omega': scores.get('omega', 0.5)
+                }
+                
+                self.logger.info(f"Calculated CIL prediction review resonance scores: φ={scores.get('phi', 0.5):.3f}, ρ={scores.get('rho', 0.5):.3f}, θ={scores.get('theta', 0.5):.3f}, ω={scores.get('omega', 0.5):.3f}")
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate prediction review resonance scores: {e}")
+                # Set default scores
+                review_strand['persistence_score'] = 0.5
+                review_strand['novelty_score'] = 0.5
+                review_strand['surprise_rating'] = 0.5
+                review_strand['resonance_score'] = 0.5
+            
             # Store in database using proper Supabase client method
             strand_data = {
                 'id': review_strand['id'],
@@ -748,7 +806,11 @@ RESPONSE FORMAT (JSON):
                 'lesson': '',
                 'content': review_strand['content'],
                 'module_intelligence': review_strand['metadata'],
-                'cluster_key': self._convert_cluster_keys_to_jsonb(cluster_keys)  # Convert cluster keys to JSONB format
+                'cluster_key': self._convert_cluster_keys_to_jsonb(cluster_keys),  # Convert cluster keys to JSONB format
+                'persistence_score': review_strand.get('persistence_score', 0.5),
+                'novelty_score': review_strand.get('novelty_score', 0.5),
+                'surprise_rating': review_strand.get('surprise_rating', 0.5),
+                'resonance_score': review_strand.get('resonance_score', 0.5)
             }
             
             result = self.supabase_manager.insert_strand(strand_data)
@@ -761,6 +823,56 @@ RESPONSE FORMAT (JSON):
         except Exception as e:
             self.logger.error(f"Error creating prediction review strand: {e}")
             return f"error: {str(e)}"
+    
+    async def get_prediction_context(self, context_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Get context for CIL predictions from the learning system
+        
+        Args:
+            context_data: Additional context data for filtering
+            
+        Returns:
+            Context dictionary with relevant insights for CIL predictions
+        """
+        try:
+            return await self.learning_system.get_context_for_module('cil', context_data)
+        except Exception as e:
+            self.logger.error(f"Error getting prediction context: {e}")
+            return {}
+    
+    async def enhance_prediction_with_context(self, prediction: Dict[str, Any], context_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Enhance prediction with context from the learning system
+        
+        Args:
+            prediction: Prediction data to enhance
+            context_data: Additional context data for filtering
+            
+        Returns:
+            Enhanced prediction with context insights
+        """
+        try:
+            # Get context from learning system
+            context = await self.get_prediction_context(context_data)
+            
+            if context:
+                # Add context to prediction
+                prediction['context_insights'] = {
+                    'success_rate': context.get('success_rate', 0.0),
+                    'insights': context.get('insights', []),
+                    'approaches': context.get('approaches', []),
+                    'patterns': context.get('patterns', []),
+                    'data_sources': context.get('data_sources', []),
+                    'context_timestamp': context.get('context_timestamp', '')
+                }
+                
+                self.logger.info(f"Enhanced prediction with context: {len(context.get('insights', []))} insights, {context.get('success_rate', 0.0):.1f}% success rate")
+            
+            return prediction
+            
+        except Exception as e:
+            self.logger.error(f"Error enhancing prediction with context: {e}")
+            return prediction
 
 
 class PatternGroupingSystem:

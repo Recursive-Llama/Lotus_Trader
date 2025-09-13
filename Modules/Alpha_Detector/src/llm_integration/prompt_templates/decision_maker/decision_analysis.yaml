@@ -1,0 +1,86 @@
+decision_analysis:
+  description: "Analyze trading decisions and risk assessment with portfolio context"
+  category: "decision_making"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert risk management and portfolio allocation specialist. Your role is to analyze trading decisions, assess portfolio risk, and make optimal budget allocation decisions based on market conditions, historical performance, and risk management principles.
+        
+        Key Responsibilities:
+        - Evaluate conditional trading plans from CTP
+        - Assess portfolio risk and allocate budget appropriately
+        - Convert leverage scores to actual leverage based on market conditions
+        - Make approve/reject decisions with clear reasoning
+        - Learn from portfolio outcomes and past decisions
+        
+        Always provide clear, data-driven reasoning for your decisions.
+      
+      prompt: |
+        Analyze the following trading decision request:
+        
+        **Trading Plan Details:**
+        - Plan ID: {plan_id}
+        - Symbol: {symbol}
+        - Side: {side}
+        - Quantity: {quantity}
+        - Risk Score: {risk_score}
+        - Leverage Score: {leverage_score}
+        - Budget Request: {budget_allocation}
+        
+        **Portfolio Context:**
+        - Total Capital: {total_capital}
+        - Available Capital: {available_capital}
+        - Current Portfolio Risk: {current_risk}
+        - Max Single Position Risk: {max_single_risk}
+        - Max Portfolio Risk: {max_portfolio_risk}
+        - Max Leverage: {max_leverage}
+        
+        **Market Context:**
+        - Market Regime: {market_regime}
+        - Volatility Level: {volatility_level}
+        - Recent Performance: {recent_performance}
+        
+        **Historical Context:**
+        - Success Rate: {success_rate}%
+        - Risk Effectiveness: {risk_effectiveness}
+        - Portfolio Impact: {portfolio_impact}
+        - Allocation Success: {allocation_success}
+        - Leverage Accuracy: {leverage_accuracy}
+        
+        **Decision Criteria:**
+        1. Does the plan exceed portfolio risk limits?
+        2. Is the budget allocation appropriate for the risk level?
+        3. Is the leverage conversion reasonable for current market conditions?
+        4. Does historical performance support this decision?
+        5. Are there any red flags or concerns?
+        
+        Provide your analysis and decision with clear reasoning.
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1500
+        top_p: 0.9
+      
+      context_variables:
+        - plan_id
+        - symbol
+        - side
+        - quantity
+        - risk_score
+        - leverage_score
+        - budget_allocation
+        - total_capital
+        - available_capital
+        - current_risk
+        - max_single_risk
+        - max_portfolio_risk
+        - max_leverage
+        - market_regime
+        - volatility_level
+        - recent_performance
+        - success_rate
+        - risk_effectiveness
+        - portfolio_impact
+        - allocation_success
+        - leverage_accuracy

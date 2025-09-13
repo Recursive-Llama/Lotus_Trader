@@ -94,16 +94,17 @@ class UniversalClustering:
         self.min_strands_for_ml_clustering = 3
         self.similarity_threshold = 0.7
     
-    def cluster_strands_by_columns(self, strands: List[Dict[str, Any]], braid_level: int) -> List[Cluster]:
+    def cluster_strands_by_columns(self, strands: List[Dict[str, Any]], braid_level: int, strand_kind: str = None) -> List[Cluster]:
         """
         Tier 1: Column Clustering (Structural Grouping)
         
         Groups strands by structural similarity using high-level columns.
-        Only clusters strands of the same braid_level.
+        Only clusters strands of the same braid_level and strand_kind.
         
         Args:
             strands: List of strand dictionaries
             braid_level: Braid level to cluster (0=strand, 1=braid, 2=metabraid, etc.)
+            strand_kind: Strand kind to cluster (e.g., 'pattern', 'prediction_review', etc.)
             
         Returns:
             List of ColumnCluster objects
@@ -114,6 +115,10 @@ class UniversalClustering:
             for strand in strands:
                 # Only cluster same braid level
                 if strand.get('braid_level', 0) != braid_level:
+                    continue
+                
+                # Only cluster same strand kind (if specified)
+                if strand_kind and strand.get('kind') != strand_kind:
                     continue
                 
                 # Find similar cluster based on structural columns
@@ -181,20 +186,21 @@ class UniversalClustering:
             self.logger.error(f"Error in pattern clustering: {e}")
             return column_clusters  # Fallback to column clusters
     
-    def cluster_strands(self, strands: List[Dict[str, Any]], braid_level: int) -> List[Cluster]:
+    def cluster_strands(self, strands: List[Dict[str, Any]], braid_level: int, strand_kind: str = None) -> List[Cluster]:
         """
         Complete two-tier clustering process
         
         Args:
             strands: List of strand dictionaries
             braid_level: Braid level to cluster
+            strand_kind: Strand kind to cluster (e.g., 'pattern', 'prediction_review', etc.)
             
         Returns:
             List of final clusters after two-tier clustering
         """
         try:
             # Step 1: Column clustering (structural grouping)
-            column_clusters = self.cluster_strands_by_columns(strands, braid_level)
+            column_clusters = self.cluster_strands_by_columns(strands, braid_level, strand_kind)
             
             # Step 2: Pattern clustering (ML-based similarity)
             pattern_clusters = self.cluster_strands_by_patterns(column_clusters)

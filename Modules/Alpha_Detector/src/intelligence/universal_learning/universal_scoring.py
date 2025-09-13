@@ -2,17 +2,23 @@
 Universal Scoring System for All Strands
 
 This module provides universal scoring capabilities for all strand types in the system.
-It calculates persistence, novelty, and surprise scores for any strand regardless of its type.
+It integrates with the module-specific scoring system to calculate persistence, novelty, and surprise scores.
 
 The scoring system is designed to work with the unified learning system where:
 - Everything is strands (signals, intelligence, trading_plans, braids, etc.)
-- All strands get scored with persistence, novelty, and surprise
+- All strands get scored with persistence, novelty, and surprise using Simons' resonance formulas
 - Braids get the average score of their source strands
+- Module-specific calculations provide accurate, data-driven scores
 """
 
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+import sys
+import os
+
+# Add the learning system to the path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'src', 'learning_system'))
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +28,32 @@ class UniversalScoring:
     Universal scoring system for all strand types
     
     Calculates persistence, novelty, and surprise scores for any strand
-    based on its type and available data.
+    using the module-specific scoring system with Simons' resonance formulas.
     """
     
-    def __init__(self):
-        """Initialize universal scoring system"""
+    def __init__(self, supabase_manager=None):
+        """
+        Initialize universal scoring system
+        
+        Args:
+            supabase_manager: Database manager for module-specific scoring
+        """
         self.logger = logging.getLogger(__name__)
+        self.supabase_manager = supabase_manager
+        
+        # Initialize module-specific scoring if available
+        self.module_scoring = None
+        if supabase_manager:
+            try:
+                from module_specific_scoring import ModuleSpecificScoring
+                self.module_scoring = ModuleSpecificScoring(supabase_manager)
+            except ImportError as e:
+                self.logger.warning(f"Could not import module-specific scoring: {e}")
+                self.module_scoring = None
     
     def calculate_persistence_score(self, strand: Dict[str, Any]) -> float:
         """
-        Calculate persistence score (0-1) - How reliable/consistent is this pattern?
+        Calculate persistence score (0-1) using module-specific scoring
         
         Args:
             strand: Strand dictionary with all fields
@@ -40,55 +62,25 @@ class UniversalScoring:
             Persistence score between 0.0 and 1.0
         """
         try:
-            # For Raw Data Intelligence strands
-            if strand.get('agent_id') == 'raw_data_intelligence':
-                confidence = strand.get('sig_confidence', 0.0)
-                data_quality = strand.get('module_intelligence', {}).get('data_quality_score', 1.0)
-                return (confidence + data_quality) / 2
+            # Use module-specific scoring if available
+            if self.module_scoring:
+                # Determine module type from strand
+                module_type = self._get_module_type_from_strand(strand)
+                if module_type:
+                    # Calculate module-specific persistence score
+                    persistence, _, _ = self.module_scoring.calculate_module_scores(strand)
+                    return persistence
             
-            # For CIL strands  
-            elif strand.get('agent_id') == 'central_intelligence_layer':
-                doctrine_status = strand.get('doctrine_status', 'provisional')
-                confidence = strand.get('confidence', 0.0)
-                
-                doctrine_multiplier = {
-                    'affirmed': 1.0,
-                    'provisional': 0.7,
-                    'retired': 0.3,
-                    'contraindicated': 0.1
-                }.get(doctrine_status, 0.5)
-                
-                return confidence * doctrine_multiplier
-            
-            # For Trading Plan strands
-            elif strand.get('kind') == 'trading_plan':
-                accumulated = strand.get('accumulated_score', 0.0)
-                outcome = strand.get('outcome_score', 0.0)
-                return (accumulated + outcome) / 2
-            
-            # For Braid strands
-            elif strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
+            # Fallback to legacy scoring for braids or unknown types
+            if strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
                 # Braids get the average score of their source strands
                 source_strands = strand.get('source_strands', [])
                 if source_strands:
                     return sum(s.get('persistence_score', 0.0) for s in source_strands) / len(source_strands)
                 return 0.5
             
-            # For Decision Maker strands
-            elif strand.get('agent_id') == 'decision_maker':
-                confidence = strand.get('confidence', 0.0)
-                # Could add decision-specific persistence logic here
-                return confidence
-            
-            # For Trader strands
-            elif strand.get('agent_id') == 'trader':
-                execution_quality = strand.get('execution_quality', 0.0)
-                outcome = strand.get('outcome_score', 0.0)
-                return (execution_quality + outcome) / 2
-            
             # Default fallback
-            else:
-                return strand.get('sig_confidence', 0.5)
+            return strand.get('persistence_score', strand.get('sig_confidence', 0.5))
                 
         except Exception as e:
             self.logger.error(f"Error calculating persistence score: {e}")
@@ -96,7 +88,7 @@ class UniversalScoring:
     
     def calculate_novelty_score(self, strand: Dict[str, Any]) -> float:
         """
-        Calculate novelty score (0-1) - How unique/new is this pattern?
+        Calculate novelty score (0-1) using module-specific scoring
         
         Args:
             strand: Strand dictionary with all fields
@@ -105,65 +97,25 @@ class UniversalScoring:
             Novelty score between 0.0 and 1.0
         """
         try:
-            # For Raw Data Intelligence strands
-            if strand.get('agent_id') == 'raw_data_intelligence':
-                pattern_type = strand.get('pattern_type', 'unknown')
-                surprise = strand.get('surprise_rating', 0.0)
-                
-                novel_patterns = ['anomaly', 'divergence', 'correlation_break']
-                if pattern_type in novel_patterns:
-                    return min(surprise + 0.3, 1.0)
-                else:
-                    return surprise
+            # Use module-specific scoring if available
+            if self.module_scoring:
+                # Determine module type from strand
+                module_type = self._get_module_type_from_strand(strand)
+                if module_type:
+                    # Calculate module-specific novelty score
+                    _, novelty, _ = self.module_scoring.calculate_module_scores(strand)
+                    return novelty
             
-            # For CIL strands
-            elif strand.get('agent_id') == 'central_intelligence_layer':
-                meta_type = strand.get('strategic_meta_type', 'unknown')
-                experiment_id = strand.get('experiment_id')
-                
-                if experiment_id:
-                    return 0.8  # Experiments are novel
-                elif meta_type in ['confluence', 'doctrine']:
-                    return 0.6  # Strategic insights are novel
-                else:
-                    return 0.4
-            
-            # For Trading Plan strands
-            elif strand.get('kind') == 'trading_plan':
-                regime = strand.get('regime', 'unknown')
-                
-                if regime in ['anomaly', 'transition']:
-                    return 0.8
-                else:
-                    return 0.5
-            
-            # For Braid strands
-            elif strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
-                # Braids get the average novelty score of their source strands
+            # Fallback to legacy scoring for braids or unknown types
+            if strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
+                # Braids get the average score of their source strands
                 source_strands = strand.get('source_strands', [])
                 if source_strands:
                     return sum(s.get('novelty_score', 0.0) for s in source_strands) / len(source_strands)
                 return 0.5
             
-            # For Decision Maker strands
-            elif strand.get('agent_id') == 'decision_maker':
-                decision_type = strand.get('decision_type', 'unknown')
-                if decision_type in ['experimental', 'breakthrough']:
-                    return 0.8
-                else:
-                    return 0.5
-            
-            # For Trader strands
-            elif strand.get('agent_id') == 'trader':
-                venue = strand.get('venue', 'unknown')
-                if venue in ['new_venue', 'experimental']:
-                    return 0.7
-                else:
-                    return 0.4
-            
             # Default fallback
-            else:
-                return 0.5
+            return strand.get('novelty_score', 0.5)
                 
         except Exception as e:
             self.logger.error(f"Error calculating novelty score: {e}")
@@ -171,7 +123,7 @@ class UniversalScoring:
     
     def calculate_surprise_rating(self, strand: Dict[str, Any]) -> float:
         """
-        Calculate surprise rating (0-1) - How unexpected was this outcome?
+        Calculate surprise rating (0-1) using module-specific scoring
         
         Args:
             strand: Strand dictionary with all fields
@@ -180,80 +132,74 @@ class UniversalScoring:
             Surprise rating between 0.0 and 1.0
         """
         try:
-            # For Raw Data Intelligence strands
-            if strand.get('agent_id') == 'raw_data_intelligence':
-                sigma = strand.get('sig_sigma', 0.0)
-                confidence = strand.get('sig_confidence', 0.0)
-                
-                # High sigma with low confidence = surprising
-                if sigma > 0.8 and confidence < 0.5:
-                    return 0.9
-                elif sigma > 0.6 and confidence < 0.7:
-                    return 0.7
-                else:
-                    return 0.3
+            # Use module-specific scoring if available
+            if self.module_scoring:
+                # Determine module type from strand
+                module_type = self._get_module_type_from_strand(strand)
+                if module_type:
+                    # Calculate module-specific surprise score
+                    _, _, surprise = self.module_scoring.calculate_module_scores(strand)
+                    return surprise
             
-            # For CIL strands
-            elif strand.get('agent_id') == 'central_intelligence_layer':
-                doctrine_status = strand.get('doctrine_status', 'provisional')
-                
-                if doctrine_status == 'contraindicated':
-                    return 0.9  # Very surprising when something is contraindicated
-                elif doctrine_status == 'retired':
-                    return 0.7  # Surprising when something is retired
-                else:
-                    return 0.3
-            
-            # For Trading Plan strands
-            elif strand.get('kind') == 'trading_plan':
-                prediction = strand.get('prediction_score', 0.0)
-                outcome = strand.get('outcome_score', 0.0)
-                
-                # High prediction with low outcome = surprising
-                if prediction > 0.8 and outcome < 0.3:
-                    return 0.9
-                elif prediction > 0.6 and outcome < 0.5:
-                    return 0.7
-                else:
-                    return 0.3
-            
-            # For Braid strands
-            elif strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
-                # Braids get the average surprise rating of their source strands
+            # Fallback to legacy scoring for braids or unknown types
+            if strand.get('kind') in ['braid', 'meta_braid', 'meta2_braid']:
+                # Braids get the average score of their source strands
                 source_strands = strand.get('source_strands', [])
                 if source_strands:
                     return sum(s.get('surprise_rating', 0.0) for s in source_strands) / len(source_strands)
-                return 0.3
-            
-            # For Decision Maker strands
-            elif strand.get('agent_id') == 'decision_maker':
-                risk_level = strand.get('risk_level', 'medium')
-                outcome = strand.get('outcome_score', 0.0)
-                
-                if risk_level == 'high' and outcome > 0.8:
-                    return 0.8  # Surprising when high risk pays off
-                elif risk_level == 'low' and outcome < 0.3:
-                    return 0.7  # Surprising when low risk fails
-                else:
-                    return 0.3
-            
-            # For Trader strands
-            elif strand.get('agent_id') == 'trader':
-                slippage = strand.get('slippage', 0.0)
-                expected_slippage = strand.get('expected_slippage', 0.0)
-                
-                if slippage > expected_slippage * 2:
-                    return 0.8  # Surprising when slippage is much higher than expected
-                else:
-                    return 0.3
+                return 0.5
             
             # Default fallback
-            else:
-                return 0.3
+            return strand.get('surprise_rating', 0.5)
                 
         except Exception as e:
             self.logger.error(f"Error calculating surprise rating: {e}")
-            return 0.3
+            return 0.5
+    
+    def _get_module_type_from_strand(self, strand: Dict[str, Any]) -> Optional[str]:
+        """
+        Determine module type from strand data
+        
+        Args:
+            strand: Strand dictionary
+            
+        Returns:
+            Module type string or None if unknown
+        """
+        try:
+            # Map strand kinds to module types
+            kind_to_module = {
+                'pattern': 'rdi',
+                'prediction_review': 'cil',
+                'conditional_trading_plan': 'ctp',
+                'trading_decision': 'dm',
+                'execution_outcome': 'td',
+                'trade_outcome': 'ctp',  # Trade outcomes are used by CTP for learning
+                'portfolio_outcome': 'dm'  # Portfolio outcomes are used by DM for learning
+            }
+            
+            strand_kind = strand.get('kind')
+            if strand_kind in kind_to_module:
+                return kind_to_module[strand_kind]
+            
+            # Fallback to agent_id mapping
+            agent_id = strand.get('agent_id', '')
+            if 'raw_data_intelligence' in agent_id:
+                return 'rdi'
+            elif 'central_intelligence_layer' in agent_id:
+                return 'cil'
+            elif 'conditional_trading_planner' in agent_id:
+                return 'ctp'
+            elif 'decision_maker' in agent_id:
+                return 'dm'
+            elif 'trader' in agent_id:
+                return 'td'
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error determining module type: {e}")
+            return None
     
     def calculate_all_scores(self, strand: Dict[str, Any]) -> Dict[str, float]:
         """

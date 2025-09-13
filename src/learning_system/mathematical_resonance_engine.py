@@ -69,6 +69,50 @@ class MathematicalResonanceEngine:
         
         # Meta-learning threshold for acceleration
         self.meta_learning_threshold = 0.7
+        
+        # Module-specific configuration
+        self.module_configs = {
+            'rdi': {
+                'name': 'Raw Data Intelligence',
+                'strand_kind': 'pattern',
+                'phi_focus': 'cross_timeframe_consistency',
+                'rho_focus': 'pattern_success_rate',
+                'theta_focus': 'pattern_diversity',
+                'omega_focus': 'detection_improvement'
+            },
+            'cil': {
+                'name': 'Central Intelligence Layer',
+                'strand_kind': 'prediction_review',
+                'phi_focus': 'prediction_consistency',
+                'rho_focus': 'prediction_accuracy',
+                'theta_focus': 'method_diversity',
+                'omega_focus': 'prediction_improvement'
+            },
+            'ctp': {
+                'name': 'Conditional Trading Planner',
+                'strand_kind': 'conditional_trading_plan',
+                'phi_focus': 'plan_consistency',
+                'rho_focus': 'plan_profitability',
+                'theta_focus': 'strategy_diversity',
+                'omega_focus': 'plan_improvement'
+            },
+            'dm': {
+                'name': 'Decision Maker',
+                'strand_kind': 'trading_decision',
+                'phi_focus': 'decision_consistency',
+                'rho_focus': 'decision_outcome_quality',
+                'theta_focus': 'factor_diversity',
+                'omega_focus': 'decision_improvement'
+            },
+            'td': {
+                'name': 'Trader',
+                'strand_kind': 'execution_outcome',
+                'phi_focus': 'execution_consistency',
+                'rho_focus': 'execution_success',
+                'theta_focus': 'strategy_diversity',
+                'omega_focus': 'execution_improvement'
+            }
+        }
     
     def calculate_phi(self, pattern_data: Dict[str, Any], timeframes: List[str]) -> float:
         """
@@ -406,6 +450,282 @@ class MathematicalResonanceEngine:
             processing_cost = pattern_data.get('processing_cost', 0.0)
             storage_cost = pattern_data.get('storage_cost', 0.0)
             return processing_cost + storage_cost
+        except:
+            return 0.0
+    
+    # ============================================================================
+    # MODULE-SPECIFIC RESONANCE CALCULATIONS
+    # ============================================================================
+    
+    def calculate_module_resonance(self, strand: Dict[str, Any], module_type: str) -> Dict[str, float]:
+        """
+        Calculate module-specific resonance scores (φ, ρ, θ, ω)
+        
+        Args:
+            strand: Strand data from database
+            module_type: Module type ('rdi', 'cil', 'ctp', 'dm', 'td')
+            
+        Returns:
+            Dictionary with module-specific resonance scores
+        """
+        try:
+            if module_type not in self.module_configs:
+                raise ValueError(f"Unknown module type: {module_type}")
+            
+            config = self.module_configs[module_type]
+            
+            # Calculate module-specific φ, ρ, θ, ω
+            phi = self._calculate_module_phi(strand, module_type)
+            rho = self._calculate_module_rho(strand, module_type)
+            theta = self._calculate_module_theta(strand, module_type)
+            omega = self._calculate_module_omega(strand, module_type)
+            
+            return {
+                'phi': phi,
+                'rho': rho,
+                'theta': theta,
+                'omega': omega,
+                'module_type': module_type,
+                'calculated_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            print(f"Error calculating module resonance for {module_type}: {e}")
+            return {
+                'phi': 0.0,
+                'rho': 0.0,
+                'theta': 0.0,
+                'omega': 0.0,
+                'module_type': module_type,
+                'error': str(e)
+            }
+    
+    def _calculate_module_phi(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Calculate φ (Fractal Self-Similarity) for specific module"""
+        try:
+            if module_type == 'rdi':
+                # RDI: Cross-timeframe pattern consistency
+                pattern_type = strand.get('module_intelligence', {}).get('pattern_type', 'unknown')
+                confidence = strand.get('sig_confidence', 0.0)
+                
+                # Simple fractal consistency based on confidence
+                return min(confidence * 1.2, 1.0)
+                
+            elif module_type == 'cil':
+                # CIL: Prediction consistency across timeframes
+                success = strand.get('content', {}).get('success', False)
+                confidence = strand.get('content', {}).get('confidence', 0.0)
+                
+                # Consistency = success rate * confidence
+                return (1.0 if success else 0.0) * confidence
+                
+            elif module_type == 'ctp':
+                # CTP: Plan consistency across market conditions
+                profitability = strand.get('content', {}).get('profitability', 0.0)
+                risk_adjusted = strand.get('content', {}).get('risk_adjusted_return', 0.0)
+                
+                # Consistency = profitability * risk adjustment
+                return min(profitability * risk_adjusted, 1.0)
+                
+            elif module_type == 'dm':
+                # DM: Decision consistency across portfolio sizes
+                outcome_quality = strand.get('content', {}).get('outcome_quality', 0.0)
+                risk_management = strand.get('content', {}).get('risk_management_effectiveness', 0.0)
+                
+                # Consistency = outcome quality * risk management
+                return min(outcome_quality * risk_management, 1.0)
+                
+            elif module_type == 'td':
+                # TD: Execution consistency across order sizes
+                execution_success = strand.get('content', {}).get('execution_success', 0.0)
+                slippage_min = strand.get('content', {}).get('slippage_minimization', 0.0)
+                
+                # Consistency = success rate * slippage minimization
+                return min(execution_success * slippage_min, 1.0)
+            
+            return 0.0
+            
+        except Exception as e:
+            print(f"Error calculating φ for {module_type}: {e}")
+            return 0.0
+    
+    def _calculate_module_rho(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Calculate ρ (Recursive Feedback) for specific module"""
+        try:
+            if module_type == 'rdi':
+                # RDI: Pattern success rate based on outcomes
+                success_rate = strand.get('module_intelligence', {}).get('success_rate', 0.0)
+                confidence = strand.get('sig_confidence', 0.0)
+                
+                # ρ = success rate * confidence
+                return success_rate * confidence
+                
+            elif module_type == 'cil':
+                # CIL: Prediction accuracy based on outcomes
+                success = strand.get('content', {}).get('success', False)
+                return_pct = strand.get('content', {}).get('return_pct', 0.0)
+                
+                # ρ = success + return percentage
+                if success:
+                    return min(1.0 + (return_pct * 0.1), 2.0)
+                else:
+                    return 0.5
+                
+            elif module_type == 'ctp':
+                # CTP: Plan profitability based on outcomes
+                profitability = strand.get('content', {}).get('profitability', 0.0)
+                risk_adjusted = strand.get('content', {}).get('risk_adjusted_return', 0.0)
+                
+                # ρ = profitability * risk adjustment
+                return profitability * risk_adjusted
+                
+            elif module_type == 'dm':
+                # DM: Decision outcome quality
+                outcome_quality = strand.get('content', {}).get('outcome_quality', 0.0)
+                risk_management = strand.get('content', {}).get('risk_management_effectiveness', 0.0)
+                
+                # ρ = outcome quality * risk management
+                return outcome_quality * risk_management
+                
+            elif module_type == 'td':
+                # TD: Execution success based on outcomes
+                execution_success = strand.get('content', {}).get('execution_success', 0.0)
+                slippage_min = strand.get('content', {}).get('slippage_minimization', 0.0)
+                
+                # ρ = execution success * slippage minimization
+                return execution_success * slippage_min
+            
+            return 0.0
+            
+        except Exception as e:
+            print(f"Error calculating ρ for {module_type}: {e}")
+            return 0.0
+    
+    def _calculate_module_theta(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Calculate θ (Global Field) for specific module"""
+        try:
+            if module_type == 'rdi':
+                # RDI: Pattern type diversity
+                pattern_type = strand.get('module_intelligence', {}).get('pattern_type', 'unknown')
+                motif_family = strand.get('motif_family', 'unknown')
+                
+                # θ = diversity of pattern types and families
+                diversity_score = 0.5  # Base diversity
+                if pattern_type != 'unknown':
+                    diversity_score += 0.3
+                if motif_family != 'unknown':
+                    diversity_score += 0.2
+                
+                return min(diversity_score, 1.0)
+                
+            elif module_type == 'cil':
+                # CIL: Prediction method diversity
+                method = strand.get('content', {}).get('method', 'unknown')
+                meta_type = strand.get('strategic_meta_type', 'unknown')
+                
+                # θ = diversity of prediction methods
+                diversity_score = 0.5  # Base diversity
+                if method != 'unknown':
+                    diversity_score += 0.3
+                if meta_type != 'unknown':
+                    diversity_score += 0.2
+                
+                return min(diversity_score, 1.0)
+                
+            elif module_type == 'ctp':
+                # CTP: Plan type diversity
+                plan_type = strand.get('content', {}).get('plan_type', 'unknown')
+                strategy = strand.get('content', {}).get('strategy', 'unknown')
+                
+                # θ = diversity of plan types and strategies
+                diversity_score = 0.5  # Base diversity
+                if plan_type != 'unknown':
+                    diversity_score += 0.3
+                if strategy != 'unknown':
+                    diversity_score += 0.2
+                
+                return min(diversity_score, 1.0)
+                
+            elif module_type == 'dm':
+                # DM: Decision factor diversity
+                decision_type = strand.get('content', {}).get('decision_type', 'unknown')
+                factors = strand.get('content', {}).get('decision_factors', [])
+                
+                # θ = diversity of decision factors
+                diversity_score = 0.5  # Base diversity
+                if decision_type != 'unknown':
+                    diversity_score += 0.3
+                if factors and len(factors) > 1:
+                    diversity_score += 0.2
+                
+                return min(diversity_score, 1.0)
+                
+            elif module_type == 'td':
+                # TD: Execution strategy diversity
+                execution_method = strand.get('content', {}).get('execution_method', 'unknown')
+                strategy = strand.get('content', {}).get('execution_strategy', 'unknown')
+                
+                # θ = diversity of execution strategies
+                diversity_score = 0.5  # Base diversity
+                if execution_method != 'unknown':
+                    diversity_score += 0.3
+                if strategy != 'unknown':
+                    diversity_score += 0.2
+                
+                return min(diversity_score, 1.0)
+            
+            return 0.0
+            
+        except Exception as e:
+            print(f"Error calculating θ for {module_type}: {e}")
+            return 0.0
+    
+    def _calculate_module_omega(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Calculate ω (Meta-Evolution) for specific module"""
+        try:
+            # Get historical performance for this module type
+            historical_quality = self._get_historical_module_quality(strand, module_type)
+            current_quality = self._get_current_module_quality(strand, module_type)
+            
+            # Calculate improvement rate
+            if historical_quality > 0:
+                improvement_rate = (current_quality - historical_quality) / historical_quality
+            else:
+                improvement_rate = 0.0
+            
+            # ω based on learning improvement (0.5 to 2.0 range)
+            if improvement_rate > 0:
+                return min(1.0 + improvement_rate, 2.0)
+            else:
+                return max(0.5 + (improvement_rate * 0.5), 0.0)
+            
+        except Exception as e:
+            print(f"Error calculating ω for {module_type}: {e}")
+            return 1.0
+    
+    def _get_historical_module_quality(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Get historical quality for module-specific improvement calculation"""
+        try:
+            # This would query the database for historical performance
+            # For now, return a default value
+            return 0.5
+        except:
+            return 0.5
+    
+    def _get_current_module_quality(self, strand: Dict[str, Any], module_type: str) -> float:
+        """Get current quality for module-specific improvement calculation"""
+        try:
+            if module_type == 'rdi':
+                return strand.get('sig_confidence', 0.0)
+            elif module_type == 'cil':
+                return strand.get('content', {}).get('confidence', 0.0)
+            elif module_type == 'ctp':
+                return strand.get('content', {}).get('profitability', 0.0)
+            elif module_type == 'dm':
+                return strand.get('content', {}).get('outcome_quality', 0.0)
+            elif module_type == 'td':
+                return strand.get('content', {}).get('execution_success', 0.0)
+            return 0.0
         except:
             return 0.0
     

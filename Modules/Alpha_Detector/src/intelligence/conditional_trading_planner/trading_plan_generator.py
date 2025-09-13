@@ -10,6 +10,8 @@ import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from ...llm_integration.prompt_manager import PromptManager
+from src.learning_system.module_specific_scoring import ModuleSpecificScoring
+from src.learning_system.centralized_learning_system import CentralizedLearningSystem
 
 
 class TradingPlanGenerator:
@@ -38,6 +40,10 @@ class TradingPlanGenerator:
         self.learning_system = learning_system
         self.prompt_manager = prompt_manager or PromptManager()
         self.logger = logging.getLogger(f"{__name__}.plan_generator")
+        
+        # Learning system integration
+        self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        self.centralized_learning = CentralizedLearningSystem(supabase_manager, llm_client, None)
     
     async def create_conditional_trading_plan(self, analysis: Dict[str, Any]) -> Optional[str]:
         """
@@ -361,6 +367,32 @@ class TradingPlanGenerator:
                 "cluster_key": self._inherit_cluster_keys_from_prediction_review(analysis)
             }
             
+            # Calculate module-specific resonance scores
+            try:
+                scores = await self.module_scoring.calculate_module_scores(trading_plan_data, 'ctp')
+                trading_plan_data['persistence_score'] = scores.get('persistence_score', 0.5)
+                trading_plan_data['novelty_score'] = scores.get('novelty_score', 0.5)
+                trading_plan_data['surprise_rating'] = scores.get('surprise_rating', 0.5)
+                trading_plan_data['resonance_score'] = scores.get('resonance_score', 0.5)
+                
+                # Store resonance scores in content for detailed tracking
+                trading_plan_data['content']['resonance_scores'] = {
+                    'phi': scores.get('phi', 0.5),
+                    'rho': scores.get('rho', 0.5),
+                    'theta': scores.get('theta', 0.5),
+                    'omega': scores.get('omega', 0.5)
+                }
+                
+                self.logger.info(f"Calculated CTP resonance scores: φ={scores.get('phi', 0.5):.3f}, ρ={scores.get('rho', 0.5):.3f}, θ={scores.get('theta', 0.5):.3f}, ω={scores.get('omega', 0.5):.3f}")
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate resonance scores: {e}")
+                # Set default scores
+                trading_plan_data['persistence_score'] = 0.5
+                trading_plan_data['novelty_score'] = 0.5
+                trading_plan_data['surprise_rating'] = 0.5
+                trading_plan_data['resonance_score'] = 0.5
+            
             # Store in database
             result = self.supabase_manager.insert_strand(trading_plan_data)
             
@@ -373,6 +405,56 @@ class TradingPlanGenerator:
         except Exception as e:
             self.logger.error(f"Error creating trading plan strand: {e}")
             return None
+    
+    async def get_plan_context(self, context_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Get context for CTP trading plans from the learning system
+        
+        Args:
+            context_data: Additional context data for filtering
+            
+        Returns:
+            Context dictionary with relevant insights for CTP plans
+        """
+        try:
+            return await self.centralized_learning.get_context_for_module('ctp', context_data)
+        except Exception as e:
+            self.logger.error(f"Error getting plan context: {e}")
+            return {}
+    
+    async def enhance_plan_with_context(self, plan_data: Dict[str, Any], context_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Enhance trading plan with context from the learning system
+        
+        Args:
+            plan_data: Trading plan data to enhance
+            context_data: Additional context data for filtering
+            
+        Returns:
+            Enhanced plan with context insights
+        """
+        try:
+            # Get context from learning system
+            context = await self.get_plan_context(context_data)
+            
+            if context:
+                # Add context to plan
+                plan_data['context_insights'] = {
+                    'success_rate': context.get('success_rate', 0.0),
+                    'strategies': context.get('strategies', []),
+                    'risk_insights': context.get('risk_insights', []),
+                    'adaptations': context.get('adaptations', []),
+                    'data_sources': context.get('data_sources', []),
+                    'context_timestamp': context.get('context_timestamp', '')
+                }
+                
+                self.logger.info(f"Enhanced plan with context: {len(context.get('strategies', []))} strategies, {context.get('success_rate', 0.0):.1f}% success rate")
+            
+            return plan_data
+            
+        except Exception as e:
+            self.logger.error(f"Error enhancing plan with context: {e}")
+            return plan_data
     
     async def get_plan_performance(self, plan_id: str) -> Optional[Dict[str, Any]]:
         """

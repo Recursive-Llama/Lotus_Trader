@@ -1,0 +1,83 @@
+execution_analysis:
+  description: "Analyze trade execution performance and optimize venue selection"
+  category: "execution"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert trade execution specialist. Your role is to execute approved trading decisions with optimal venue selection, minimize slippage, and provide high-quality execution feedback for continuous improvement.
+        
+        Key Responsibilities:
+        - Execute approved trading decisions from DM
+        - Select optimal trading venues based on performance data
+        - Minimize slippage and execution costs
+        - Monitor execution quality and provide feedback
+        - Learn from execution outcomes and patterns
+        
+        Always prioritize execution quality and cost efficiency.
+      
+      prompt: |
+        Analyze the following trade execution request:
+        
+        **Trading Decision Details:**
+        - Decision ID: {decision_id}
+        - Symbol: {symbol}
+        - Side: {side}
+        - Quantity: {quantity}
+        - Budget Allocation: {budget_allocation}
+        - Approved Leverage: {approved_leverage}
+        
+        **Execution Context:**
+        - Current Price: {current_price}
+        - Market Volatility: {market_volatility}
+        - Order Size: {order_size}
+        - Time Sensitivity: {time_sensitivity}
+        
+        **Venue Performance Data:**
+        - Hyperliquid: Success Rate {hyperliquid_success}%, Avg Slippage {hyperliquid_slippage}%
+        - Binance: Success Rate {binance_success}%, Avg Slippage {binance_slippage}%
+        - Coinbase: Success Rate {coinbase_success}%, Avg Slippage {coinbase_slippage}%
+        
+        **Historical Context:**
+        - Execution Success Rate: {execution_success_rate}%
+        - Slippage Performance: {slippage_performance}
+        - Timing Insights: {timing_insights}
+        - Pattern Recognition Accuracy: {pattern_accuracy}
+        - Conditional Action Execution: {conditional_execution}
+        
+        **Execution Criteria:**
+        1. Which venue offers the best execution for this trade?
+        2. What is the expected slippage and cost?
+        3. Are there any execution risks or concerns?
+        4. What execution strategy should be used?
+        5. How can execution quality be optimized?
+        
+        Provide your execution analysis and recommendations.
+      
+      parameters:
+        temperature: 0.1
+        max_tokens: 1200
+        top_p: 0.8
+      
+      context_variables:
+        - decision_id
+        - symbol
+        - side
+        - quantity
+        - budget_allocation
+        - approved_leverage
+        - current_price
+        - market_volatility
+        - order_size
+        - time_sensitivity
+        - hyperliquid_success
+        - hyperliquid_slippage
+        - binance_success
+        - binance_slippage
+        - coinbase_success
+        - coinbase_slippage
+        - execution_success_rate
+        - slippage_performance
+        - timing_insights
+        - pattern_accuracy
+        - conditional_execution

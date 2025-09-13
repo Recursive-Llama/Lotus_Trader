@@ -58,8 +58,8 @@ class UniversalLearningSystem:
             self.braiding_prompts = BraidingPrompts()
         
         # Initialize components
-        self.scoring = UniversalScoring()
-        self.clustering = UniversalClustering()
+        self.scoring = UniversalScoring(supabase_manager)
+        self.clustering = UniversalClustering(supabase_manager)
         
         # Learning configuration
         self.promotion_thresholds = {

@@ -7,9 +7,11 @@ for processing any strand type through the complete learning workflow.
 
 import asyncio
 from typing import Dict, Any, List, Optional
-from strand_processor import StrandProcessor, StrandType
-from learning_pipeline import LearningPipeline
-from mathematical_resonance_engine import MathematicalResonanceEngine
+from .strand_processor import StrandProcessor, StrandType
+from .learning_pipeline import LearningPipeline
+from .mathematical_resonance_engine import MathematicalResonanceEngine
+from .module_specific_scoring import ModuleSpecificScoring
+from .context_injection_engine import ContextInjectionEngine
 
 
 class CentralizedLearningSystem:
@@ -37,6 +39,8 @@ class CentralizedLearningSystem:
             supabase_manager, llm_client, prompt_manager
         )
         self.resonance_engine = MathematicalResonanceEngine()
+        self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        self.context_engine = ContextInjectionEngine(supabase_manager)
     
     async def process_strand(self, strand: Dict[str, Any]) -> bool:
         """
@@ -48,7 +52,16 @@ class CentralizedLearningSystem:
         Returns:
             True if processing succeeded, False otherwise
         """
-        return await self.learning_pipeline.process_strand(strand)
+        try:
+            # Calculate module-specific scores first
+            await self._calculate_module_scores(strand)
+            
+            # Process through learning pipeline
+            return await self.learning_pipeline.process_strand(strand)
+            
+        except Exception as e:
+            print(f"Error processing strand: {e}")
+            return False
     
     async def process_strand_by_id(self, strand_id: str) -> bool:
         """
@@ -208,10 +221,27 @@ class CentralizedLearningSystem:
         """
         return self.strand_processor.is_learning_supported(strand_type)
     
+    async def get_context_for_module(self, module_id: str, context_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Get context for a specific module based on its subscriptions
+        
+        Args:
+            module_id: Module identifier (rdi, cil, ctp, dm, td)
+            context_data: Additional context data for filtering
+            
+        Returns:
+            Context dictionary with relevant insights for the module
+        """
+        try:
+            return await self.context_engine.get_context_for_module(module_id, context_data)
+        except Exception as e:
+            print(f"Error getting context for module {module_id}: {e}")
+            return {}
+    
     async def get_resonance_context(self, strand_type: str, 
                                    context_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Get resonance-enhanced context for a module
+        Get resonance-enhanced context for a module (legacy method)
         
         Uses Simons' resonance principles to provide intelligent context injection
         
@@ -291,6 +321,80 @@ class CentralizedLearningSystem:
         except Exception as e:
             print(f"Error enhancing with resonance: {e}")
             return basic_context
+    
+    async def _calculate_module_scores(self, strand: Dict[str, Any]) -> None:
+        """
+        Calculate module-specific scores for a strand
+        
+        Args:
+            strand: Strand data from database
+        """
+        try:
+            # Determine module type from strand kind
+            module_type = self._get_module_type_from_kind(strand.get('kind', ''))
+            
+            if not module_type:
+                print(f"Unknown strand kind: {strand.get('kind', '')}")
+                return
+            
+            # Calculate module-specific scores
+            scores = self.module_scoring.calculate_module_scores(strand, module_type)
+            
+            # Calculate resonance scores
+            resonance_scores = self.resonance_engine.calculate_module_resonance(strand, module_type)
+            
+            # Update strand with scores
+            await self._update_strand_scores(strand['id'], scores, resonance_scores)
+            
+        except Exception as e:
+            print(f"Error calculating module scores: {e}")
+    
+    def _get_module_type_from_kind(self, kind: str) -> str:
+        """
+        Get module type from strand kind
+        
+        Args:
+            kind: Strand kind string
+            
+        Returns:
+            Module type string or None if unknown
+        """
+        kind_to_module = {
+            'pattern': 'rdi',
+            'prediction_review': 'cil',
+            'conditional_trading_plan': 'ctp',
+            'trading_decision': 'dm',
+            'execution_outcome': 'td'
+        }
+        
+        return kind_to_module.get(kind)
+    
+    async def _update_strand_scores(self, strand_id: str, scores: Dict[str, Any], 
+                                   resonance_scores: Dict[str, Any]) -> None:
+        """
+        Update strand with calculated scores
+        
+        Args:
+            strand_id: Strand ID
+            scores: Module-specific scores
+            resonance_scores: Resonance scores
+        """
+        try:
+            # Update strand with scores
+            update_data = {
+                'persistence_score': scores.get('persistence_score', 0.5),
+                'novelty_score': scores.get('novelty_score', 0.5),
+                'surprise_rating': scores.get('surprise_rating', 0.5),
+                'resonance_scores': resonance_scores,
+                'updated_at': 'now()'
+            }
+            
+            await self.supabase_manager.client.table('AD_strands').update(
+                update_data
+            ).eq('id', strand_id).execute()
+            
+        except Exception as e:
+            print(f"Error updating strand scores: {e}")
     
     async def start_continuous_learning(self, interval_seconds: int = 30):
         """

@@ -9,8 +9,13 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 import pandas as pd
 import numpy as np
+import sys
+import os
 
 from src.utils.supabase_manager import SupabaseManager
+
+# Add the learning system to the path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'src', 'learning_system'))
 
 
 class StrandCreation:
@@ -18,7 +23,15 @@ class StrandCreation:
     
     def __init__(self, supabase_manager: SupabaseManager):
         self.supabase_manager = supabase_manager
-        self.logger = logging.getLogger(f"{__name__}.strand_creation")
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize module-specific scoring
+        try:
+            from module_specific_scoring import ModuleSpecificScoring
+            self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        except ImportError as e:
+            self.logger.warning(f"Could not import module-specific scoring: {e}")
+            self.module_scoring = None
     
     async def create_individual_analyzer_strand(self, analyzer_name: str, analysis: Dict[str, Any], analysis_results: Dict[str, Any], market_data: pd.DataFrame) -> Optional[str]:
         """
@@ -85,6 +98,30 @@ class StrandCreation:
                 'outcome_score': None,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
+            
+            # Calculate module-specific resonance scores
+            if self.module_scoring:
+                try:
+                    persistence, novelty, surprise = await self.module_scoring.calculate_module_scores(individual_strand)
+                    individual_strand['persistence_score'] = persistence
+                    individual_strand['novelty_score'] = novelty
+                    individual_strand['surprise_rating'] = surprise
+                    individual_strand['resonance_score'] = (persistence + novelty + surprise) / 3
+                    
+                    # Add resonance scores to module_intelligence
+                    individual_strand['module_intelligence']['resonance_scores'] = {
+                        'phi': persistence,
+                        'rho': surprise,
+                        'theta': novelty,
+                        'omega': 0.5  # Will be calculated by historical data
+                    }
+                except Exception as e:
+                    self.logger.warning(f"Could not calculate resonance scores: {e}")
+                    # Set default scores
+                    individual_strand['persistence_score'] = 0.5
+                    individual_strand['novelty_score'] = 0.5
+                    individual_strand['surprise_rating'] = 0.5
+                    individual_strand['resonance_score'] = 0.5
             
             # Store individual strand
             result = self.supabase_manager.client.table('ad_strands').insert(individual_strand).execute()
@@ -181,6 +218,30 @@ class StrandCreation:
                 'outcome_score': None,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
+            
+            # Calculate module-specific resonance scores for overview strand
+            if self.module_scoring:
+                try:
+                    persistence, novelty, surprise = await self.module_scoring.calculate_module_scores(overview_strand)
+                    overview_strand['persistence_score'] = persistence
+                    overview_strand['novelty_score'] = novelty
+                    overview_strand['surprise_rating'] = surprise
+                    overview_strand['resonance_score'] = (persistence + novelty + surprise) / 3
+                    
+                    # Add resonance scores to module_intelligence
+                    overview_strand['module_intelligence']['resonance_scores'] = {
+                        'phi': persistence,
+                        'rho': surprise,
+                        'theta': novelty,
+                        'omega': 0.5  # Will be calculated by historical data
+                    }
+                except Exception as e:
+                    self.logger.warning(f"Could not calculate resonance scores for overview: {e}")
+                    # Set default scores
+                    overview_strand['persistence_score'] = 0.5
+                    overview_strand['novelty_score'] = 0.5
+                    overview_strand['surprise_rating'] = 0.5
+                    overview_strand['resonance_score'] = 0.5
             
             # Store overview strand
             result = self.supabase_manager.client.table('ad_strands').insert(overview_strand).execute()
