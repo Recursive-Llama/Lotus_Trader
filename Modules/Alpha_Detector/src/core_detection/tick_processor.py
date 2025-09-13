@@ -84,9 +84,15 @@ class TickProcessor:
         """
         try:
             # Convert to Tick object
+            # Parse timestamp if it's a string
+            if isinstance(tick_data['timestamp'], str):
+                timestamp = datetime.fromisoformat(tick_data['timestamp'].replace('Z', '+00:00'))
+            else:
+                timestamp = tick_data['timestamp']
+                
             tick = Tick(
                 symbol=tick_data['symbol'],
-                timestamp=tick_data['timestamp'],
+                timestamp=timestamp,
                 price=tick_data['close'],  # Use close price as tick price
                 volume=tick_data['volume'],
                 source=tick_data.get('source', 'hyperliquid')

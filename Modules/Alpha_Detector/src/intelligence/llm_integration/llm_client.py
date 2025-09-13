@@ -91,7 +91,13 @@ class OpenAILLMClient(LLMClient):
                 input=text
             )
             
-            return response.data[0].embedding
+            embedding = response.data[0].embedding
+            
+            # Truncate to 1536 dimensions (text-embedding-3-large returns 3072)
+            if len(embedding) > 1536:
+                embedding = embedding[:1536]
+            
+            return embedding
             
         except Exception as e:
             self.logger.error(f"Error generating OpenAI embedding: {e}")

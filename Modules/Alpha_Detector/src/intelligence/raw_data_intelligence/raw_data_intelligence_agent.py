@@ -369,7 +369,7 @@ class RawDataIntelligenceAgent:
                     # Collect confidence scores
                     team_analysis = result.get('team_analysis', {})
                     for analyzer, analysis in team_analysis.items():
-                if 'error' not in analysis:
+                        if 'error' not in analysis:
                             confidence = analysis.get('confidence', 0)
                             confidence_scores.append(confidence)
             
@@ -539,6 +539,44 @@ class RawDataIntelligenceAgent:
         except Exception as e:
             self.logger.error(f"Failed to handle microstructure analysis request: {e}")
     
+    async def analyze_market_data(self, market_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Analyze market data and return patterns
+        
+        Args:
+            market_data: Market data dictionary
+            
+        Returns:
+            List of detected patterns
+        """
+        try:
+            # Convert dict to DataFrame for analysis
+            import pandas as pd
+            df = pd.DataFrame([market_data])
+            
+            # Analyze the data
+            analysis_results = await self._analyze_raw_data(df)
+            
+            # Extract patterns from analysis results
+            patterns = []
+            if 'team_analysis' in analysis_results:
+                for analyzer, analysis in analysis_results['team_analysis'].items():
+                    if 'patterns' in analysis:
+                        for pattern in analysis['patterns']:
+                            patterns.append({
+                                'id': f"pattern_{uuid.uuid4()}",
+                                'kind': 'pattern',
+                                'symbol': market_data.get('symbol', 'UNKNOWN'),
+                                'content': pattern,
+                                'created_at': datetime.now(timezone.utc).isoformat()
+                            })
+            
+            return patterns
+            
+        except Exception as e:
+            logger.error(f"Error analyzing market data: {e}")
+            return []
+
     def get_agent_status(self) -> Dict[str, Any]:
         """
         Get current agent status

@@ -16,7 +16,10 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
 import json
-from .prompt_manager import PromptManager
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from llm_integration.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,229 @@
+# Trader Lowcap (TDL) Prompts
+# Specialized execution for social lowcap trades
+
+execution_planning:
+  description: "Plan execution strategy for social lowcap trades"
+  category: "trader_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert execution trader specializing in social lowcap token trades.
+        Your task is to plan optimal execution strategies for three-way entry and progressive exit.
+        
+        You understand:
+        - Three-way entry strategy (immediate, -20%, -50%)
+        - Progressive exit strategy (33% at 2x, 4x, 8x)
+        - Venue selection and liquidity optimization
+        - Slippage minimization and execution quality
+        - Risk management and position sizing
+        
+        Always provide clear execution plans with specific parameters.
+      
+      prompt: |
+        Plan execution strategy for this social lowcap trade:
+        
+        Trade Details:
+        - Token: {token_ticker} ({token_chain})
+        - Allocation: ${allocation_usd:,} ({allocation_pct}% of book)
+        - Current Price: ${current_price}
+        - Venue: {venue_dex}
+        - Liquidity: ${liquidity_usd:,}
+        - Volume 24h: ${volume_24h:,}
+        
+        Execution Strategy:
+        - Entry: Three-way (immediate, -20%, -50%)
+        - Exit: Progressive (33% at 2x, 4x, 8x)
+        
+        Market Context:
+        - Volatility: {volatility_pct}%
+        - Spread: {spread_pct}%
+        - Order Book Depth: {order_book_depth}
+        - Recent Slippage: {recent_slippage_pct}%
+        
+        Provide execution plan:
+        - Entry Levels: [immediate_pct, minus_20_pct, minus_50_pct]
+        - Entry Prices: [immediate_price, minus_20_price, minus_50_price]
+        - Exit Targets: [2x_price, 4x_price, 8x_price]
+        - Position Sizes: [immediate_size, minus_20_size, minus_50_size]
+        - Risk Management: stop_loss, trailing_stop, etc.
+        - Venue Selection: primary, backup venues
+        - Execution Quality: expected slippage, timing
+        
+        Return JSON with:
+        - entry_strategy: "three_way_entry"
+        - entry_levels: [immediate_pct, minus_20_pct, minus_50_pct]
+        - entry_prices: [immediate_price, minus_20_price, minus_50_price]
+        - exit_strategy: "progressive_exit"
+        - exit_targets: [2x_price, 4x_price, 8x_price]
+        - position_sizes: [immediate_size, minus_20_size, minus_50_size]
+        - risk_management: {stop_loss, trailing_stop, etc.}
+        - venue_selection: {primary, backup}
+        - execution_quality: {expected_slippage, timing_confidence}
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1200
+        top_p: 0.9
+
+venue_selection:
+  description: "Select optimal trading venues for execution"
+  category: "trader_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert venue selection specialist for cryptocurrency trading.
+        Your task is to select optimal trading venues based on liquidity, fees, and execution quality.
+      
+      prompt: |
+        Select optimal venues for this token trade:
+        
+        Token: {token_ticker} ({token_chain})
+        Trade Size: ${trade_size:,}
+        Urgency: {urgency_level} (low/medium/high)
+        
+        Available Venues:
+        {venue_data}
+        
+        Selection Criteria:
+        - Liquidity: Sufficient for trade size
+        - Fees: Competitive fee structure
+        - Execution Quality: Historical performance
+        - Reliability: Uptime and stability
+        - Slippage: Expected slippage for trade size
+        
+        Provide venue selection:
+        - Primary Venue: Best overall choice
+        - Backup Venues: Alternatives if primary fails
+        - Venue Ranking: Ordered list with scores
+        - Risk Assessment: Potential issues with each venue
+        - Execution Strategy: How to use selected venues
+        
+        Return JSON with:
+        - primary_venue: {name, dex, score, reason}
+        - backup_venues: array of {name, dex, score, reason}
+        - venue_ranking: ordered list with scores
+        - risk_assessment: {venue_name: [risks]}
+        - execution_strategy: detailed strategy
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.3
+        max_tokens: 1000
+        top_p: 0.9
+
+execution_monitoring:
+  description: "Monitor execution quality and adjust strategy"
+  category: "trader_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert execution monitor specializing in real-time trade execution analysis.
+        Your task is to monitor execution quality and provide adjustment recommendations.
+      
+      prompt: |
+        Monitor execution quality for this ongoing trade:
+        
+        Trade Details:
+        - Token: {token_ticker}
+        - Strategy: {execution_strategy}
+        - Target Allocation: ${target_allocation:,}
+        - Current Allocation: ${current_allocation:,}
+        
+        Execution Status:
+        - Entry 1 (Immediate): {entry_1_status} - {entry_1_filled}/{entry_1_target}
+        - Entry 2 (-20%): {entry_2_status} - {entry_2_filled}/{entry_2_target}
+        - Entry 3 (-50%): {entry_3_status} - {entry_3_filled}/{entry_3_target}
+        
+        Market Conditions:
+        - Current Price: ${current_price}
+        - Price Change: {price_change_pct}%
+        - Volume: {current_volume}
+        - Volatility: {volatility_pct}%
+        
+        Performance Metrics:
+        - Execution Quality: {execution_quality}/1.0
+        - Slippage: {slippage_pct}%
+        - Timing: {timing_score}/1.0
+        - Venue Performance: {venue_performance}/1.0
+        
+        Provide monitoring analysis:
+        - Execution Status: on_track/delayed/off_track
+        - Quality Assessment: excellent/good/fair/poor
+        - Adjustment Recommendations: specific actions needed
+        - Risk Factors: current risks to monitor
+        - Next Actions: immediate next steps
+        
+        Return JSON with:
+        - execution_status: on_track/delayed/off_track
+        - quality_assessment: excellent/good/fair/poor
+        - adjustment_recommendations: array of recommendations
+        - risk_factors: array of current risks
+        - next_actions: array of immediate actions
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1000
+        top_p: 0.9
+
+exit_strategy:
+  description: "Plan and execute progressive exit strategy"
+  category: "trader_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert exit strategy specialist for social lowcap token trades.
+        Your task is to plan and execute progressive exit strategies for maximum profit.
+      
+      prompt: |
+        Plan exit strategy for this position:
+        
+        Position Details:
+        - Token: {token_ticker}
+        - Entry Price: ${entry_price}
+        - Current Price: ${current_price}
+        - Position Size: ${position_size:,}
+        - Unrealized PnL: ${unrealized_pnl:,} ({unrealized_pnl_pct}%)
+        
+        Exit Strategy:
+        - Target 1: 2x entry price (33% of position)
+        - Target 2: 4x entry price (33% of position)
+        - Target 3: 8x entry price (34% of position)
+        
+        Market Context:
+        - Volatility: {volatility_pct}%
+        - Volume: {volume_24h:,}
+        - Liquidity: ${liquidity:,}
+        - Sentiment: {sentiment}
+        
+        Current Status:
+        - Target 1 Hit: {target_1_hit} (${target_1_price})
+        - Target 2 Hit: {target_2_hit} (${target_2_price})
+        - Target 3 Hit: {target_3_hit} (${target_3_price})
+        
+        Provide exit strategy:
+        - Exit Plan: detailed exit strategy
+        - Price Targets: specific price levels
+        - Position Sizing: how much to sell at each target
+        - Risk Management: stop losses, trailing stops
+        - Market Conditions: how market affects strategy
+        - Execution Timing: when to execute exits
+        
+        Return JSON with:
+        - exit_plan: detailed strategy
+        - price_targets: [target_1, target_2, target_3]
+        - position_sizing: [size_1, size_2, size_3]
+        - risk_management: {stop_loss, trailing_stop}
+        - market_conditions: how market affects strategy
+        - execution_timing: when to execute
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1200
+        top_p: 0.9

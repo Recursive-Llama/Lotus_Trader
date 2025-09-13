@@ -14,11 +14,17 @@ from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 import numpy as np
 
-from src.utils.supabase_manager import SupabaseManager
-from src.llm_integration.database_driven_context_system import DatabaseDrivenContextSystem
-from src.llm_integration.openrouter_client import OpenRouterClient
-from src.learning_system.module_specific_scoring import ModuleSpecificScoring
-from src.learning_system.centralized_learning_system import CentralizedLearningSystem
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from utils.supabase_manager import SupabaseManager
+from llm_integration.database_driven_context_system import DatabaseDrivenContextSystem
+from llm_integration.openrouter_client import OpenRouterClient
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'src', 'learning_system'))
+from module_specific_scoring import ModuleSpecificScoring
+from centralized_learning_system import CentralizedLearningSystem
 
 
 class PredictionEngine:
@@ -45,7 +51,7 @@ class PredictionEngine:
         self.prediction_tracker = PredictionTracker(supabase_manager)
         
         # Learning system integration
-        self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        self.module_scoring = ModuleSpecificScoring()
         self.learning_system = CentralizedLearningSystem(supabase_manager, llm_client, None)
         
         # Learning thresholds

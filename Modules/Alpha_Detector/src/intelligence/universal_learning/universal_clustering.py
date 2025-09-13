@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 # Import existing PatternClusterer
-from src.llm_integration.pattern_clusterer import PatternClusterer
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from llm_integration.pattern_clusterer import PatternClusterer
 
 logger = logging.getLogger(__name__)
 

@@ -7,11 +7,12 @@ for processing any strand type through the complete learning workflow.
 
 import asyncio
 from typing import Dict, Any, List, Optional
-from .strand_processor import StrandProcessor, StrandType
-from .learning_pipeline import LearningPipeline
-from .mathematical_resonance_engine import MathematicalResonanceEngine
-from .module_specific_scoring import ModuleSpecificScoring
-from .context_injection_engine import ContextInjectionEngine
+from strand_processor import StrandProcessor, StrandType
+from learning_pipeline import LearningPipeline
+from mathematical_resonance_engine import MathematicalResonanceEngine
+from module_specific_scoring import ModuleSpecificScoring
+from context_injection_engine import ContextInjectionEngine
+from module_triggering_engine import ModuleTriggeringEngine
 
 
 class CentralizedLearningSystem:
@@ -39,8 +40,9 @@ class CentralizedLearningSystem:
             supabase_manager, llm_client, prompt_manager
         )
         self.resonance_engine = MathematicalResonanceEngine()
-        self.module_scoring = ModuleSpecificScoring(supabase_manager)
+        self.module_scoring = ModuleSpecificScoring()
         self.context_engine = ContextInjectionEngine(supabase_manager)
+        self.triggering_engine = ModuleTriggeringEngine(supabase_manager, self)
     
     async def process_strand(self, strand: Dict[str, Any]) -> bool:
         """
@@ -398,12 +400,19 @@ class CentralizedLearningSystem:
     
     async def start_continuous_learning(self, interval_seconds: int = 30):
         """
-        Start continuous learning processing
+        Start continuous learning processing with module triggering
         
         Args:
             interval_seconds: Seconds between processing cycles
         """
         print(f"Starting continuous learning with {interval_seconds}s interval")
+        
+        # Start module triggering system
+        triggering_started = await self.start_module_triggering()
+        if triggering_started:
+            print("✅ Module triggering system started")
+        else:
+            print("⚠️  Module triggering system failed to start")
         
         while True:
             try:
@@ -419,7 +428,64 @@ class CentralizedLearningSystem:
                 
             except KeyboardInterrupt:
                 print("Stopping continuous learning")
+                await self.stop_module_triggering()
                 break
             except Exception as e:
                 print(f"Error in continuous learning: {e}")
                 await asyncio.sleep(interval_seconds)
+    
+    async def start_module_triggering(self) -> bool:
+        """
+        Start the module triggering system
+        
+        Returns:
+            True if started successfully, False otherwise
+        """
+        try:
+            return await self.triggering_engine.start()
+        except Exception as e:
+            print(f"Error starting module triggering: {e}")
+            return False
+    
+    async def stop_module_triggering(self) -> bool:
+        """
+        Stop the module triggering system
+        
+        Returns:
+            True if stopped successfully, False otherwise
+        """
+        try:
+            return await self.triggering_engine.stop()
+        except Exception as e:
+            print(f"Error stopping module triggering: {e}")
+            return False
+    
+    async def get_triggering_status(self) -> Dict[str, Any]:
+        """
+        Get module triggering status
+        
+        Returns:
+            Dictionary with triggering status information
+        """
+        try:
+            return await self.triggering_engine.get_triggering_status()
+        except Exception as e:
+            print(f"Error getting triggering status: {e}")
+            return {'error': str(e)}
+    
+    async def force_trigger_module(self, module: str, strand_type: str = None) -> bool:
+        """
+        Force trigger a specific module (for testing)
+        
+        Args:
+            module: Module to trigger (cil, ctp, dm, td)
+            strand_type: Specific strand type to use for triggering
+            
+        Returns:
+            True if triggered successfully, False otherwise
+        """
+        try:
+            return await self.triggering_engine.force_trigger_module(module, strand_type)
+        except Exception as e:
+            print(f"Error force triggering module {module}: {e}")
+            return False

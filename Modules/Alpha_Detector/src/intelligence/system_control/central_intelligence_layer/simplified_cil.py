@@ -16,12 +16,18 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import pandas as pd
 
-from src.utils.supabase_manager import SupabaseManager
-from src.llm_integration.openrouter_client import OpenRouterClient
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from utils.supabase_manager import SupabaseManager
+from llm_integration.openrouter_client import OpenRouterClient
 from .prediction_engine import PredictionEngine
 from .per_cluster_learning_system import PerClusterLearningSystem
-from .engines.prediction_outcome_tracker import PredictionOutcomeTracker
-from .core.cil_plan_composer import CILPlanComposer
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from intelligence.advanced_cil.legacy_cil.engines.prediction_outcome_tracker import PredictionOutcomeTracker
+from intelligence.advanced_cil.legacy_cil.core.cil_plan_composer import CILPlanComposer
 
 
 class SimplifiedCIL:
@@ -187,6 +193,20 @@ class SimplifiedCIL:
             
         except Exception as e:
             self.logger.error(f"Error in group learning: {e}")
+    
+    async def process_patterns(self, patterns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Process patterns and create predictions"""
+        try:
+            predictions = []
+            for pattern in patterns:
+                # Create prediction from pattern
+                prediction = await self.prediction_engine.create_prediction_from_pattern(pattern)
+                if prediction:
+                    predictions.append(prediction)
+            return predictions
+        except Exception as e:
+            self.logger.error(f"Error processing patterns: {e}")
+            return []
     
     async def get_pattern_groups_with_predictions(self) -> List[Dict[str, Any]]:
         """Get all pattern groups that have predictions"""

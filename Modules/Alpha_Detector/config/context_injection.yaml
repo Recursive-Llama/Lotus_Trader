@@ -60,6 +60,40 @@ module_subscriptions:
     context_priority: "high"
     max_context_items: 15
     description: "TD gets context from trading decisions, execution outcomes, and pattern detection for better execution quality and pattern monitoring"
+  
+  # Social Lowcap Modules
+  social_ingest:
+    name: "Social Ingest"
+    subscribed_strand_types: []
+    context_sources: []
+    description: "Social Ingest creates social signals but doesn't consume context from other modules"
+    
+  decision_maker_lowcap:
+    name: "Decision Maker Lowcap"
+    subscribed_strand_types:
+      - "social_lowcap"
+      - "curator_scorecard"
+      - "curator_slice_score"
+    context_sources:
+      - "curator_scorecard_braids"
+      - "curator_slice_score_braids"
+      - "social_lowcap_braids"
+    context_priority: "high"
+    max_context_items: 10
+    description: "DML gets context from curator performance and social signals for better allocation decisions"
+    
+  trader_lowcap:
+    name: "Trader Lowcap"
+    subscribed_strand_types:
+      - "decision_lowcap"
+      - "execution_lowcap"
+      - "position_update"
+    context_sources:
+      - "execution_lowcap_braids"
+      - "position_performance_braids"
+    context_priority: "high"
+    max_context_items: 15
+    description: "TDL gets context from execution outcomes and position performance for better execution quality"
 
 # Context Quality Thresholds
 quality_thresholds:
@@ -122,3 +156,24 @@ context_templates:
       - Venue Performance: {venue_performance}
       - Pattern Recognition Accuracy: {pattern_accuracy}
       - Conditional Action Execution: {conditional_execution}
+  
+  # Social Lowcap Context Templates
+  decision_maker_lowcap:
+    curator_context: |
+      Based on recent curator performance:
+      - Curator Score: {curator_score}
+      - Success Rate: {success_rate}%
+      - Allocation Accuracy: {allocation_accuracy}
+      - Portfolio Impact: {portfolio_impact}
+      - Key Performance Factors: {performance_factors}
+      - Recommended Allocation Range: {allocation_range}%
+    
+  trader_lowcap:
+    execution_context: |
+      Based on recent execution performance:
+      - Execution Success Rate: {success_rate}%
+      - Slippage Control: {slippage_control}
+      - Venue Effectiveness: {venue_effectiveness}
+      - Three-Way Entry Performance: {entry_performance}
+      - Progressive Exit Performance: {exit_performance}
+      - Position Management Quality: {position_quality}

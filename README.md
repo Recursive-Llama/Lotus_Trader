@@ -246,6 +246,15 @@ python test_raw_data_statistical_focus.py
 - **⋔ Strand-Braid System** — All team outputs become structured experience that clusters into actionable knowledge
 - **⊹ Motif Cards** — Named patterns with invariants, fragilities, and contexts
 
+### Module Integration Philosophy:
+**Plug-and-play modules that define their own learning needs, then automatically integrate with the universal learning system**
+
+- **Simple Module Creation** — Just define what's important to learn, create strands, get context automatically
+- **Universal Learning System** — Handles all learning complexity, resonance scoring, and context injection
+- **No Learning Code Required** — Modules stay simple, learning system does the heavy lifting
+- **Automatic Integration** — New modules plug in seamlessly with existing infrastructure
+- **Event-Driven Communication** — All modules communicate through strands, no direct coupling
+
 ## ☼ Development Roadmap
 ### ☼ Phase 1: Core Intelligence Foundation (COMPLETED)
 - Raw Data Intelligence Team

@@ -8,10 +8,10 @@ Handles strand type detection, clustering, learning analysis, and braid creation
 import asyncio
 from typing import Dict, Any, List, Optional
 from strand_processor import StrandProcessor, LearningConfig, StrandType
-from .multi_cluster_grouping_engine import MultiClusterGroupingEngine
-from .per_cluster_learning_system import PerClusterLearningSystem
-from .llm_learning_analyzer import LLMLearningAnalyzer
-from .braid_level_manager import BraidLevelManager
+from multi_cluster_grouping_engine import MultiClusterGroupingEngine
+from per_cluster_learning_system import PerClusterLearningSystem
+from llm_learning_analyzer import LLMLearningAnalyzer
+from braid_level_manager import BraidLevelManager
 from mathematical_resonance_engine import MathematicalResonanceEngine
 
 

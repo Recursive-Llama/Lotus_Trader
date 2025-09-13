@@ -31,6 +31,45 @@ class MarketDataProcessor:
         self.processed_count = 0
         self.error_count = 0
         
+    async def process_market_data(self, market_data: Dict) -> Dict:
+        """Process market data and return processed data"""
+        try:
+            # Validate data quality
+            if not self.data_quality_validator.validate(market_data):
+                logger.warning(f"Data quality validation failed for {market_data.get('symbol', 'unknown')}")
+                self.error_count += 1
+                return None
+            
+            # Process the market data
+            processed_data = {
+                'symbol': market_data.get('symbol'),
+                'close': market_data.get('close', market_data.get('price', 0.0)),
+                'volume': market_data.get('volume'),
+                'timestamp': market_data.get('timestamp'),
+                'bid': market_data.get('bid'),
+                'ask': market_data.get('ask'),
+                'spread': market_data.get('spread'),
+                'high_24h': market_data.get('high_24h'),
+                'low_24h': market_data.get('low_24h'),
+                'processed_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Store the processed data
+            success = await self.tick_processor.process_tick(market_data)
+            
+            if success:
+                self.processed_count += 1
+                logger.debug(f"Processed market data for {processed_data['symbol']}: {processed_data['close']}")
+                return processed_data
+            else:
+                self.error_count += 1
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error processing market data: {e}")
+            self.error_count += 1
+            return None
+
     async def process_ohlcv_data(self, raw_data: Dict) -> bool:
         """Process raw OHLCV data as tick and convert to 1m candles"""
         try:

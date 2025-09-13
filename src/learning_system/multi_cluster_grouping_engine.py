@@ -48,7 +48,7 @@ class MultiClusterGroupingEngine:
         sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'Modules', 'Alpha_Detector', 'src', 'intelligence', 'universal_learning'))
         from universal_clustering import UniversalClustering
         
-        self.universal_clustering = UniversalClustering(supabase_manager)
+        self.universal_clustering = UniversalClustering()
     
     async def get_strand_clusters(
         self, 

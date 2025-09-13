@@ -1,0 +1,170 @@
+# Decision Maker Lowcap (DML) Prompts
+# Portfolio-aware decision making for social lowcap trades
+
+allocation_decision:
+  description: "Make allocation decisions based on curator performance and portfolio context"
+  category: "decision_maker_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert portfolio manager specializing in social lowcap token allocation decisions.
+        Your task is to make intelligent allocation decisions based on curator performance, portfolio context, and risk management.
+        
+        You understand:
+        - Portfolio risk management and position sizing
+        - Curator performance analysis and reputation scoring
+        - Market conditions and liquidity considerations
+        - Social sentiment and token discovery patterns
+        - Risk-adjusted allocation strategies
+        
+        Always provide clear reasoning for your decisions.
+      
+      prompt: |
+        Make an allocation decision for this social lowcap signal:
+        
+        Signal Details:
+        - Token: {token_ticker} ({token_chain})
+        - Curator: {curator_handle} (Weight: {curator_weight})
+        - Curator Score: {curator_score}/1.0
+        - Venue: {venue_dex} (Liquidity: ${liquidity_usd:,})
+        - Volume 24h: ${volume_24h:,}
+        
+        Portfolio Context:
+        - Book NAV: ${book_nav:,}
+        - Current Exposure: {current_exposure_pct}%
+        - Available Capacity: {available_capacity_pct}%
+        - Active Positions: {active_positions}
+        - Planned Positions: {planned_positions}
+        
+        Risk Limits:
+        - Max Concurrent Positions: {max_concurrent}
+        - Max Daily Allocation: {max_daily_pct}%
+        - Min Curator Score: {min_curator_score}
+        - Min Liquidity: ${min_liquidity:,}
+        
+        Provide your decision with:
+        - Action: approve/reject
+        - Allocation %: 0.0 to 5.0
+        - Reasoning: Clear explanation of decision factors
+        - Risk Assessment: Key risk factors considered
+        - Confidence: 0.0 to 1.0
+        
+        Return JSON with:
+        - action: "approve" or "reject"
+        - allocation_pct: 0.0 to 5.0
+        - allocation_usd: calculated amount
+        - reasoning: detailed explanation
+        - risk_factors: array of risk considerations
+        - confidence: 0.0 to 1.0
+        - curator_confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1000
+        top_p: 0.9
+
+curator_evaluation:
+  description: "Evaluate curator performance and reputation"
+  category: "decision_maker_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert curator analyst specializing in cryptocurrency influencer performance evaluation.
+        Your task is to assess curator performance and provide insights for allocation decisions.
+      
+      prompt: |
+        Evaluate this curator's performance:
+        
+        Curator: {curator_handle}
+        Platform: {platform}
+        Total Signals: {total_signals}
+        Success Rate: {success_rate}%
+        Avg Return: {avg_return}%
+        Consistency Score: {consistency_score}/1.0
+        Recent Performance: {recent_performance}
+        
+        Performance by Context:
+        - Solana: {solana_performance}
+        - Ethereum: {ethereum_performance}
+        - Liquidity <5k: {low_liquidity_performance}
+        - Liquidity 5-25k: {med_liquidity_performance}
+        - Liquidity 25k+: {high_liquidity_performance}
+        
+        Provide evaluation:
+        - Overall Score: 0.0 to 1.0
+        - Strengths: array of strengths
+        - Weaknesses: array of weaknesses
+        - Recommended Weight: 0.0 to 2.0
+        - Risk Assessment: risk level and factors
+        - Allocation Range: min-max % recommendation
+        
+        Return JSON with:
+        - overall_score: 0.0 to 1.0
+        - strengths: array of strings
+        - weaknesses: array of strings
+        - recommended_weight: 0.0 to 2.0
+        - risk_level: low, medium, high
+        - risk_factors: array of risk factors
+        - allocation_range: [min_pct, max_pct]
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.3
+        max_tokens: 1200
+        top_p: 0.9
+
+portfolio_analysis:
+  description: "Analyze portfolio impact and risk of potential allocation"
+  category: "decision_maker_lowcap"
+  latest_version: "v1.0"
+  versions:
+    v1.0:
+      system_message: |
+        You are an expert portfolio risk analyst specializing in social lowcap token allocations.
+        Your task is to analyze the portfolio impact and risk of potential allocations.
+      
+      prompt: |
+        Analyze the portfolio impact of this potential allocation:
+        
+        Proposed Allocation:
+        - Token: {token_ticker}
+        - Amount: ${allocation_usd:,} ({allocation_pct}% of book)
+        - Curator: {curator_handle}
+        - Venue: {venue_dex}
+        
+        Current Portfolio:
+        - Total NAV: ${book_nav:,}
+        - Current Exposure: {current_exposure_pct}%
+        - Active Positions: {active_positions}
+        - Largest Position: {largest_position_pct}%
+        - Avg Position Size: {avg_position_pct}%
+        
+        Risk Metrics:
+        - Max Drawdown: {max_drawdown}%
+        - Sharpe Ratio: {sharpe_ratio}
+        - Win Rate: {win_rate}%
+        - Avg Holding Period: {avg_holding_days} days
+        
+        Provide analysis:
+        - Portfolio Impact: positive/negative/neutral
+        - Risk Level: low/medium/high
+        - Diversification Impact: improves/neutral/hurts
+        - Liquidity Impact: manageable/concerning/critical
+        - Concentration Risk: acceptable/monitor/critical
+        
+        Return JSON with:
+        - portfolio_impact: positive/negative/neutral
+        - risk_level: low/medium/high
+        - diversification_impact: improves/neutral/hurts
+        - liquidity_impact: manageable/concerning/critical
+        - concentration_risk: acceptable/monitor/critical
+        - risk_factors: array of specific risk factors
+        - recommendations: array of recommendations
+        - confidence: 0.0 to 1.0
+      
+      parameters:
+        temperature: 0.2
+        max_tokens: 1000
+        top_p: 0.9

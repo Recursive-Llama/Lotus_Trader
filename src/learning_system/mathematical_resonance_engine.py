@@ -357,10 +357,18 @@ class MathematicalResonanceEngine:
     def _calculate_pattern_strength(self, pattern_data: Dict[str, Any]) -> float:
         """Calculate pattern strength for a single timeframe"""
         try:
-            # Simple pattern strength calculation
+            # For RDI patterns, look in module_intelligence
+            if 'module_intelligence' in pattern_data:
+                confidence = pattern_data.get('module_intelligence', {}).get('confidence', 0.0)
+                return confidence
+            
+            # For other patterns, look in content or metadata
             confidence = pattern_data.get('confidence', 0.0)
-            quality = pattern_data.get('quality', 0.0)
-            return confidence * quality
+            strength = pattern_data.get('strength', confidence)
+            quality = pattern_data.get('quality', confidence)
+            
+            # Return the best available metric
+            return max(confidence, strength, quality)
         except:
             return 0.0
     
@@ -506,7 +514,7 @@ class MathematicalResonanceEngine:
             if module_type == 'rdi':
                 # RDI: Cross-timeframe pattern consistency
                 pattern_type = strand.get('module_intelligence', {}).get('pattern_type', 'unknown')
-                confidence = strand.get('sig_confidence', 0.0)
+                confidence = strand.get('module_intelligence', {}).get('confidence', 0.0)
                 
                 # Simple fractal consistency based on confidence
                 return min(confidence * 1.2, 1.0)

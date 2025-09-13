@@ -46,7 +46,7 @@ class UniversalScoring:
         if supabase_manager:
             try:
                 from module_specific_scoring import ModuleSpecificScoring
-                self.module_scoring = ModuleSpecificScoring(supabase_manager)
+                self.module_scoring = ModuleSpecificScoring()
             except ImportError as e:
                 self.logger.warning(f"Could not import module-specific scoring: {e}")
                 self.module_scoring = None

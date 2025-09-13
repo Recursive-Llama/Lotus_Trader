@@ -35,14 +35,12 @@ class ContextInjectionEngine:
         self.supabase_manager = supabase_manager
         self.logger = logging.getLogger(__name__)
         
-        # Load configuration
-        if config_path is None:
-            config_path = os.path.join(
-                os.path.dirname(__file__), 
-                '..', '..', 'Modules', 'Alpha_Detector', 'config', 'context_injection.yaml'
-            )
-        
-        self.config = self._load_config(config_path)
+        # Load configuration or use defaults
+        if config_path and os.path.exists(config_path):
+            self.config = self._load_config(config_path)
+        else:
+            # Use default configuration
+            self.config = self._get_default_config()
         self.module_subscriptions = self.config.get('module_subscriptions', {})
         self.quality_thresholds = self.config.get('quality_thresholds', {})
         self.injection_settings = self.config.get('injection_settings', {})
@@ -59,6 +57,44 @@ class ContextInjectionEngine:
         except Exception as e:
             self.logger.error(f"Error loading context injection config: {e}")
             return {}
+    
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default context injection configuration"""
+        return {
+            'module_subscriptions': {
+                'cil': {
+                    'subscribed_strand_types': ['prediction_review'],
+                    'max_context_items': 10
+                },
+                'ctp': {
+                    'subscribed_strand_types': ['prediction_review', 'trade_outcome'],
+                    'max_context_items': 15
+                },
+                'dm': {
+                    'subscribed_strand_types': ['trading_decision'],
+                    'max_context_items': 10
+                },
+                'td': {
+                    'subscribed_strand_types': ['execution_outcome'],
+                    'max_context_items': 10
+                }
+            },
+            'quality_thresholds': {
+                'min_braid_level': 2,
+                'min_resonance_score': 0.6,
+                'max_age_days': 30
+            },
+            'injection_settings': {
+                'max_context_items': 10,
+                'min_quality_score': 0.5
+            },
+            'context_templates': {
+                'prediction_review': 'prediction_insights',
+                'trade_outcome': 'outcome_insights',
+                'trading_decision': 'decision_insights',
+                'execution_outcome': 'execution_insights'
+            }
+        }
     
     async def get_context_for_module(self, module_id: str, context_data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -111,33 +147,49 @@ class ContextInjectionEngine:
     ) -> Dict[str, Any]:
         """Get context for a specific strand type"""
         try:
-            # Query braids of this strand type
+            # Use SupabaseManager methods instead of direct client access
+            # Get strands of this type (braids are stored as strands with braid_kind)
             braid_kind = f"{strand_type}_braid"
             
-            # Build query with quality filters
-            query = self.supabase_manager.supabase.table('AD_strands').select('*').eq('kind', braid_kind)
+            # Get strands using SupabaseManager method
+            strands = self.supabase_manager.get_strands_by_type(braid_kind, limit=50)
             
             # Apply quality thresholds
             min_braid_level = self.quality_thresholds.get('min_braid_level', 2)
             min_resonance = self.quality_thresholds.get('min_resonance_score', 0.6)
             max_age_days = self.quality_thresholds.get('max_age_days', 30)
             
-            query = query.gte('braid_level', min_braid_level)
-            query = query.gte('resonance_score', min_resonance)
-            
-            # Add date filter
+            # Filter strands by quality criteria
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-            query = query.gte('created_at', cutoff_date.isoformat())
+            braids = []
             
-            # Order by resonance score and recency
-            query = query.order('resonance_score', desc=True).order('created_at', desc=True)
+            for strand in strands:
+                # Check quality thresholds
+                braid_level = strand.get('braid_level', 1)
+                resonance_score = strand.get('resonance_score', 0.5)
+                created_at = strand.get('created_at', '')
+                
+                # Parse created_at if it's a string
+                if isinstance(created_at, str):
+                    try:
+                        strand_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    except:
+                        strand_date = datetime.now(timezone.utc)
+                else:
+                    strand_date = created_at
+                
+                # Apply filters
+                if (braid_level >= min_braid_level and 
+                    resonance_score >= min_resonance and 
+                    strand_date >= cutoff_date):
+                    braids.append(strand)
+            
+            # Sort by resonance score and recency
+            braids.sort(key=lambda x: (x.get('resonance_score', 0.5), x.get('created_at', '')), reverse=True)
             
             # Limit results
-            max_items = self.module_subscriptions[module_id].get('max_context_items', 10)
-            query = query.limit(max_items)
-            
-            result = query.execute()
-            braids = result.data if result.data else []
+            max_items = self.module_subscriptions.get(module_id, {}).get('max_context_items', 10)
+            braids = braids[:max_items]
             
             if not braids:
                 return {}

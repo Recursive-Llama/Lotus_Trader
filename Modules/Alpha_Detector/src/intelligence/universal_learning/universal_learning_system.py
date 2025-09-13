@@ -17,10 +17,16 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
 
-from .universal_scoring import UniversalScoring
-from .universal_clustering import UniversalClustering, Cluster
-from src.intelligence.llm_integration.braiding_prompts import BraidingPrompts
-from src.intelligence.llm_integration.llm_client import LLMClientManager
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from intelligence.universal_learning.universal_scoring import UniversalScoring
+from intelligence.universal_learning.universal_clustering import UniversalClustering, Cluster
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'Modules', 'Alpha_Detector', 'src'))
+from intelligence.llm_integration.braiding_prompts import BraidingPrompts
+from intelligence.llm_integration.llm_client import LLMClientManager
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +65,7 @@ class UniversalLearningSystem:
         
         # Initialize components
         self.scoring = UniversalScoring(supabase_manager)
-        self.clustering = UniversalClustering(supabase_manager)
+        self.clustering = UniversalClustering()
         
         # Learning configuration
         self.promotion_thresholds = {

@@ -91,6 +91,15 @@ class SupabaseManager:
             logger.error(f"Failed to get strands for symbol {symbol}: {e}")
             return []
     
+    def get_strands_by_type(self, strand_type: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get strands by type (kind)"""
+        try:
+            result = self.client.table('ad_strands').select('*').eq('kind', strand_type).order('created_at', desc=True).limit(limit).execute()
+            return result.data
+        except Exception as e:
+            logger.error(f"Failed to get strands by type {strand_type}: {e}")
+            return []
+    
     def get_strands_by_tags(self, tags: List[str], limit: int = 50) -> List[Dict[str, Any]]:
         """Get strands by tags"""
         try:
@@ -102,6 +111,51 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Failed to get strands by tags: {e}")
             return []
+    
+    def get_braids_by_strand_types(self, strand_types: List[str], limit: int = 50) -> List[Dict[str, Any]]:
+        """Get braids by strand types"""
+        try:
+            result = self.client.table('ad_braids').select('*').order('created_at', desc=True).limit(limit).execute()
+            # Filter by strand types in Python
+            filtered_data = [row for row in result.data if any(st in row.get('strand_types', []) for st in strand_types)]
+            return filtered_data
+        except Exception as e:
+            logger.error(f"Failed to get braids by strand types: {e}")
+            return []
+    
+    def insert_braid(self, braid_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a braid into ad_braids table"""
+        try:
+            result = self.client.table('ad_braids').insert(braid_data).execute()
+            if result.data:
+                logger.info(f"Inserted braid: {result.data[0]['id']}")
+                return result.data[0]
+            else:
+                raise Exception("No data returned from braid insert")
+        except Exception as e:
+            logger.error(f"Failed to insert braid: {e}")
+            raise
+    
+    def execute_query(self, query: str) -> Any:
+        """Execute a raw SQL query"""
+        try:
+            # Use direct table access instead of RPC
+            if "SELECT 1" in query.upper():
+                # Simple test query
+                result = self.client.table('ad_strands').select('id').limit(1).execute()
+                return result.data
+            else:
+                # For other queries, try RPC but fallback to table access
+                try:
+                    result = self.client.rpc('execute_sql', {'query': query}).execute()
+                    return result.data
+                except:
+                    # Fallback to table access
+                    logger.warning(f"RPC failed, using fallback for query: {query}")
+                    return None
+        except Exception as e:
+            logger.error(f"Failed to execute query: {e}")
+            return None
     
     def update_strand(self, strand_id: str, updates: Dict[str, Any]) -> bool:
         """Update a strand"""

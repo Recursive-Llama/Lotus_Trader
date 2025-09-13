@@ -31,7 +31,8 @@ class BraidLevelManager:
         self.supabase_manager = supabase_manager
         self.logger = logging.getLogger(__name__)
         
-        # Quality thresholds for braid creation
+        # Quality thresholds for braid creation - SAME THRESHOLD FOR ALL LEVELS
+        # Braids cluster with other braids of the same level, not higher individual scores
         self.quality_thresholds = {
             'level_2': {
                 'min_resonance': 0.6,
@@ -41,18 +42,18 @@ class BraidLevelManager:
                 'min_surprise': 0.4
             },
             'level_3': {
-                'min_resonance': 0.7,
-                'min_strands': 5,
-                'min_persistence': 0.6,
-                'min_novelty': 0.5,
-                'min_surprise': 0.5
+                'min_resonance': 0.6,  # SAME as level 2
+                'min_strands': 3,      # SAME as level 2
+                'min_persistence': 0.5, # SAME as level 2
+                'min_novelty': 0.4,    # SAME as level 2
+                'min_surprise': 0.4    # SAME as level 2
             },
             'level_4': {
-                'min_resonance': 0.8,
-                'min_strands': 8,
-                'min_persistence': 0.7,
-                'min_novelty': 0.6,
-                'min_surprise': 0.6
+                'min_resonance': 0.6,  # SAME as level 2
+                'min_strands': 3,      # SAME as level 2
+                'min_persistence': 0.5, # SAME as level 2
+                'min_novelty': 0.4,    # SAME as level 2
+                'min_surprise': 0.4    # SAME as level 2
             }
         }
     
@@ -111,11 +112,12 @@ class BraidLevelManager:
     def _meets_quality_thresholds(self, source_strands: List[Dict[str, Any]], target_level: int) -> bool:
         """Check if source strands meet quality thresholds for target level"""
         try:
-            if target_level not in self.quality_thresholds:
+            level_key = f'level_{target_level}'
+            if level_key not in self.quality_thresholds:
                 self.logger.warning(f"Unknown target level: {target_level}")
                 return False
             
-            thresholds = self.quality_thresholds[f'level_{target_level}']
+            thresholds = self.quality_thresholds[level_key]
             
             # Check minimum strand count
             if len(source_strands) < thresholds['min_strands']:
@@ -188,7 +190,10 @@ class BraidLevelManager:
             # Extract source strand IDs
             source_strand_ids = [s.get('id') for s in source_strands if s.get('id')]
             
-            # Create braid content
+            # Extract clustering metadata from source strands for re-clustering
+            clustering_metadata = self._extract_clustering_metadata(source_strands)
+            
+            # Create braid content with preserved metadata
             braid_content = {
                 'braid_analysis': f"Level {target_level} braid created from {len(source_strands)} {strand_type} strands",
                 'source_strands': source_strand_ids,
@@ -198,6 +203,7 @@ class BraidLevelManager:
                     'creation_timestamp': created_at,
                     'quality_scores': braid_scores
                 },
+                'clustering_metadata': clustering_metadata,  # For re-clustering
                 'learning_insights': self._generate_learning_insights(source_strands, braid_scores)
             }
             
@@ -215,6 +221,7 @@ class BraidLevelManager:
                 'quality_score': braid_scores['quality_score'],
                 'source_strand_count': len(source_strands),
                 'source_strands': source_strand_ids,
+                'cluster_key': clustering_metadata['cluster_key'],  # For re-clustering
                 'content': braid_content,
                 'status': 'active'
             }
@@ -291,6 +298,89 @@ class BraidLevelManager:
             self.logger.error(f"Error calculating score consistency: {e}")
             return 'unknown'
     
+    def _extract_clustering_metadata(self, source_strands: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Extract clustering metadata from source strands for re-clustering"""
+        try:
+            # Extract common clustering attributes
+            symbols = set()
+            timeframes = set()
+            pattern_types = set()
+            group_signatures = set()
+            
+            for strand in source_strands:
+                # Extract symbol
+                if 'symbol' in strand:
+                    symbols.add(strand['symbol'])
+                
+                # Extract timeframe
+                if 'timeframe' in strand:
+                    timeframes.add(strand['timeframe'])
+                
+                # Extract pattern type from module_intelligence
+                module_intel = strand.get('module_intelligence', {})
+                if 'pattern_type' in module_intel:
+                    pattern_types.add(module_intel['pattern_type'])
+                
+                # Extract group signature
+                if 'group_signature' in strand:
+                    group_signatures.add(strand['group_signature'])
+            
+            # Generate cluster key for re-clustering
+            cluster_key = self._generate_cluster_key(source_strands)
+            
+            return {
+                'symbols': list(symbols),
+                'timeframes': list(timeframes),
+                'pattern_types': list(pattern_types),
+                'group_signatures': list(group_signatures),
+                'cluster_key': cluster_key,
+                'original_cluster_keys': [s.get('cluster_key', 'unknown') for s in source_strands if s.get('cluster_key')]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting clustering metadata: {e}")
+            return {
+                'symbols': [],
+                'timeframes': [],
+                'pattern_types': [],
+                'group_signatures': [],
+                'cluster_key': 'unknown',
+                'original_cluster_keys': []
+            }
+    
+    def _generate_cluster_key(self, source_strands: List[Dict[str, Any]]) -> str:
+        """Generate a cluster key for the braid based on source strands"""
+        try:
+            if not source_strands:
+                return 'unknown'
+            
+            # Get the most common attributes from source strands
+            symbols = set()
+            timeframes = set()
+            pattern_types = set()
+            
+            for strand in source_strands:
+                if 'symbol' in strand:
+                    symbols.add(strand['symbol'])
+                if 'timeframe' in strand:
+                    timeframes.add(strand['timeframe'])
+                
+                module_intel = strand.get('module_intelligence', {})
+                if 'pattern_type' in module_intel:
+                    pattern_types.add(module_intel['pattern_type'])
+            
+            # Use the most common values or first available
+            symbol = list(symbols)[0] if symbols else 'unknown'
+            timeframe = list(timeframes)[0] if timeframes else 'unknown'
+            pattern_type = list(pattern_types)[0] if pattern_types else 'unknown'
+            
+            # Generate cluster key for re-clustering
+            return f"{symbol}_{timeframe}_{pattern_type}"
+            
+        except Exception as e:
+            self.logger.error(f"Error generating cluster key: {e}")
+            return 'unknown'
+
     def _generate_recommendations(self, braid_scores: Dict[str, float], strand_count: int) -> List[str]:
         """Generate recommendations based on braid scores"""
         try:
