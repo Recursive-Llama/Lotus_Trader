@@ -20,8 +20,8 @@ from src.llm_integration.prompt_manager import PromptManager
 from src.llm_integration.database_driven_context_system import DatabaseDrivenContextSystem
 from src.utils.supabase_manager import SupabaseManager
 
-from .team_coordination import TeamCoordination
-from .llm_coordination import LLMCoordination
+from .coordination.team_coordination import TeamCoordination
+from .coordination.llm_coordination import LLMCoordination
 from .strand_creation import StrandCreation
 from src.core_detection.multi_timeframe_processor import MultiTimeframeProcessor
 

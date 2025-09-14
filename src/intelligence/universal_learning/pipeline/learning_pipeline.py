@@ -11,8 +11,8 @@ from .strand_processor import StrandProcessor, LearningConfig, StrandType
 from .multi_cluster_grouping_engine import MultiClusterGroupingEngine
 from .per_cluster_learning_system import PerClusterLearningSystem
 from .llm_learning_analyzer import LLMLearningAnalyzer
-from .braid_level_manager import BraidLevelManager
-from .mathematical_resonance_engine import MathematicalResonanceEngine
+from ..engines.braid_level_manager import BraidLevelManager
+from ..engines.mathematical_resonance_engine import MathematicalResonanceEngine
 
 
 class LearningPipeline:

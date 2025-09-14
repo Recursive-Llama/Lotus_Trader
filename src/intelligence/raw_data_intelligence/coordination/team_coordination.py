@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 import pandas as pd
 
-from .market_microstructure import MarketMicrostructureAnalyzer
-from .volume_analyzer import VolumePatternAnalyzer
-from .time_based_patterns import TimeBasedPatternDetector
-from .cross_asset_analyzer import CrossAssetPatternAnalyzer
-from .divergence_detector import RawDataDivergenceDetector
+from ..analyzers.market_microstructure import MarketMicrostructureAnalyzer
+from ..analyzers.volume_analyzer import VolumePatternAnalyzer
+from ..analyzers.time_based_patterns import TimeBasedPatternDetector
+from ..analyzers.cross_asset_analyzer import CrossAssetPatternAnalyzer
+from ..analyzers.divergence_detector import RawDataDivergenceDetector
 
 
 class TeamCoordination:

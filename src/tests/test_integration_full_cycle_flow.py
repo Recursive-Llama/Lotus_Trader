@@ -18,7 +18,7 @@ import logging
 
 # Import all components
 from src.intelligence.raw_data_intelligence.raw_data_intelligence_agent import RawDataIntelligenceAgent
-from src.intelligence.raw_data_intelligence.divergence_detector import RawDataDivergenceDetector
+from src.intelligence.raw_data_intelligence.analyzers.divergence_detector import RawDataDivergenceDetector
 from src.intelligence.raw_data_intelligence.volume_analyzer import VolumePatternAnalyzer
 from src.intelligence.system_control.central_intelligence_layer.core.strategic_pattern_miner import StrategicPatternMiner
 from src.intelligence.system_control.central_intelligence_layer.engines.input_processor import InputProcessor

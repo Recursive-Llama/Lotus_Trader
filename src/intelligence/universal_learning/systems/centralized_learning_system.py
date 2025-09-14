@@ -7,12 +7,12 @@ for processing any strand type through the complete learning workflow.
 
 import asyncio
 from typing import Dict, Any, List, Optional
-from .strand_processor import StrandProcessor, StrandType
-from .learning_pipeline import LearningPipeline
-from .mathematical_resonance_engine import MathematicalResonanceEngine
-from .module_specific_scoring import ModuleSpecificScoring
-from .context_injection_engine import ContextInjectionEngine
-from .module_triggering_engine import ModuleTriggeringEngine
+from ..pipeline.strand_processor import StrandProcessor, StrandType
+from ..pipeline.learning_pipeline import LearningPipeline
+from ..engines.mathematical_resonance_engine import MathematicalResonanceEngine
+from ..module_specific_scoring import ModuleSpecificScoring
+from ..engines.context_injection_engine import ContextInjectionEngine
+from ..engines.module_triggering_engine import ModuleTriggeringEngine
 
 
 class CentralizedLearningSystem:

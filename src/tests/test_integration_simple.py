@@ -13,7 +13,7 @@ from typing import Dict, List, Any
 import logging
 
 # Import the actual components
-from src.intelligence.raw_data_intelligence.divergence_detector import RawDataDivergenceDetector
+from src.intelligence.raw_data_intelligence.analyzers.divergence_detector import RawDataDivergenceDetector
 from src.intelligence.raw_data_intelligence.volume_analyzer import VolumePatternAnalyzer
 from src.utils.supabase_manager import SupabaseManager
 from src.llm_integration.openrouter_client import OpenRouterClient
