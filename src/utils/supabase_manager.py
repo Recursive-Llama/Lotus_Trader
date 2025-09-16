@@ -63,6 +63,10 @@ class SupabaseManager:
             logger.error(f"Failed to get strand {strand_id}: {e}")
             return None
     
+    async def create_strand(self, strand_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a strand (alias for insert_strand for compatibility)"""
+        return self.insert_strand(strand_data)
+    
     def get_recent_strands(self, limit: int = 100, days: int = 7, since: datetime = None) -> List[Dict[str, Any]]:
         """Get recent strands"""
         try:

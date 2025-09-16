@@ -27,18 +27,20 @@ class EventDrivenLearningSystemFixed:
     4. Uses mock modules to avoid import issues
     """
     
-    def __init__(self, supabase_manager, llm_client, prompt_manager):
+    def __init__(self, supabase_manager, llm_client, prompt_manager=None):
         """
         Initialize event-driven learning system
         
         Args:
             supabase_manager: Database manager
             llm_client: LLM client for analysis
-            prompt_manager: Prompt manager for LLM calls
+            prompt_manager: Prompt manager for LLM calls (optional)
         """
         self.supabase_manager = supabase_manager
         self.llm_client = llm_client
         self.prompt_manager = prompt_manager
+        self.running = False
+        self.last_processed_time = datetime.now(timezone.utc)
         
         # Module subscriptions - what each module needs
         self.module_subscriptions = {
@@ -46,7 +48,9 @@ class EventDrivenLearningSystemFixed:
             'ctp': ['prediction_review'],  # CTP needs prediction review strands
             'dm': ['conditional_trading_plan'],  # DM needs trading plan strands
             'td': ['trading_decision'],  # TD needs decision strands
-            'rdi': ['execution_outcome']  # RDI needs execution outcome strands
+            'rdi': ['execution_outcome'],  # RDI needs execution outcome strands
+            'decision_maker_lowcap': ['social_lowcap'],  # Decision Maker Lowcap needs social lowcap strands
+            'trader_lowcap': ['decision_lowcap']  # Trader Lowcap needs decision lowcap strands
         }
         
         # Track processing to avoid loops
@@ -181,6 +185,10 @@ class EventDrivenLearningSystemFixed:
                 return await self._call_td_module(strand, context)
             elif module == 'rdi':
                 return await self._call_rdi_feedback(strand, context)
+            elif module == 'decision_maker_lowcap':
+                return await self._call_decision_maker_lowcap_module(strand, context)
+            elif module == 'trader_lowcap':
+                return await self._call_trader_lowcap_module(strand, context)
             else:
                 logger.warning(f"Unknown module: {module}")
                 return False
@@ -433,4 +441,50 @@ class MockTDModule:
                 
         except Exception as e:
             self.logger.error(f"Error in mock TD processing: {e}")
+            return False
+    
+    async def _call_decision_maker_lowcap_module(self, strand: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """Call Decision Maker Lowcap module to process social lowcap strands"""
+        try:
+            # Import the simplified Decision Maker Lowcap
+            from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
+            
+            # Initialize Decision Maker Lowcap
+            dml = DecisionMakerLowcapSimple(self.supabase_manager)
+            
+            # Process the social lowcap strand
+            decision = dml.make_decision(strand)
+            
+            if decision:
+                self.logger.info(f"✅ Decision Maker Lowcap created decision: {decision.get('id')}")
+                return True
+            else:
+                self.logger.info(f"❌ Decision Maker Lowcap rejected signal: {strand.get('id')}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error calling Decision Maker Lowcap: {e}")
+            return False
+    
+    async def _call_trader_lowcap_module(self, strand: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """Call Trader Lowcap module to process decision lowcap strands"""
+        try:
+            # Import the simplified Trader Lowcap
+            from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+            
+            # Initialize Trader Lowcap
+            trader = TraderLowcapSimple(self.supabase_manager)
+            
+            # Process the decision lowcap strand
+            position = trader.execute_decision(strand)
+            
+            if position:
+                self.logger.info(f"✅ Trader Lowcap created position: {position.get('position_id')}")
+                return True
+            else:
+                self.logger.info(f"❌ Trader Lowcap failed to execute: {strand.get('id')}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error calling Trader Lowcap: {e}")
             return False

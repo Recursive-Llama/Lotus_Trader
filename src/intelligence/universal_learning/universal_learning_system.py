@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 
 from .universal_scoring import UniversalScoring
 from .universal_clustering import UniversalClustering, Cluster
-from src.llm_integration.prompt_manager import PromptManager
-from src.llm_integration.openrouter_client import OpenRouterClient
+from llm_integration.prompt_manager import PromptManager
+from llm_integration.openrouter_client import OpenRouterClient
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +277,187 @@ class UniversalLearningSystem:
             self.logger.error(f"Error saving braid to database: {e}")
             return False
     
+    async def process_strand_event(self, strand: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process a single strand event from social ingest or other modules
+        
+        This method is called when a new strand is created and needs to be processed
+        by the learning system. It handles scoring, clustering, and triggering downstream modules.
+        
+        Args:
+            strand: Strand dictionary to process
+            
+        Returns:
+            Processed strand dictionary
+        """
+        try:
+            print(f"🧠 Universal Learning System: Processing strand {strand.get('id', 'unknown')} - {strand.get('kind', 'unknown')}")
+            self.logger.info(f"Processing strand event: {strand.get('id', 'unknown')} - {strand.get('kind', 'unknown')}")
+            
+            # Calculate scores for the strand
+            print(f"🧠 Calculating scores for strand...")
+            self.scoring.update_strand_scores(strand)
+            
+            # Update strand in database with scores
+            self.supabase_manager.update_strand(
+                strand['id'], 
+                {
+                    'persistence_score': strand.get('persistence_score', 0.0),
+                    'novelty_score': strand.get('novelty_score', 0.0),
+                    'surprise_rating': strand.get('surprise_rating', 0.0)
+                }
+            )
+            
+            # Check if this strand should trigger the Decision Maker
+            print(f"🧠 Checking if should trigger Decision Maker...")
+            should_trigger = self._should_trigger_decision_maker(strand)
+            print(f"🧠 Should trigger Decision Maker: {should_trigger}")
+            if should_trigger:
+                print(f"🧠 Triggering Decision Maker...")
+                await self._trigger_decision_maker(strand)
+            
+            # Check if this strand should trigger the Trader
+            print(f"🧠 Checking if should trigger Trader...")
+            should_trigger_trader = self._should_trigger_trader(strand)
+            print(f"🧠 Should trigger Trader: {should_trigger_trader}")
+            if should_trigger_trader:
+                print(f"🧠 Triggering Trader...")
+                await self._trigger_trader(strand)
+            
+            # Check if this strand is a braid candidate
+            if self._is_braid_candidate(strand):
+                await self._mark_as_braid_candidate(strand)
+            
+            self.logger.info(f"Successfully processed strand event: {strand.get('id', 'unknown')}")
+            return strand
+            
+        except Exception as e:
+            self.logger.error(f"Error processing strand event: {e}")
+            return strand
+    
+    def _should_trigger_decision_maker(self, strand: Dict[str, Any]) -> bool:
+        """Check if strand should trigger the Decision Maker"""
+        # Trigger if it's a social signal with dm_candidate tag
+        return (
+            strand.get('kind') == 'social_lowcap' and 
+            'dm_candidate' in strand.get('tags', []) and
+            strand.get('target_agent') == 'decision_maker_lowcap'
+        )
+    
+    def _should_trigger_trader(self, strand: Dict[str, Any]) -> bool:
+        """Check if strand should trigger the Trader"""
+        # Trigger if it's a decision_lowcap strand with approval action
+        return (
+            strand.get('kind') == 'decision_lowcap' and
+            strand.get('content', {}).get('action') == 'approve' and
+            'approved' in strand.get('tags', [])
+        )
+    
+    async def _trigger_decision_maker(self, strand: Dict[str, Any]) -> None:
+        """Trigger the Decision Maker with the strand"""
+        try:
+            print(f"🧠 Decision Maker: Starting trigger for strand {strand.get('id', 'unknown')}")
+            
+            # Import here to avoid circular imports
+            from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
+            print(f"🧠 Decision Maker: Import successful")
+            
+            # Initialize decision maker if not already done
+            if not hasattr(self, 'decision_maker'):
+                print(f"🧠 Decision Maker: Initializing Decision Maker...")
+                # Use default config since learning system doesn't have trading config
+                default_config = {
+                    'max_exposure_pct': 100.0,
+                    'max_positions': 30,
+                    'min_curator_score': 0.6,
+                    'min_confidence': 0.5,
+                    'min_allocation_pct': 1.0,
+                    'max_allocation_pct': 5.0,
+                    'default_allocation_pct': 2.0
+                }
+                self.decision_maker = DecisionMakerLowcapSimple(
+                    self.supabase_manager, 
+                    default_config
+                )
+                # Pass learning system to decision maker for callbacks
+                self.decision_maker.learning_system = self
+                print(f"🧠 Decision Maker: Initialized successfully")
+            
+            # Process the strand with decision maker
+            print(f"🧠 Decision Maker: Processing strand {strand.get('id', 'unknown')}")
+            self.logger.info(f"Triggering Decision Maker for strand: {strand.get('id', 'unknown')}")
+            result = await self.decision_maker.make_decision(strand)
+            if result:
+                print(f"🧠 Decision Maker: Created decision strand {result.get('id', 'unknown')}")
+            else:
+                print(f"🧠 Decision Maker: No decision created (rejected)")
+            
+        except Exception as e:
+            print(f"🧠 Decision Maker: ERROR - {e}")
+            self.logger.error(f"Error triggering Decision Maker: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _trigger_trader(self, strand: Dict[str, Any]) -> None:
+        """Trigger the Trader with the decision strand"""
+        try:
+            print(f"🧠 Trader: Starting trigger for strand {strand.get('id', 'unknown')}")
+            
+            # Import here to avoid circular imports
+            from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+            print(f"🧠 Trader: Import successful")
+            
+            # Initialize trader if not already done
+            if not hasattr(self, 'trader'):
+                print(f"🧠 Trader: Initializing Trader...")
+                # Use default config for trader
+                trader_config = {
+                    'book_id': 'social',
+                    'book_nav': 100000.0,
+                    'max_position_size_pct': 2.0,
+                    'entry_strategy': 'three_entry',
+                    'exit_strategy': 'staged_exit'
+                }
+                self.trader = TraderLowcapSimple(
+                    self.supabase_manager, 
+                    trader_config
+                )
+                print(f"🧠 Trader: Initialized successfully")
+            
+            # Process the decision strand with trader
+            print(f"🧠 Trader: Processing decision strand {strand.get('id', 'unknown')}")
+            self.logger.info(f"Triggering Trader for decision strand: {strand.get('id', 'unknown')}")
+            result = await self.trader.execute_decision(strand)
+            if result:
+                print(f"🧠 Trader: Trade execution result: {result}")
+            else:
+                print(f"🧠 Trader: No trade executed")
+            
+        except Exception as e:
+            print(f"🧠 Trader: ERROR - {e}")
+            self.logger.error(f"Error triggering Trader: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _is_braid_candidate(self, strand: Dict[str, Any]) -> bool:
+        """Check if strand is a candidate for braid creation"""
+        # Simple criteria: high confidence and persistence
+        return (
+            strand.get('confidence', 0) > 0.8 and
+            strand.get('persistence_score', 0) > 0.7
+        )
+    
+    async def _mark_as_braid_candidate(self, strand: Dict[str, Any]) -> None:
+        """Mark strand as braid candidate in database"""
+        try:
+            self.supabase_manager.update_strand(
+                strand['id'], 
+                {'braid_candidate': True}
+            )
+            self.logger.info(f"Marked strand {strand.get('id', 'unknown')} as braid candidate")
+        except Exception as e:
+            self.logger.error(f"Error marking strand as braid candidate: {e}")
+    
     async def process_strands_batch(self, strands: List[Dict[str, Any]], save_to_db: bool = True) -> Dict[str, Any]:
         """
         Process a batch of strands through the complete learning pipeline
@@ -331,7 +512,7 @@ class UniversalLearningSystem:
 # Example usage and testing
 if __name__ == "__main__":
     # Test the universal learning system
-    from src.utils.supabase_manager import SupabaseManager
+    from utils.supabase_manager import SupabaseManager
     
     # Initialize components
     supabase_manager = SupabaseManager()

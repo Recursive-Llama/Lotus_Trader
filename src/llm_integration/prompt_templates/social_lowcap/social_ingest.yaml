@@ -1,119 +1,26 @@
-# Social Ingest Module Prompts
-# Token extraction and information parsing from social media messages
-
 token_extraction:
-  description: "Extract token information from social media messages"
-  category: "social_ingest"
-  latest_version: "v1.0"
-  versions:
-    v1.0:
-      system_message: |
-        You are an expert cryptocurrency analyst specializing in token identification and analysis from social media content. 
-        Your task is to extract structured token information from social media messages with high accuracy.
-        
-        You understand:
-        - Cryptocurrency tickers, symbols, and naming conventions
-        - Blockchain networks (Solana, Ethereum, Base, etc.)
-        - Trading pairs and DEX terminology
-        - Sentiment analysis in crypto contexts
-        - Token contract addresses and verification
-        
-        Always return valid JSON with the exact structure requested.
-      
-      prompt: |
-        Extract token information from this social media message:
-        
-        "{message_text}"
-        
-        Return a JSON object with:
-        - token_name: The token ticker/symbol (uppercase, no $ symbol)
-        - network: The blockchain network (solana, ethereum, base, polygon, etc.)
-        - contract_address: If mentioned or can be inferred
-        - sentiment: positive, negative, or neutral
-        - confidence: 0.0 to 1.0 (how confident you are in the extraction)
-        - additional_info: Any other relevant information (price targets, reasons, etc.)
-        
-        If no clear token is mentioned, return null.
-        
-        Examples:
-        - "$FOO token" -> {"token_name": "FOO", "network": "solana", "sentiment": "positive", "confidence": 0.9}
-        - "BAR/SOL pair" -> {"token_name": "BAR", "network": "solana", "sentiment": "neutral", "confidence": 0.8}
-        - "Buy ETH now" -> {"token_name": "ETH", "network": "ethereum", "sentiment": "positive", "confidence": 0.7}
-      
-      parameters:
-        temperature: 0.1
-        max_tokens: 500
-        top_p: 0.9
-
-curator_analysis:
-  description: "Analyze curator performance and credibility"
-  category: "social_ingest"
-  latest_version: "v1.0"
-  versions:
-    v1.0:
-      system_message: |
-        You are an expert social media analyst specializing in cryptocurrency influencer credibility assessment.
-        Your task is to analyze curator performance and provide insights for trading decisions.
-      
-      prompt: |
-        Analyze this curator's recent performance and credibility:
-        
-        Curator: {curator_handle}
-        Platform: {platform}
-        Recent Signals: {recent_signals}
-        Success Rate: {success_rate}%
-        Followers: {follower_count}
-        
-        Provide analysis on:
-        - Credibility score (0-1)
-        - Signal quality assessment
-        - Risk factors
-        - Recommended weight adjustment
-        - Key insights
-        
-        Return JSON with:
-        - credibility_score: 0.0 to 1.0
-        - signal_quality: poor, fair, good, excellent
-        - risk_factors: array of risk factors
-        - recommended_weight: 0.0 to 2.0
-        - insights: array of key insights
-      
-      parameters:
-        temperature: 0.3
-        max_tokens: 800
-        top_p: 0.9
-
-message_validation:
-  description: "Validate and filter social media messages for trading relevance"
-  category: "social_ingest"
-  latest_version: "v1.0"
-  versions:
-    v1.0:
-      system_message: |
-        You are a content moderator for cryptocurrency trading signals.
-        Your task is to validate social media messages for trading relevance and quality.
-      
-      prompt: |
-        Validate this social media message for trading relevance:
-        
-        Message: "{message_text}"
-        Curator: {curator_handle}
-        Platform: {platform}
-        
-        Assess:
-        - Is this a legitimate trading signal?
-        - Does it contain actionable information?
-        - Is it spam or low-quality content?
-        - Should it be processed for token extraction?
-        
-        Return JSON with:
-        - is_valid: true/false
-        - relevance_score: 0.0 to 1.0
-        - quality_score: 0.0 to 1.0
-        - reasons: array of validation reasons
-        - should_process: true/false
-      
-      parameters:
-        temperature: 0.2
-        max_tokens: 400
-        top_p: 0.9
+  prompt: |
+    Extract token information from this social media message:
+    
+    "{message_text}"
+    
+    Return a JSON object with:
+    - tokens: Array of token objects, each containing:
+      - token_name: The token ticker/symbol
+      - network: The blockchain network (solana, ethereum, base, etc.) or null if not clear
+      - contract_address: Contract address if mentioned, null otherwise
+      - sentiment: positive, negative, or neutral
+      - confidence: 0.0 to 1.0
+      - has_chart: true if post contains chart/image, false otherwise
+      - chart_type: type of chart if present (price, volume, technical, etc.) or null
+      - market_context: Object with price_mention, market_cap, risk_assessment, competitors, platform
+      - trading_signals: Object with action (set to "buy" if the token is discussed positively/favorably, null otherwise), timing, confidence
+    
+    Return only the JSON object, no explanations or markdown formatting.
+    If no clear tokens are mentioned, return {"tokens": []}.
+  
+  system_message: |
+    You are a specialized token extraction system for cryptocurrency social media analysis.
+    Extract only the most relevant token information from social media posts.
+    Focus on accuracy and avoid false positives.
+    Return clean JSON without markdown formatting or explanations.

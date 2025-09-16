@@ -1,0 +1,103 @@
+# Twitter Curators Configuration
+# Easy to add/edit curators with both Twitter and Telegram support
+
+curators:
+  # Twitter-only curators
+  - id: "0xdetweiler"
+    name: "0xDetweiler"
+    platforms:
+      twitter:
+        handle: "@0xdetweiler"
+        active: true
+        weight: 0.8
+        priority: "high"
+    tags: ["defi", "alpha", "technical"]
+    notes: "Strong technical analysis and DeFi focus"
+    
+  - id: "louiscooper"
+    name: "Louis Cooper"
+    platforms:
+      twitter:
+        handle: "@LouisCooper_"
+        active: true
+        weight: 0.7
+        priority: "high"
+    tags: ["crypto", "trading", "analysis"]
+    notes: "Active crypto trader and analyst"
+    
+  - id: "zinceth"
+    name: "Zinc ETH"
+    platforms:
+      twitter:
+        handle: "@zinceth"
+        active: true
+        weight: 0.6
+        priority: "medium"
+    tags: ["ethereum", "defi", "yield"]
+    notes: "Ethereum and DeFi specialist"
+    
+  - id: "cryptotrissy"
+    name: "Crypto Trissy"
+    platforms:
+      twitter:
+        handle: "@Cryptotrissy"
+        active: true
+        weight: 0.5
+        priority: "medium"
+    tags: ["crypto", "community", "alpha"]
+    notes: "Community-focused crypto content"
+    
+  - id: "cryptoxhunter"
+    name: "Crypto Hunter"
+    platforms:
+      twitter:
+        handle: "@CryptoxHunter"
+        active: true
+        weight: 0.6
+        priority: "medium"
+    tags: ["hunting", "alpha", "early"]
+    notes: "Alpha hunter and early signal provider"
+
+# Example of curator with both Twitter and Telegram
+# - id: "example_curator"
+#   name: "Example Curator"
+#   platforms:
+#     twitter:
+#       handle: "@example_twitter"
+#       active: true
+#       weight: 0.7
+#       priority: "high"
+#     telegram:
+#       handle: "@example_telegram"
+#       channel_id: "-1001234567890"
+#       active: true
+#       weight: 0.8
+#       priority: "high"
+#   tags: ["multi_platform", "alpha"]
+#   notes: "Active on both Twitter and Telegram"
+
+# Configuration settings
+config:
+  # Monitoring settings
+  monitoring:
+    twitter:
+      check_interval_seconds: 30
+      max_posts_per_check: 5
+      round_robin_enabled: true
+    telegram:
+      check_interval_seconds: 60
+      max_messages_per_check: 10
+      round_robin_enabled: true
+  
+  # Learning settings
+  learning:
+    curator_performance_window_days: 30
+    min_signals_for_score: 5
+    score_update_frequency_hours: 6
+  
+  # Filtering settings
+  filtering:
+    min_curator_weight: 0.3
+    max_curators_per_cycle: 10
+    skip_inactive_curators: true
+

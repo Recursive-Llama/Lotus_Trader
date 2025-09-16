@@ -18,6 +18,8 @@ class StrandType(Enum):
     TRADING_DECISION = "trading_decision"
     PORTFOLIO_OUTCOME = "portfolio_outcome"
     EXECUTION_OUTCOME = "execution_outcome"
+    SOCIAL_LOWCAP = "social_lowcap"
+    DECISION_LOWCAP = "decision_lowcap"
 
 
 class LearningConfig:
@@ -117,6 +119,26 @@ class StrandProcessor:
                 ],
                 prompt_template="execution_outcome_braiding",
                 min_cluster_size=3
+            ),
+            
+            StrandType.SOCIAL_LOWCAP: LearningConfig(
+                strand_type=StrandType.SOCIAL_LOWCAP,
+                learning_focus="Social signal quality and curator performance",
+                cluster_types=[
+                    "curator_id", "platform", "token_chain", "sentiment", "confidence"
+                ],
+                prompt_template="social_lowcap_braiding",
+                min_cluster_size=2
+            ),
+            
+            StrandType.DECISION_LOWCAP: LearningConfig(
+                strand_type=StrandType.DECISION_LOWCAP,
+                learning_focus="Lowcap decision quality and allocation strategy",
+                cluster_types=[
+                    "curator_id", "token_chain", "allocation_pct", "action", "reasoning"
+                ],
+                prompt_template="decision_lowcap_braiding",
+                min_cluster_size=2
             )
         }
     

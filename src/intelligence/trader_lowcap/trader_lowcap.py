@@ -94,7 +94,7 @@ class TraderLowcap:
             }
         }
     
-    def execute_trade(self, decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def execute_trade(self, decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Execute trade based on DML decision
         
@@ -168,10 +168,10 @@ class TraderLowcap:
             }
             
             # Create strand in database
-            created_execution = self.supabase_manager.create_strand(execution)
+            created_execution = await self.supabase_manager.create_strand(execution)
             
             # Start execution process
-            self._start_execution(position_id, position, execution_context)
+            await self._start_execution(position_id, position, execution_context)
             
             self.logger.info(f"Created execution_lowcap strand: {token_data['ticker']} -> {allocation_pct:.1f}%")
             return created_execution
@@ -331,7 +331,7 @@ class TraderLowcap:
         # This would integrate with actual price feeds
         return 0.25  # Mock price
     
-    def _start_execution(self, position_id: str, position: Dict[str, Any], execution_context: Dict[str, Any]):
+    async def _start_execution(self, position_id: str, position: Dict[str, Any], execution_context: Dict[str, Any]):
         """
         Start the execution process for three-way entry
         
@@ -342,7 +342,7 @@ class TraderLowcap:
         """
         try:
             # Execute immediate entry (entry_1)
-            self._execute_entry_level(position_id, 1, position, execution_context)
+            await self._execute_entry_level(position_id, 1, position, execution_context)
             
             # Set up conditional entries for -20% and -50%
             self._setup_conditional_entries(position_id, position, execution_context)
@@ -353,7 +353,7 @@ class TraderLowcap:
         except Exception as e:
             self.logger.error(f"Failed to start execution for position {position_id}: {e}")
     
-    def _execute_entry_level(self, position_id: str, level: int, position: Dict[str, Any], execution_context: Dict[str, Any]):
+    async def _execute_entry_level(self, position_id: str, level: int, position: Dict[str, Any], execution_context: Dict[str, Any]):
         """
         Execute a specific entry level
         
@@ -387,7 +387,7 @@ class TraderLowcap:
             )
             
             # Create position update strand for learning
-            self._create_position_update_strand(position_id, level, "entry", executed_price, size_usd)
+            await self._create_position_update_strand(position_id, level, "entry", executed_price, size_usd)
             
             self.logger.info(f"Executed entry level {level} for position {position_id}: {size_usd:.2f} USD at {executed_price:.4f}")
             
@@ -411,7 +411,7 @@ class TraderLowcap:
         # This would calculate actual slippage based on venue and market conditions
         return 0.001  # Mock 0.1% slippage
     
-    def _create_position_update_strand(self, position_id: str, level: int, action: str, price: float, size_usd: float):
+    async def _create_position_update_strand(self, position_id: str, level: int, action: str, price: float, size_usd: float):
         """Create position update strand for learning system"""
         try:
             update_strand = {
@@ -431,7 +431,7 @@ class TraderLowcap:
                 "status": "active"
             }
             
-            self.supabase_manager.create_strand(update_strand)
+            await self.supabase_manager.create_strand(update_strand)
             
         except Exception as e:
             self.logger.error(f"Failed to create position update strand: {e}")

@@ -1,0 +1,112 @@
+# Social Trading System Configuration
+
+# Database Configuration
+database:
+  url: "postgresql://postgres:password@localhost:5432/lotus_trader"
+  schema: "public"
+
+# Social Media Monitoring
+social_monitoring:
+  twitter:
+    enabled: true
+    check_interval: 30  # seconds
+    curators_file: "src/config/twitter_curators.yaml"
+    cookies_file: "src/config/twitter_cookies.json"
+  
+  telegram:
+    enabled: true
+    check_interval: 30  # seconds
+    session_file: "src/config/telegram_session.txt"
+    groups_file: "src/config/telegram_groups.yaml"
+
+# Trading Configuration
+trading:
+  book_nav: 100000.0  # $100k book size
+  max_exposure_pct: 20.0  # Maximum portfolio exposure
+  min_curator_score: 0.6  # Minimum curator score to approve
+  default_allocation_pct: 3.0  # Default allocation percentage
+  min_allocation_pct: 1.0  # Minimum allocation
+  max_allocation_pct: 3.0  # Maximum allocation
+
+# Position Management
+position_management:
+  price_check_interval: 60  # seconds
+  exit_check_interval: 30   # seconds
+  dip_entry_check_interval: 10  # seconds
+  
+  # Entry Strategy
+  entry_strategy:
+    entry_1:  # Immediate entry
+      allocation_pct: 33.33
+    entry_2:  # -30% dip
+      allocation_pct: 33.33
+      dip_pct: -30
+    entry_3:  # -60% dip
+      allocation_pct: 33.34
+      dip_pct: -60
+  
+  # Exit Strategy (30% of remaining at each level)
+  exit_strategy:
+    exit_1:
+      gain_pct: 100
+      exit_pct: 30
+    exit_2:
+      gain_pct: 200
+      exit_pct: 30
+    exit_3:
+      gain_pct: 300
+      exit_pct: 30
+    exit_4:
+      gain_pct: 400
+      exit_pct: 30
+    exit_5:
+      gain_pct: 500
+      exit_pct: 30
+    exit_6:
+      gain_pct: 600
+      exit_pct: 30
+    final:
+      gain_pct: 1000
+      exit_pct: 100
+
+# Learning System
+learning:
+  enabled: true
+  strand_processing_interval: 5  # seconds
+  braid_creation_threshold: 0.7
+  min_cluster_size: 2
+
+# LLM Configuration
+llm:
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 500
+  prompt_templates_dir: "src/llm_integration/prompt_templates"
+
+# DEX Configuration
+dex:
+  solana:
+    default_venue: "Raydium"
+    venues: ["Raydium", "Orca", "Jupiter"]
+    max_slippage_pct: 5.0
+    min_liquidity_usd: 10000
+  
+  ethereum:
+    default_venue: "Uniswap"
+    venues: ["Uniswap", "SushiSwap", "1inch"]
+    max_slippage_pct: 3.0
+    min_liquidity_usd: 50000
+
+# Logging
+logging:
+  level: "INFO"
+  file: "social_trading.log"
+  max_size_mb: 100
+  backup_count: 5
+
+# Monitoring & Alerts
+monitoring:
+  health_check_interval: 300  # seconds
+  alert_webhook: null  # Discord/Slack webhook for alerts
+  performance_tracking: true
+  error_reporting: true

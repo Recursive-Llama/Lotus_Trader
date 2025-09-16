@@ -25,7 +25,7 @@ class SocialIngestModule:
     This module:
     - Monitors curator accounts (Twitter, Telegram)
     - Uses LLM to extract token information from messages
-    - Verifies tokens with Birdeye/Helix API
+    - Verifies tokens with DexScreener API
     - Creates social_lowcap strands for DML
     """
     

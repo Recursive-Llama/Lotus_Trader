@@ -142,7 +142,7 @@ class OpenRouterClient:
             
             logger.info(f"Successfully generated completion with {model} ({response_time:.2f}s)")
             return result_data
-            
+        
         except requests.exceptions.RequestException as e:
             logger.error(f"Request error in OpenRouter API call: {e}")
             raise OpenRouterAPIError(f"Request failed: {e}")
@@ -152,6 +152,30 @@ class OpenRouterClient:
         except Exception as e:
             logger.error(f"Unexpected error in OpenRouter API call: {e}")
             raise OpenRouterAPIError(f"Unexpected error: {e}")
+    
+    async def generate_async(self, prompt: str, system_message: Optional[str] = None, image: Optional[bytes] = None, **kwargs) -> str:
+        """
+        Async wrapper for generate_completion
+        
+        Args:
+            prompt: The prompt to send to the model
+            system_message: Optional system message
+            image: Optional image data (not supported in current implementation)
+            **kwargs: Additional parameters
+            
+        Returns:
+            The generated content as a string
+        """
+        try:
+            result = self.generate_completion(
+                prompt=prompt,
+                system_message=system_message,
+                **kwargs
+            )
+            return result['content']
+        except Exception as e:
+            logger.error(f"Error in generate_async: {e}")
+            raise
     
     def generate_lesson(self, context: Dict[str, Any], prompt_template: str) -> Dict[str, Any]:
         """

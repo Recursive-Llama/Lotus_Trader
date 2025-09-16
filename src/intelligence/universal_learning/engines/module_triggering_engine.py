@@ -40,7 +40,9 @@ class ModuleTriggeringEngine:
             'prediction_review': ['ctp'],  # Prediction review strands trigger CTP
             'conditional_trading_plan': ['dm'],  # Trading plan strands trigger DM
             'trading_decision': ['td'],  # Decision strands trigger TD
-            'execution_outcome': ['rdi']  # Execution outcome strands provide feedback to RDI
+            'execution_outcome': ['rdi'],  # Execution outcome strands provide feedback to RDI
+            'decision_lowcap': ['trader_lowcap'],  # Decision lowcap strands trigger Trader Lowcap
+            'social_lowcap': ['decision_maker_lowcap']  # Social lowcap strands trigger Decision Maker Lowcap
         }
         
         # Module processing intervals (in seconds)
@@ -49,7 +51,9 @@ class ModuleTriggeringEngine:
             'cil': 60,   # 1 minute (immediate response)
             'ctp': 60,   # 1 minute (immediate response)
             'dm': 60,    # 1 minute (immediate response)
-            'td': 60     # 1 minute (immediate response)
+            'td': 60,    # 1 minute (immediate response)
+            'decision_maker_lowcap': 5,  # 5 seconds (immediate social response)
+            'trader_lowcap': 10  # 10 seconds (immediate execution)
         }
         
         # Track last processing times
