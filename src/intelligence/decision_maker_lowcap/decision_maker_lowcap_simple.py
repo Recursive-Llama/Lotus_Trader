@@ -42,6 +42,16 @@ class DecisionMakerLowcapSimple:
         self.max_exposure_pct = self.config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
         self.max_positions = self.config.get('max_positions', 30)  # Maximum number of active positions
         
+        # Token ignore list (major tokens we don't want to trade)
+        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH'])
+        
+        # Minimum volume requirements by chain
+        self.min_volume_requirements = self.config.get('min_volume_requirements', {
+            'solana': 100000,    # $100k on Solana
+            'ethereum': 25000,   # $25k on Ethereum
+            'base': 25000,       # $25k on Base
+        })
+        
         self.logger.info(f"Simplified Decision Maker Lowcap initialized for book: {self.book_id}")
     
     def _get_default_config(self) -> Dict[str, Any]:
@@ -69,8 +79,35 @@ class DecisionMakerLowcapSimple:
         try:
             curator_id = social_signal['signal_pack']['curator']['id']
             token_data = social_signal['signal_pack']['token']
+            venue_data = social_signal['signal_pack']['venue']
             
             self.logger.info(f"Making decision for {curator_id} -> {token_data.get('ticker', 'UNKNOWN')}")
+            
+            # Step 0: Check if token is in ignore list
+            token_ticker = token_data.get('ticker', '').upper()
+            if token_ticker in self.ignore_tokens:
+                return await self._create_rejection_decision(
+                    social_signal, 
+                    f"Token {token_ticker} is in ignore list"
+                )
+            
+            # Step 0.5: Check if chain is supported (only SOL, ETH, Base)
+            chain = token_data.get('chain', '').lower()
+            supported_chains = ['solana', 'ethereum', 'base']
+            if chain not in supported_chains:
+                return await self._create_rejection_decision(
+                    social_signal, 
+                    f"Chain {chain} not supported, only {supported_chains} allowed"
+                )
+            
+            # Step 0.6: Check minimum volume requirements
+            volume_24h = venue_data.get('vol24h_usd', 0)
+            min_volume = self.min_volume_requirements.get(chain, 0)
+            if volume_24h < min_volume:
+                return await self._create_rejection_decision(
+                    social_signal, 
+                    f"Volume too low: ${volume_24h:,.0f} < ${min_volume:,.0f} required for {chain}"
+                )
             
             # Step 1: Do we already have this token?
             if await self._already_has_token(token_data['contract'], token_data['chain']):

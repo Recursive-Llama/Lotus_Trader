@@ -135,7 +135,9 @@ class TraderLowcapSimple:
             
             # Get network and calculate allocation in native token
             chain = token_data.get('chain', 'solana').lower()
+            self.logger.info(f"🔍 Chain: {chain}")
             native_balance = await self._get_native_balance(chain)
+            self.logger.info(f"🔍 Native balance: {native_balance}")
             if not native_balance:
                 self.logger.warning(f"Could not get {chain} balance")
                 return None
@@ -243,8 +245,10 @@ class TraderLowcapSimple:
             Native token balance or None if failed
         """
         try:
+            self.logger.info(f"🔍 Getting {chain} balance...")
             # Use WalletManager to get native token balance
             balance = await self.wallet_manager.get_balance(chain)
+            self.logger.info(f"🔍 Balance result: {balance}")
             if balance is not None:
                 return float(balance)
             else:
@@ -253,6 +257,8 @@ class TraderLowcapSimple:
                 
         except Exception as e:
             self.logger.error(f"Error getting {chain} balance: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
     async def _get_token_decimals(self, token_address: str) -> int:
