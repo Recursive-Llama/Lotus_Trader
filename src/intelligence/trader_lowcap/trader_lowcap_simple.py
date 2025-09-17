@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from trading.jupiter_client import JupiterClient
-from trading.zeroex_client import ZeroExClient
 from trading.wallet_manager import WalletManager
 from trading.js_solana_client import JSSolanaClient
 from trading.trading_executor import TradingExecutor
@@ -56,11 +55,9 @@ class TraderLowcapSimple:
         
         # Initialize trading components
         helius_key = os.getenv('HELIUS_API_KEY')
-        zeroex_key = os.getenv('0X_API_KEY')
         self.jupiter_client = JupiterClient(helius_key)
-        self.zeroex_client = ZeroExClient(zeroex_key)
         self.wallet_manager = WalletManager()
-        self.trading_executor = TradingExecutor(self.jupiter_client, self.wallet_manager, self.zeroex_client)
+        self.trading_executor = TradingExecutor(self.jupiter_client, self.wallet_manager, None)
         
         # Initialize JavaScript Solana client for real execution
         rpc_url = f"https://rpc.helius.xyz/?api-key={helius_key}" if helius_key else "https://api.mainnet-beta.solana.com"
@@ -358,7 +355,7 @@ class TraderLowcapSimple:
 
     async def _get_current_price(self, token_data: Dict[str, Any]) -> Optional[float]:
         """
-        Get current price for token using Jupiter quote API (for Solana) or ZeroEx (for others)
+        Get current price for token using Jupiter quote API (for Solana) or Uniswap (for EVM)
         
         Args:
             token_data: Token information

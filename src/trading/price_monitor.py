@@ -16,7 +16,8 @@ import json
 import os
 from .jupiter_client import JupiterClient
 from .wallet_manager import WalletManager
-from .zeroex_client import ZeroExClient
+from .evm_uniswap_client import EvmUniswapClient
+from .evm_uniswap_client_eth import EthUniswapClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,9 @@ class PriceMonitor:
         self.jupiter_client = jupiter_client
         self.wallet_manager = wallet_manager
         self.trader = trader  # Optional: use trader to execute planned entries/exits
-        # Initialize 0x client for EVM pricing
-        zeroex_key = os.getenv('0X_API_KEY')
-        self.zeroex_client = ZeroExClient(zeroex_key)
+        # Initialize EVM clients for pricing
+        self.base_client = EvmUniswapClient() if os.getenv('BASE_RPC_URL') else None
+        self.eth_client = EthUniswapClient() if os.getenv('ETH_RPC_URL') else None
         self.monitoring = False
         self.monitor_task = None
         
@@ -197,10 +198,53 @@ class PriceMonitor:
                 if price_info:
                     return float(price_info['price'])
                 return None
-            elif chain in ['ethereum', 'base', 'polygon', 'arbitrum']:
-                price_info = await self.zeroex_client.get_implied_price_v2(chain, token_contract)
-                if price_info and 'price' in price_info:
-                    return float(price_info['price'])
+            elif chain == 'base' and self.base_client:
+                # Use Base Uniswap client for pricing
+                try:
+                    amount_in = int(0.001 * 1e18)  # 0.001 WETH
+                    # Try v2 first
+                    amounts = self.base_client.v2_get_amounts_out(self.base_client.weth_address, token_contract, amount_in)
+                    if amounts and len(amounts) >= 2:
+                        out = amounts[-1]
+                        token_dec = self.base_client.get_token_decimals(token_contract)
+                        price = (0.001) / (out / (10 ** token_dec))
+                        return price
+                    # Fallback to v3
+                    for fee in [500, 3000, 10000]:
+                        try:
+                            out = self.base_client.v3_quote_amount_out(self.base_client.weth_address, token_contract, amount_in, fee=fee)
+                            if out and out > 0:
+                                token_dec = self.base_client.get_token_decimals(token_contract)
+                                price = (0.001) / (out / (10 ** token_dec))
+                                return price
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.debug(f"Base pricing error: {e}")
+                return None
+            elif chain == 'ethereum' and self.eth_client:
+                # Use Ethereum Uniswap client for pricing
+                try:
+                    amount_in = int(0.001 * 1e18)  # 0.001 WETH
+                    # Try v2 first
+                    amounts = self.eth_client.v2_get_amounts_out(self.eth_client.weth_address, token_contract, amount_in)
+                    if amounts and len(amounts) >= 2:
+                        out = amounts[-1]
+                        token_dec = self.eth_client.get_token_decimals(token_contract)
+                        price = (0.001) / (out / (10 ** token_dec))
+                        return price
+                    # Fallback to v3
+                    for fee in [500, 3000, 10000]:
+                        try:
+                            out = self.eth_client.v3_quote_amount_out(self.eth_client.weth_address, token_contract, amount_in, fee=fee)
+                            if out and out > 0:
+                                token_dec = self.eth_client.get_token_decimals(token_contract)
+                                price = (0.001) / (out / (10 ** token_dec))
+                                return price
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.debug(f"Ethereum pricing error: {e}")
                 return None
             else:
                 return None
