@@ -10,6 +10,7 @@ Simple 4-step decision process:
 
 import logging
 import uuid
+import asyncio
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
@@ -23,15 +24,17 @@ class DecisionMakerLowcapSimple:
     Simple 4-step decision process for social lowcap trading.
     """
     
-    def __init__(self, supabase_manager, config: Dict[str, Any] = None):
+    def __init__(self, supabase_manager, config: Dict[str, Any] = None, learning_system=None):
         """
         Initialize Simplified Decision Maker Lowcap
         
         Args:
             supabase_manager: Database manager for positions and curators
             config: Configuration dictionary
+            learning_system: Reference to Universal Learning System for callbacks
         """
         self.supabase_manager = supabase_manager
+        self.learning_system = learning_system
         self.logger = logging.getLogger(__name__)
         
         # Simple configuration
@@ -40,10 +43,10 @@ class DecisionMakerLowcapSimple:
         # No need for dollar amounts - we work with percentages only
         self.min_curator_score = self.config.get('min_curator_score', 0.6)
         self.max_exposure_pct = self.config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
-        self.max_positions = self.config.get('max_positions', 30)  # Maximum number of active positions
+        self.max_positions = self.config.get('max_positions', 69)  # Maximum number of active positions
         
         # Token ignore list (major tokens we don't want to trade)
-        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH'])
+        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'stETH'])
         
         # Minimum volume requirements by chain
         self.min_volume_requirements = self.config.get('min_volume_requirements', {
@@ -61,6 +64,7 @@ class DecisionMakerLowcapSimple:
             # No dollar amounts needed - percentage-based only
             'min_curator_score': 0.6,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
+            'max_positions': 69,  # Maximum number of active positions
             'default_allocation_pct': 3.0,  # Default 3% allocation
             'min_allocation_pct': 1.0,  # Minimum 1% allocation
             'max_allocation_pct': 3.0   # Maximum 3% allocation
@@ -68,89 +72,103 @@ class DecisionMakerLowcapSimple:
     
     async def make_decision(self, social_signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Make simple allocation decision based on 4-step process
-        
-        Args:
-            social_signal: social_lowcap strand from Social Ingest
-            
-        Returns:
-            Created decision strand or None if rejected
+        Make simple allocation decision based on 4-step process with a visible checklist
         """
         try:
             curator_id = social_signal['signal_pack']['curator']['id']
             token_data = social_signal['signal_pack']['token']
             venue_data = social_signal['signal_pack']['venue']
             
-            self.logger.info(f"Making decision for {curator_id} -> {token_data.get('ticker', 'UNKNOWN')}")
-            
-            # Step 0: Check if token is in ignore list
-            token_ticker = token_data.get('ticker', '').upper()
-            if token_ticker in self.ignore_tokens:
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Token {token_ticker} is in ignore list"
-                )
-            
-            # Step 0.5: Check if chain is supported (only SOL, ETH, Base)
+            token_ticker = token_data.get('ticker', 'UNKNOWN').upper()
             chain = token_data.get('chain', '').lower()
-            supported_chains = ['solana', 'ethereum', 'base']
-            if chain not in supported_chains:
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Chain {chain} not supported, only {supported_chains} allowed"
-                )
-            
-            # Step 0.6: Check minimum volume requirements
             volume_24h = venue_data.get('vol24h_usd', 0)
             min_volume = self.min_volume_requirements.get(chain, 0)
-            if volume_24h < min_volume:
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Volume too low: ${volume_24h:,.0f} < ${min_volume:,.0f} required for {chain}"
-                )
-            
-            # Step 1: Do we already have this token?
-            if await self._already_has_token(token_data['contract'], token_data['chain']):
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Already holding {token_data.get('ticker', 'this token')}"
-                )
-            
-            # Step 2: How well has this trader performed?
+            supported_chains = ['solana', 'ethereum', 'base']
+
+            self.logger.info(f"Making decision for {curator_id} -> {token_ticker}")
+
+            # Evaluate all criteria
+            criteria = []
+
+            # 0) Not ignored major token
+            ignore_pass = token_ticker not in self.ignore_tokens
+            criteria.append({
+                'name': 'not_ignored_token',
+                'passed': ignore_pass,
+                'detail': f"Token {token_ticker} is in ignore list" if not ignore_pass else f"Token {token_ticker} allowed"
+            })
+
+            # 0.5) Supported chain
+            chain_pass = chain in supported_chains
+            criteria.append({
+                'name': 'supported_chain',
+                'passed': chain_pass,
+                'detail': f"Chain {chain} not supported; allowed: {supported_chains}" if not chain_pass else f"Chain {chain} supported"
+            })
+
+            # Volume check removed - handled in social ingest
+
+            # 1) Not already holding token
+            already_holding = await self._already_has_token(token_data.get('contract', ''), token_data.get('chain', ''))
+            hold_pass = not already_holding
+            criteria.append({
+                'name': 'not_already_holding',
+                'passed': hold_pass,
+                'detail': f"Already holding {token_ticker}" if not hold_pass else "No existing position"
+            })
+
+            # 2) Curator score >= min
             curator_score = await self._get_curator_score(curator_id)
-            if curator_score < self.min_curator_score:
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Curator performance too low: {curator_score:.2f} < {self.min_curator_score}"
-                )
-            
-            # Step 2.5: Check if signal direction is "buy"
+            score_pass = curator_score >= self.min_curator_score
+            criteria.append({
+                'name': 'curator_score',
+                'passed': score_pass,
+                'detail': f"Curator {curator_score:.2f} < {self.min_curator_score}" if not score_pass else f"Curator {curator_score:.2f} >= {self.min_curator_score}"
+            })
+
+            # 2.5) Signal direction is buy
             sig_direction = social_signal.get('sig_direction')
-            if sig_direction != 'buy':
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    f"Signal direction is '{sig_direction}', only 'buy' signals are approved"
-                )
-            
-            # Step 3: How much capital do we have to buy?
-            if not await self._has_capital_for_allocation():
-                return await self._create_rejection_decision(
-                    social_signal, 
-                    "Insufficient capital - portfolio at max exposure"
-                )
-            
-            # Step 4: Decision - allocate 1-3% (3% default)
+            direction_pass = sig_direction == 'buy'
+            criteria.append({
+                'name': 'signal_direction_buy',
+                'passed': direction_pass,
+                'detail': f"Signal direction is '{sig_direction}', need 'buy'" if not direction_pass else "Signal direction is buy"
+            })
+
+            # 3) Portfolio capacity available
+            capital_pass = await self._has_capital_for_allocation()
+            criteria.append({
+                'name': 'portfolio_capacity',
+                'passed': capital_pass,
+                'detail': "Insufficient capital - portfolio at max exposure" if not capital_pass else "Capacity available"
+            })
+
+            failed = [c for c in criteria if not c['passed']]
+
+            # Checklist summary at INFO; full details at DEBUG
+            passed_count = sum(1 for c in criteria if c['passed'])
+            failed = [c for c in criteria if not c['passed']]
+            if failed:
+                failed_names = ", ".join(c['name'] for c in failed)
+                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (failed: {failed_names})")
+                # Detailed reasons at DEBUG
+                for c in criteria:
+                    self.logger.debug(f"check {c['name']}: {'pass' if c['passed'] else 'fail'} - {c['detail']}")
+            else:
+                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (solana, not holding, curator {curator_score:.2f}, buy, capacity)")
+                for c in criteria:
+                    self.logger.debug(f"check {c['name']}: pass - {c['detail']}")
+
+            if failed:
+                reason_text = "; ".join(c['detail'] for c in failed)
+                print(f"decision | REJECTED {token_ticker} ({chain}) reasons: {reason_text}")
+                return await self._create_rejection_decision(social_signal, reason_text)
+
+            # All checks passed → approve
             allocation_pct = self._calculate_allocation(curator_score)
-            
             decision = await self._create_approval_decision(social_signal, allocation_pct, curator_score)
             
-            # Show decision
-            token_info = social_signal['signal_pack']['token']
-            print(f"✅ DECISION: APPROVED {token_info['ticker']}")
-            print(f"   Allocation: {allocation_pct}%")
-            print(f"   Curator Score: {curator_score:.2f}")
-            print(f"   Reason: {decision['content']['reasoning']}")
-            
+            print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f})")
             return decision
             
         except Exception as e:
@@ -335,9 +353,27 @@ class DecisionMakerLowcapSimple:
             self.logger.info(f"✅ APPROVED: {social_signal['signal_pack']['curator']['id']} -> {allocation_pct}%")
             
             # Trigger learning system to process the decision strand
+            print(f"🔄 Decision Maker: Checking if learning system is available...")
+            print(f"🔄 Decision Maker: hasattr learning_system: {hasattr(self, 'learning_system')}")
+            print(f"🔄 Decision Maker: learning_system is not None: {self.learning_system is not None}")
+            
             if hasattr(self, 'learning_system') and self.learning_system:
                 print(f"🔄 Triggering learning system for decision strand...")
-                await self.learning_system.process_strand_event(created_decision)
+                print(f"🔄 Decision strand ID: {created_decision.get('id')}")
+                print(f"🔄 Decision strand kind: {created_decision.get('kind')}")
+                print(f"🔄 Decision strand action: {created_decision.get('content', {}).get('action')}")
+                print(f"🔄 Decision strand tags: {created_decision.get('tags', [])}")
+                try:
+                    # Use await for sequential processing - wait for completion
+                    print(f"   🔄 Calling learning system with await...")
+                    result = await self.learning_system.process_strand_event(created_decision)
+                    print(f"   ✅ Learning system completed: {result}")
+                except Exception as e:
+                    print(f"   ❌ Error calling learning system: {e}")
+                    import traceback
+                    print(f"   Traceback: {traceback.format_exc()}")
+            else:
+                print(f"🔄 No learning system available for decision strand callback")
             
             return created_decision
         except Exception as e:

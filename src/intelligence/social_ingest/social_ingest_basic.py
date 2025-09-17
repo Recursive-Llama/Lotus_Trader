@@ -48,6 +48,19 @@ class SocialIngestModule:
         
         # DexScreener API configuration
         self.dexscreener_base_url = "https://api.dexscreener.com/latest/dex/search"
+        # Allowed chains and minimum volume thresholds (USD) for early filtering
+        self.allowed_chains = ['solana', 'ethereum', 'base']
+        self.min_volume_requirements = {
+            'solana': 100000,   # $100k on Solana
+            'ethereum': 25000,  # $25k on Ethereum
+            'base': 25000       # $25k on Base
+        }
+        # Minimum liquidity requirements (USD) for early filtering
+        self.min_liquidity_requirements = {
+            'solana': 20000,    # $20k on Solana
+            'ethereum': 20000,  # $20k on Ethereum
+            'base': 20000       # $20k on Base
+        }
         
         # Load curator configuration
         if config_path and os.path.exists(config_path):
@@ -339,6 +352,28 @@ class SocialIngestModule:
                                 # Extract token details from DexScreener result
                                 token_details = self._extract_dexscreener_token_details(best_match)
                                 if token_details:
+                                    # Early filter: only trade on allowed chains
+                                    chain = token_details.get('chain', 'unknown').lower()
+                                    vol24 = float(token_details.get('volume_24h', 0))
+                                    liq = float(token_details.get('liquidity', 0))
+                                    min_vol = self.min_volume_requirements.get(chain, None)
+                                    min_liq = self.min_liquidity_requirements.get(chain, None)
+
+                                    if chain not in self.allowed_chains:
+                                        print(f"   ⚠️  Skipping unsupported chain from DexScreener: raw_chainId={best_match.get('chainId')} mapped={chain}")
+                                        self.logger.info(f"Skipping token on unsupported chain: {chain}")
+                                        return None
+
+                                    if min_vol is not None and vol24 < min_vol:
+                                        print(f"   ⚠️  Skipping low-volume token: ${vol24:,.0f} < ${min_vol:,.0f} required for {chain}")
+                                        self.logger.info(f"Skipping low-volume token on {chain}: {vol24} < {min_vol}")
+                                        return None
+
+                                    if min_liq is not None and liq < min_liq:
+                                        print(f"   ⚠️  Skipping low-liquidity token: ${liq:,.0f} < ${min_liq:,.0f} required for {chain}")
+                                        self.logger.info(f"Skipping low-liquidity token on {chain}: {liq} < {min_liq}")
+                                        return None
+
                                     self.logger.info(f"✅ Found verified token: {token_details['ticker']} on {token_details['chain']}")
                                     return token_details
                                 else:
@@ -359,31 +394,69 @@ class SocialIngestModule:
             return None
     
     def _find_best_dexscreener_match(self, pairs: list, token_name: str, network: str) -> Optional[Dict[str, Any]]:
-        """Find the best matching token from DexScreener search results (highest volume)"""
+        """Select best DexScreener match with allowed-chain filtering and composite scoring."""
         try:
             if not pairs:
                 return None
-            
-            # Filter by network if specified
-            if network and network != 'solana':
-                filtered_pairs = [p for p in pairs if p.get('chainId', '').lower() == network.lower()]
-                if filtered_pairs:
-                    pairs = filtered_pairs
-            
-            # Look for exact ticker match first
-            for pair in pairs:
-                if pair.get('baseToken', {}).get('symbol', '').upper() == token_name.upper():
-                    return pair
-            
-            # Look for partial match
-            for pair in pairs:
-                symbol = pair.get('baseToken', {}).get('symbol', '').upper()
-                if token_name.upper() in symbol or symbol in token_name.upper():
-                    return pair
-            
-            # Return first result (already ordered by volume by DexScreener)
-            return pairs[0] if pairs else None
-            
+
+            # Group by base symbol
+            def symbol_of(p):
+                return (p.get('baseToken', {}) or {}).get('symbol', '').upper()
+
+            # Partition by allowed chains first (unless network explicitly specified)
+            allowed = set(self.allowed_chains)
+            if network:
+                allowed = {network.lower()}
+
+            allowed_pairs = [p for p in pairs if (p.get('chainId', '') or '').lower() in allowed]
+            other_pairs = [p for p in pairs if p not in allowed_pairs]
+
+            # Build global context per symbol (max mc/vol across all chains)
+            from collections import defaultdict
+            global_stats = defaultdict(lambda: {'max_vol': 0.0, 'max_mc': 0.0})
+            for p in pairs:
+                sym = symbol_of(p)
+                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
+                mc = float(p.get('marketCap', 0) or 0)
+                gs = global_stats[sym]
+                if vol > gs['max_vol']:
+                    gs['max_vol'] = vol
+                if mc > gs['max_mc']:
+                    gs['max_mc'] = mc
+
+            # Threshold filter within allowed chains
+            def passes_threshold(p):
+                chain = (p.get('chainId', '') or '').lower()
+                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
+                min_vol = self.min_volume_requirements.get(chain, 0)
+                return vol >= min_vol
+
+            candidates = [p for p in allowed_pairs if passes_threshold(p)]
+            if not candidates:
+                self.logger.info(f"Dexscreener: no allowed-chain candidates above thresholds for {token_name}")
+                return None
+
+            # Composite scoring: volume, liquidity, verified
+            def score(p):
+                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
+                liq = float((p.get('liquidity', {}) or {}).get('usd', 0) or 0)
+                verified = 1.0 if p.get('verified', False) else 0.0
+                import math
+                return 0.5 * math.log10(max(vol, 1)) + 0.3 * math.log10(max(liq, 1)) + 0.2 * verified
+
+            # Pick best by score, tie-break by liquidity then (if available) marketCap
+            candidates.sort(key=lambda p: (score(p), float((p.get('liquidity', {}) or {}).get('usd', 0) or 0), float(p.get('marketCap', 0) or 0)), reverse=True)
+            best = candidates[0]
+
+            # Caution log if chosen mc << global mc for the symbol
+            sym = symbol_of(best)
+            chosen_mc = float(best.get('marketCap', 0) or 0)
+            gl_mc = global_stats[sym]['max_mc']
+            if gl_mc > 0 and chosen_mc < 0.3 * gl_mc:
+                self.logger.info(f"Dexscreener: caution selected {sym} on {best.get('chainId')} mc ${chosen_mc:,.0f} vs global ${gl_mc:,.0f}")
+
+            return best
+
         except Exception as e:
             self.logger.error(f"Error finding DexScreener match: {e}")
             return None
@@ -393,13 +466,15 @@ class SocialIngestModule:
         try:
             base_token = pair_data.get('baseToken', {})
             quote_token = pair_data.get('quoteToken', {})
+            raw_chain_id = pair_data.get('chainId', '')
+            mapped_chain = self._map_dexscreener_chain(raw_chain_id)
             
             # Extract token details
             return {
                 'ticker': base_token.get('symbol', ''),
                 'name': base_token.get('name', ''),
                 'contract': base_token.get('address', ''),
-                'chain': self._map_dexscreener_chain(pair_data.get('chainId', '')),
+                'chain': mapped_chain,
                 'price': float(pair_data.get('priceUsd', 0)),
                 'volume_24h': float(pair_data.get('volume', {}).get('h24', 0)),
                 'market_cap': float(pair_data.get('marketCap', 0)),
@@ -408,7 +483,8 @@ class SocialIngestModule:
                 'verified': True,
                 'dexscreener_pair_id': pair_data.get('pairAddress', ''),
                 'quote_token': quote_token.get('symbol', ''),
-                'quote_contract': quote_token.get('address', '')
+                'quote_contract': quote_token.get('address', ''),
+                'raw_chain_id': raw_chain_id
             }
             
         except Exception as e:
@@ -416,7 +492,7 @@ class SocialIngestModule:
             return None
     
     def _map_dexscreener_chain(self, chain_id: str) -> str:
-        """Map DexScreener chain IDs to our chain names"""
+        """Map DexScreener chain IDs to our chain names (no default to Solana)"""
         chain_mapping = {
             'solana': 'solana',
             'ethereum': 'ethereum',
@@ -424,18 +500,22 @@ class SocialIngestModule:
             'polygon': 'polygon',
             'arbitrum': 'arbitrum',
             'bsc': 'bsc',
+            'bnb': 'bsc',
             'avalanche': 'avalanche',
             'pulsechain': 'pulsechain',
-            'osmosis': 'osmosis'
+            'osmosis': 'osmosis',
+            'tron': 'tron',
+            'ton': 'ton'
         }
-        return chain_mapping.get(chain_id.lower(), 'solana')
+        cid = (chain_id or '').lower()
+        return chain_mapping.get(cid, cid or 'unknown')
     
     def _detect_chain(self, token_info: Dict[str, Any]) -> str:
         """Detect blockchain network from token info and context"""
         try:
             # Check if network was explicitly mentioned
             network = token_info.get('network', '').lower()
-            if network in ['solana', 'ethereum', 'base', 'polygon', 'arbitrum']:
+            if network in ['solana', 'ethereum', 'base', 'polygon', 'arbitrum', 'bsc', 'bnb', 'tron']:
                 return network
             
             # Check for chain-specific keywords in additional info
@@ -448,13 +528,17 @@ class SocialIngestModule:
                 return 'base'
             elif any(keyword in additional_info for keyword in ['polygon', 'matic']):
                 return 'polygon'
+            elif any(keyword in additional_info for keyword in ['bsc', 'bnb', 'pancakeswap']):
+                return 'bsc'
+            elif any(keyword in additional_info for keyword in ['trx', 'tron', 'sunswap', 'wtrx']):
+                return 'tron'
             
-            # Default to Solana for social lowcap (most common)
-            return 'solana'
+            # Unknown when not sure (avoid defaulting to Solana)
+            return ''
             
         except Exception as e:
             self.logger.error(f"Error detecting chain: {e}")
-            return 'solana'
+            return ''
     
     def _select_venue(self, chain: str) -> str:
         """Select best venue for the given chain"""
@@ -517,9 +601,10 @@ class SocialIngestModule:
     async def _create_social_strand(self, curator: Dict[str, Any], message_data: Dict[str, Any], token: Dict[str, Any], extraction_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create social_lowcap strand for DML"""
         try:
-            print(f"   🔧 Creating strand with token: {token.get('ticker', 'unknown')}")
-            print(f"   🔧 Curator: {curator.get('id', 'unknown')}")
-            print(f"   🔧 Token data: {token}")
+            # Verbose details moved to DEBUG level to keep INFO concise
+            self.logger.debug(f"Creating strand with token: {token.get('ticker', 'unknown')}")
+            self.logger.debug(f"Curator: {curator.get('id', 'unknown')}")
+            self.logger.debug(f"Token data: {token}")
             # Extract platform info
             platform = curator.get('platform', 'unknown')
             platform_data = curator.get('platform_data', {})
@@ -623,16 +708,19 @@ class SocialIngestModule:
             }
             
             # Create strand in database
-            print(f"   🔧 Creating strand in database...")
+            self.logger.debug(f"Creating strand in database...")
             created_strand = await self.supabase_manager.create_strand(strand)
-            print(f"   🔧 Database response: {created_strand}")
+            self.logger.debug(f"Database response: {created_strand}")
             
             # Show what we found
             token_info = strand['signal_pack']['token']
             curator_id = strand['signal_pack']['curator']['id']
-            print(f"🎯 NEW SIGNAL: {curator_id} found {token_info['ticker']} ({token_info['chain']})")
-            print(f"   Contract: {token_info['contract']}")
-            print(f"   Venue: {strand['signal_pack']['venue']['dex']}")
+            vol = token_info.get('volume_24h', 0)
+            liq = token_info.get('liquidity', 0)
+            strand_id_short = created_strand.get('id', '')[:8] + '…'
+            # Concise, stage-tagged lines
+            print(f"social | NEW SIGNAL {curator_id} → {token_info['ticker']} ({token_info['chain']}) vol ${vol:,.0f} liq ${liq:,.0f}")
+            print(f"social | Strand created: {strand_id_short}  → target: decision_maker_lowcap")
             
             # Trigger learning system to process the strand
             if hasattr(self, 'learning_system') and self.learning_system:

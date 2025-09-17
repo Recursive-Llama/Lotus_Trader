@@ -7,6 +7,7 @@ Supports Ethereum, Base, Polygon, Arbitrum, and other EVM chains.
 """
 
 import aiohttp
+import os
 import logging
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
@@ -53,7 +54,7 @@ class ZeroExClient:
     
     async def get_token_price(self, chain: str, token_address: str, vs_token: str = None) -> Optional[Dict[str, Any]]:
         """
-        Get token price from 0x Protocol
+        Get token price from 0x Protocol (legacy v1 helper)
         
         Args:
             chain: Blockchain network (ethereum, base, polygon, etc.)
@@ -97,6 +98,37 @@ class ZeroExClient:
         except Exception as e:
             logger.error(f"Error getting token price from 0x: {e}")
             return None
+
+    async def get_implied_price_v2(self, chain: str, token_address: str) -> Optional[Dict[str, Any]]:
+        """Derive price via 0x v2 quote by asking for a tiny WETH->token swap."""
+        try:
+            weth = self._get_weth_address(chain)
+            # 1e15 wei (~0.001 WETH) small sell amount for price inference
+            sell_amount = str(10**15)
+            taker = os.getenv('ETHEREUM_WALLET_ADDRESS') or "0x0000000000000000000000000000000000000001"
+            quote = await self.get_quote(
+                chain=chain,
+                sell_token=weth,
+                buy_token=token_address,
+                sell_amount=sell_amount,
+                taker=taker,
+                slippage_bps=50
+            )
+            if not quote or not quote.get('buy_amount'):
+                return None
+            buy_amount = int(quote['buy_amount'])
+            # Assume 18 decimals for WETH; token decimals unknown → price in WETH per raw units
+            # For our use we only need a positive scalar to proceed/log; execution uses full quote anyway
+            price_weth_per_token = (10**15) / max(buy_amount, 1)
+            return {
+                'price': Decimal(str(price_weth_per_token)),
+                'chain': chain,
+                'source': '0x_v2_quote_implied',
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error deriving implied price via v2: {e}")
+            return None
     
     async def get_quote(self, 
                        chain: str,
@@ -131,7 +163,8 @@ class ZeroExClient:
             }
             
             chain_id = chain_ids.get(chain.lower(), 1)
-            url = f"{self._get_chain_url(chain)}/swap/allowance-holder/quote"
+            # Use v2 Swap quote (not allowance-holder) for native sells
+            url = f"{self._get_chain_url(chain)}/swap/quote"
             params = {
                 "chainId": str(chain_id),
                 "sellToken": sell_token,
@@ -141,9 +174,7 @@ class ZeroExClient:
                 "slippageBps": str(slippage_bps)
             }
             
-            headers = {
-                "0x-version": "v2"
-            }
+            headers = {"0x-version": "v2"}
             if self.api_key:
                 headers["0x-api-key"] = self.api_key
             

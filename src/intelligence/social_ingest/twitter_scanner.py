@@ -172,9 +172,14 @@ class TwitterScanner:
                 self.logger.debug(f"No tweets found for {handle}")
                 return
             
-            # Handle pinned tweets - check if first tweet is actually the most recent
+            # Always detect and skip pinned tweets
             actual_most_recent_tweet = self._get_actual_most_recent_tweet(tweets)
             most_recent_tweet_url = actual_most_recent_tweet.get('url', '')
+            
+            # Check if first tweet is pinned (older than second tweet)
+            is_pinned = len(tweets) >= 2 and self._is_pinned_tweet(tweets[0], tweets[1])
+            if is_pinned:
+                print(f"   📌 Pinned tweet detected - skipping")
             
             # Show most recent tweet info
             most_recent_text = actual_most_recent_tweet.get('text', '')[:100]
@@ -185,20 +190,31 @@ class TwitterScanner:
             # Check if we've seen this curator before
             if curator_id in self.curator_last_seen:
                 last_seen_url = self.curator_last_seen[curator_id]
-                
+
+                # Optional context: show last seen info if available in current list
+                last_seen_ts = None
+                for t in tweets:
+                    if t.get('url', '') == last_seen_url:
+                        last_seen_ts = t.get('timestamp', None)
+                        break
+                last_seen_tail = last_seen_url.rsplit('/', 1)[-1] if last_seen_url else ''
+                if last_seen_url:
+                    print(f"   👀 Last seen: {last_seen_ts or 'unknown time'} (…{last_seen_tail})")
+
                 # If the most recent tweet is the same as last time, no new tweets
                 if most_recent_tweet_url == last_seen_url:
                     print(f"   ⏸️  No new tweets (same as last check)")
                     return
-                
-                # Find new tweets (tweets after the last seen one)
+
+                # Collect new tweets strictly after last seen, skipping pinned if present
+                start_index = 1 if is_pinned else 0
                 new_tweets = []
-                for tweet in tweets:
+                for tweet in tweets[start_index:]:
                     tweet_url = tweet.get('url', '')
                     if tweet_url == last_seen_url:
                         break  # Stop when we reach the last seen tweet
                     new_tweets.append(tweet)
-                
+
                 print(f"   🆕 Found {len(new_tweets)} new tweets")
             else:
                 # First time checking this curator - process only the actual most recent tweet
@@ -225,32 +241,36 @@ class TwitterScanner:
         except Exception as e:
             self.logger.error(f"Error checking curator {curator['handle']}: {e}")
     
+    def _is_pinned_tweet(self, first_tweet: Dict[str, Any], second_tweet: Dict[str, Any]) -> bool:
+        """
+        Check if the first tweet is pinned by comparing timestamps.
+        If first tweet is older than second tweet, it's pinned.
+        """
+        try:
+            from datetime import datetime
+            
+            first_tweet_time = datetime.fromisoformat(first_tweet['timestamp'].replace('Z', '+00:00'))
+            second_tweet_time = datetime.fromisoformat(second_tweet['timestamp'].replace('Z', '+00:00'))
+            
+            return first_tweet_time < second_tweet_time
+                
+        except Exception as e:
+            self.logger.warning(f"Error parsing timestamps for pinned check: {e}")
+            return False
+    
     def _get_actual_most_recent_tweet(self, tweets: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Get the actual most recent tweet, handling pinned tweets.
-        
-        Checks the top 2 tweets and compares timestamps to identify if the first one is pinned.
+        If first tweet is pinned, return the second tweet.
         """
         if len(tweets) < 2:
             return tweets[0] if tweets else {}
         
-        try:
-            from datetime import datetime
-            
-            # Parse timestamps
-            first_tweet_time = datetime.fromisoformat(tweets[0]['timestamp'].replace('Z', '+00:00'))
-            second_tweet_time = datetime.fromisoformat(tweets[1]['timestamp'].replace('Z', '+00:00'))
-            
-            # If first tweet is older than second, it's pinned
-            if first_tweet_time < second_tweet_time:
-                self.logger.debug(f"Detected pinned tweet, using second tweet as most recent")
-                return tweets[1]
-            else:
-                return tweets[0]
-                
-        except Exception as e:
-            self.logger.warning(f"Error parsing timestamps, using first tweet: {e}")
-            return tweets[0]
+        # Check if first tweet is pinned
+        if self._is_pinned_tweet(tweets[0], tweets[1]):
+            return tweets[1]  # Second tweet is the actual most recent
+        else:
+            return tweets[0]  # First tweet is the most recent
     
     async def _extract_tweets(self) -> List[Dict[str, Any]]:
         """Extract tweet data from the current page"""

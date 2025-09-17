@@ -98,6 +98,8 @@ class SocialTradingSystem:
                 'max_exposure_pct': 20.0,
                 'min_curator_score': 0.6,
                 'default_allocation_pct': 3.0,  # 3% default allocation
+                'min_allocation_pct': 1.0,  # Minimum 1% allocation
+                'max_allocation_pct': 3.0,  # Maximum 3% allocation
                 'slippage_pct': 1.0
             },
             'position_management': {
@@ -144,10 +146,11 @@ class SocialTradingSystem:
             # Pass learning system to social ingest for strand processing
             self.social_ingest.learning_system = self.learning_system
             
-            # Initialize decision maker
+            # Initialize decision maker with learning system reference
             self.decision_maker = DecisionMakerLowcapSimple(
                 supabase_manager=self.supabase_manager,
-                config=self.config.get('trading', {})
+                config=self.config.get('trading', {}),
+                learning_system=self.learning_system
             )
             
             # Initialize trader
@@ -156,11 +159,12 @@ class SocialTradingSystem:
                 config=self.config.get('trading', {})
             )
             
-            # Initialize price monitor
+            # Initialize price monitor (wire trader so it can execute entries/exits)
             self.price_monitor = PriceMonitor(
                 supabase_manager=self.supabase_manager,
                 jupiter_client=self.jupiter_client,
-                wallet_manager=self.wallet_manager
+                wallet_manager=self.wallet_manager,
+                trader=self.trader
             )
             
             print("✅ All components initialized")

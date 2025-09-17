@@ -20,8 +20,9 @@ from trading.jupiter_client import JupiterClient
 from trading.zeroex_client import ZeroExClient
 from trading.wallet_manager import WalletManager
 from trading.js_solana_client import JSSolanaClient
-from trading.js_ethereum_client import JSEthereumClient
 from trading.trading_executor import TradingExecutor
+from trading.evm_uniswap_client import EvmUniswapClient
+from trading.evm_uniswap_client_eth import EthUniswapClient, WETH_ADDRESS as ETH_WETH_ADDRESS, ROUTER02_ADDRESS as ETH_V3_ROUTER_ADDRESS, V2_ROUTER_ADDRESS as ETH_V2_ROUTER_ADDRESS
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +63,43 @@ class TraderLowcapSimple:
         self.trading_executor = TradingExecutor(self.jupiter_client, self.wallet_manager, self.zeroex_client)
         
         # Initialize JavaScript Solana client for real execution
-        # DISABLED: Comment out for mock trading
-        # rpc_url = f"https://rpc.helius.xyz/?api-key={helius_key}" if helius_key else "https://api.mainnet-beta.solana.com"
-        # sol_private_key = os.getenv('SOL_WALLET_PRIVATE_KEY')
-        # if sol_private_key:
-        #     self.js_solana_client = JSSolanaClient(rpc_url, sol_private_key)
-        # else:
-        #     self.js_solana_client = None
-        #     self.logger.warning("SOL_WALLET_PRIVATE_KEY not found - real execution disabled")
+        rpc_url = f"https://rpc.helius.xyz/?api-key={helius_key}" if helius_key else "https://api.mainnet-beta.solana.com"
+        sol_private_key = os.getenv('SOL_WALLET_PRIVATE_KEY')
+        if sol_private_key:
+            self.js_solana_client = JSSolanaClient(rpc_url, sol_private_key)
+            self.logger.info("✅ Real Solana trading enabled")
+        else:
+            self.js_solana_client = None
+            self.logger.warning("SOL_WALLET_PRIVATE_KEY not found - real execution disabled")
         
-        # Mock trading mode
-        self.js_solana_client = None
-        self.js_ethereum_client = None
-        self.logger.info("Mock trading mode enabled")
+        # Initialize Base and Ethereum Uniswap clients (Python)
+        try:
+            evm_pk = (
+                os.getenv('ETHEREUM_WALLET_PRIVATE_KEY')
+                or os.getenv('ETH_WALLET_PRIVATE_KEY')
+                or os.getenv('BASE_WALLET_PRIVATE_KEY')
+            )
+            self.base_client = None
+            self.eth_client = None
+            if evm_pk:
+                base_rpc = os.getenv('BASE_RPC_URL', 'https://mainnet.base.org')
+                eth_rpc = os.getenv('ETH_RPC_URL', 'https://eth.llamarpc.com')
+                # Base client (v3)
+                try:
+                    self.base_client = EvmUniswapClient(chain='base', rpc_url=base_rpc, private_key=evm_pk)
+                    self.logger.info("✅ Base Uniswap client ready")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Base client unavailable: {e}")
+                # Ethereum client (v2-first, v3-fallback)
+                try:
+                    self.eth_client = EthUniswapClient(rpc_url=eth_rpc, private_key=evm_pk)
+                    self.logger.info("✅ Ethereum Uniswap client ready")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Ethereum client unavailable: {e}")
+            else:
+                self.logger.warning("⚠️ No EVM private key in env; ETH/Base execution disabled")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error initializing EVM clients: {e}")
         
         # Entry strategy: 3 entries
         self.entry_strategy = {
@@ -117,10 +142,15 @@ class TraderLowcapSimple:
             Created position or None if execution failed
         """
         try:
+            self.logger.info(f"🚀 TRADER: execute_decision called with decision: {decision.get('id')}")
+            self.logger.info(f"🚀 TRADER: Starting execution for decision: {decision.get('id')}")
+            self.logger.info(f"🚀 TRADER: Decision action: {decision.get('content', {}).get('action')}")
+            self.logger.info(f"🚀 TRADER: Decision tags: {decision.get('tags', [])}")
+            
             # Store the decision strand for use in entry/exit creation
             self.current_decision = decision
             if decision['content']['action'] != 'approve':
-                self.logger.info(f"Decision not approved, skipping execution: {decision['content']['reasoning']}")
+                self.logger.info(f"❌ TRADER: Decision not approved, skipping execution: {decision['content']['reasoning']}")
                 return None
             
             # Extract data from signal_pack
@@ -130,35 +160,49 @@ class TraderLowcapSimple:
             curator_data = signal_pack['curator']
             trading_signals = signal_pack['trading_signals']
             
+            self.logger.info(f"🚀 TRADER: Full signal_pack: {signal_pack}")
+            self.logger.info(f"🚀 TRADER: Token data: {token_data}")
+            self.logger.info(f"🚀 TRADER: Token: {token_data.get('ticker')} on {token_data.get('chain')}")
+            self.logger.info(f"🚀 TRADER: Contract: {token_data.get('contract')}")
+            self.logger.info(f"🚀 TRADER: Curator: {curator_data.get('id')}")
+            self.logger.info(f"🚀 TRADER: Trading signals: {trading_signals}")
+            
             allocation_pct = decision['content']['allocation_pct']
             curator_id = decision['content']['curator_id']
             
+            self.logger.info(f"🚀 TRADER: Allocation percentage: {allocation_pct}%")
+            
             # Get network and calculate allocation in native token
             chain = token_data.get('chain', 'solana').lower()
-            self.logger.info(f"🔍 Chain: {chain}")
+            self.logger.info(f"🚀 TRADER: Getting {chain} balance...")
             native_balance = await self._get_native_balance(chain)
-            self.logger.info(f"🔍 Native balance: {native_balance}")
+            self.logger.info(f"🚀 TRADER: Native balance: {native_balance}")
             if not native_balance:
-                self.logger.warning(f"Could not get {chain} balance")
+                self.logger.error(f"❌ TRADER: Could not get {chain} balance - aborting")
                 return None
                 
             allocation_native = allocation_pct * native_balance / 100
             
-            self.logger.info(f"Executing trade: {token_data['ticker']} - {allocation_pct}% ({allocation_native:.4f} {chain.upper()})")
+            self.logger.info(f"🚀 TRADER: Calculated allocation: {allocation_native:.4f} {chain.upper()}")
+            self.logger.info(f"🚀 TRADER: Executing trade: {token_data['ticker']} - {allocation_pct}% ({allocation_native:.4f} {chain.upper()})")
             
             # Step 1: Check native token balance
+            self.logger.info(f"🚀 TRADER: Checking balance: {native_balance:.4f} >= {allocation_native:.4f}")
             if native_balance < allocation_native:
-                self.logger.warning(f"Insufficient {chain.upper()} balance: {native_balance:.4f} < {allocation_native:.4f}")
+                self.logger.error(f"❌ TRADER: Insufficient {chain.upper()} balance: {native_balance:.4f} < {allocation_native:.4f}")
                 return None
             
             # Step 2: Get current price
+            self.logger.info(f"🚀 TRADER: Getting current price for {token_data['ticker']}...")
             current_price = await self._get_current_price(token_data)
-            if not current_price:
-                self.logger.error(f"Could not get current price for {token_data['ticker']}")
-                return None
+            # For EVM we may proceed without pre-price; execution will obtain a firm quote
+            if current_price:
+                unit = 'SOL' if chain == 'solana' else 'ETH'
+                self.logger.info(f"🚀 TRADER: Current price (pre): {current_price:.6f} {unit}")
             
             # Step 3: Create position with simplified schema
             position_id = f"{token_data['ticker']}_{token_data['chain']}_{int(datetime.now().timestamp())}"
+            self.logger.info(f"🚀 TRADER: Creating position: {position_id}")
             
             # Create position using simple table insert
             position_data = {
@@ -171,7 +215,6 @@ class TraderLowcapSimple:
                 'total_allocation_pct': allocation_pct,
                 'total_allocation_usd': 0.0,  # Will be updated when entries are made
                 'total_quantity': 0.0,  # Will be updated when entries are made
-                'average_entry_price': 0.0,  # Will be updated when entries are made
                 'curator_sources': curator_data.get('id', 'unknown'),  # Add curator ID
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat()  # Track first entry timestamp
             }
@@ -188,6 +231,7 @@ class TraderLowcapSimple:
                 return None
             
             # Step 4: Set exit rules (30% of remaining at each level)
+            self.logger.info(f"🚀 TRADER: Setting exit rules for {position_id}")
             exit_rules = {
                 'strategy': 'staged',
                 'stages': [
@@ -206,17 +250,20 @@ class TraderLowcapSimple:
                 self.supabase_manager.client.table('lowcap_positions').update({
                     'exit_rules': exit_rules
                 }).eq('id', position_id).execute()
-                self.logger.info(f"✅ Exit rules set for {position_id}")
+                self.logger.info(f"✅ TRADER: Exit rules set for {position_id}")
             except Exception as e:
-                self.logger.error(f"Error setting exit rules: {e}")
+                self.logger.error(f"❌ TRADER: Error setting exit rules: {e}")
             
             # Step 5: Create and store all 3 entries
+            self.logger.info(f"🚀 TRADER: Creating all entries for {position_id}")
             await self._create_all_entries(position_id, current_price, allocation_native)
             
             # Step 6: Execute first entry (immediate)
+            self.logger.info(f"🚀 TRADER: Executing first entry for {position_id}")
             await self._execute_entry(position_id, 1)
             
             # Step 7: Calculate and store initial exits
+            self.logger.info(f"🚀 TRADER: Calculating initial exits for {position_id}")
             await self._calculate_initial_exits(position_id, current_price, allocation_native)
             
             self.logger.info(f"✅ Position created and first entry executed: {token_data['ticker']}")
@@ -230,7 +277,9 @@ class TraderLowcapSimple:
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to execute decision: {e}")
+            self.logger.error(f"❌ TRADER: Failed to execute decision: {e}")
+            import traceback
+            self.logger.error(f"❌ TRADER: Traceback: {traceback.format_exc()}")
             return None
     
     
@@ -245,20 +294,25 @@ class TraderLowcapSimple:
             Native token balance or None if failed
         """
         try:
-            self.logger.info(f"🔍 Getting {chain} balance...")
+            self.logger.info(f"🔍 TRADER: Getting {chain} balance...")
+            self.logger.info(f"🔍 TRADER: Wallet manager available: {self.wallet_manager is not None}")
+            
             # Use WalletManager to get native token balance
             balance = await self.wallet_manager.get_balance(chain)
-            self.logger.info(f"🔍 Balance result: {balance}")
+            self.logger.info(f"🔍 TRADER: Balance result: {balance}")
+            
             if balance is not None:
-                return float(balance)
+                balance_float = float(balance)
+                self.logger.info(f"🔍 TRADER: Converted to float: {balance_float}")
+                return balance_float
             else:
-                self.logger.error(f"Could not get {chain} balance")
+                self.logger.error(f"❌ TRADER: Could not get {chain} balance - balance is None")
                 return None
                 
         except Exception as e:
-            self.logger.error(f"Error getting {chain} balance: {e}")
+            self.logger.error(f"❌ TRADER: Error getting {chain} balance: {e}")
             import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            self.logger.error(f"❌ TRADER: Traceback: {traceback.format_exc()}")
             return None
 
     async def _get_token_decimals(self, token_address: str) -> int:
@@ -342,14 +396,46 @@ class TraderLowcapSimple:
                     self.logger.warning(f"Could not get Jupiter quote for {token_data.get('ticker', 'unknown')}")
                     return None
                     
-            elif chain in ['ethereum', 'base', 'polygon', 'arbitrum']:
-                price_info = await self.zeroex_client.get_token_price(chain, token_address)
-                if not price_info:
-                    self.logger.error(f"Could not get price for {token_data.get('ticker', 'unknown')} on {chain}")
+            elif chain in ['ethereum', 'base']:
+                # Use on-chain router methods to infer price (prefer v2 getAmountsOut if available, else v3 fee tiers)
+                try:
+                    if chain == 'base' and self.base_client:
+                        client = self.base_client
+                    elif chain == 'ethereum' and self.eth_client:
+                        client = self.eth_client
+                    else:
+                        return None
+                    # Try v2 path first if available
+                    amount_in = int(0.001 * 1e18)
+                    amounts = None
+                    if hasattr(client, 'v2_get_amounts_out'):
+                        try:
+                            amounts = client.v2_get_amounts_out(client.weth_address if hasattr(client, 'weth_address') else ETH_WETH_ADDRESS, token_address, amount_in)
+                        except Exception:
+                            amounts = None
+                    if amounts and len(amounts) >= 2:
+                        out = amounts[-1]
+                        token_dec = client.get_token_decimals(token_address)
+                        price = (0.001) / (out / (10 ** token_dec))
+                        self.logger.info(f"Price via v2 getAmountsOut: {price:.10f} native/token")
+                        return price
+                    # Fallback: v3 quoter for common fee tiers
+                    for fee in [500, 3000, 10000]:
+                        try:
+                            if hasattr(client, 'v3_quote_amount_out'):
+                                out = client.v3_quote_amount_out(client.weth_address if hasattr(client, 'weth_address') else ETH_WETH_ADDRESS, token_address, amount_in, fee=fee)
+                                if out and out > 0:
+                                    token_dec = client.get_token_decimals(token_address)
+                                    price = (0.001) / (out / (10 ** token_dec))
+                                    self.logger.info(f"Price via v3 quoter fee={fee}: {price:.10f} native/token")
+                                    return price
+                        except Exception:
+                            continue
+                    self.logger.info("Price not available via v2 or v3 quoter; proceeding without pre-price")
                     return None
-                price = float(price_info['price'])
-                self.logger.info(f"Current price for {token_data.get('ticker', 'unknown')} on {chain}: {price:.6f} ETH")
-                return price
+                except Exception as e:
+                    self.logger.info(f"EVM pre-price error: {e}; proceeding without pre-price")
+                    return None
             else:
                 self.logger.error(f"Unsupported chain for price fetching: {chain}")
                 return None
@@ -666,9 +752,9 @@ class TraderLowcapSimple:
                 self.logger.warning(f"Entry {entry_number} not found or already executed")
                 return False
             
-            # Execute the actual trade if JavaScript client is available
+            # Execute the actual trade if execution client is available
             tx_hash = None
-            if self.js_solana_client or self.js_ethereum_client:
+            if self.js_solana_client or self.eth_client or self.base_client:
                 try:
                     # Get position details for the swap
                     position_result = self.supabase_manager.client.table('lowcap_positions').select('token_contract, token_chain, total_allocation_pct').eq('id', position_id).execute()
@@ -700,41 +786,65 @@ class TraderLowcapSimple:
                             else:
                                 self.logger.error("Could not get SOL balance for trade execution")
                                 
-                        elif token_chain.lower() in ['ethereum', 'base'] and self.js_ethereum_client:
-                            # Execute Ethereum/Base swap
-                            eth_balance = await self._get_native_balance(token_chain)
-                            if eth_balance:
-                                eth_amount = (allocation_pct / 100) * eth_balance
-                                eth_wei = int(eth_amount * 1e18)  # Convert to wei
-                                
-                                # Get quote from 0x
-                                taker_address = os.getenv('ETHEREUM_WALLET_ADDRESS')
-                                quote = await self.zeroex_client.get_quote(
-                                    chain=token_chain,
-                                    sell_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-                                    buy_token=token_contract,
-                                    sell_amount=str(eth_wei),
-                                    taker=taker_address,
-                                    slippage_bps=50
-                                )
-                                
-                                if quote:
-                                    swap_result = await self.js_ethereum_client.execute_swap(
-                                        sell_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                                        buy_token=token_contract,
-                                        sell_amount=str(eth_wei),
-                                        quote_data=quote
-                                    )
-                                    
-                                    if swap_result.get('success'):
-                                        tx_hash = swap_result.get('tx_hash')
-                                        self.logger.info(f"✅ {token_chain} trade executed: {tx_hash}")
-                                    else:
-                                        self.logger.error(f"❌ {token_chain} trade failed: {swap_result.get('error')}")
-                                else:
-                                    self.logger.error(f"Could not get quote for {token_chain} trade")
+                        elif token_chain.lower() == 'base' and self.base_client:
+                            amount_eth = float(entry_to_execute.get('amount_native', 0.0))
+                            if amount_eth <= 0:
+                                self.logger.error("Entry amount_native not set for Base trade")
                             else:
-                                self.logger.error(f"Could not get {token_chain.upper()} balance for trade execution")
+                                # Wrap ETH -> WETH
+                                wrap_res = self.base_client.wrap_eth(amount_eth)
+                                self.logger.info(f"BASE wrap: {wrap_res}")
+                                # Approve router for WETH
+                                amount_wei = int(amount_eth * 1e18)
+                                approve_res = self.base_client.approve_erc20(self.base_client.weth_address, self.base_client.router_address, amount_wei)
+                                self.logger.info(f"BASE approve: {approve_res}")
+                                # Try v3 fee tiers
+                                for fee in [500, 3000, 10000]:
+                                    swap_res = self.base_client.swap_exact_input_single(self.base_client.weth_address, token_contract, amount_wei, fee=fee, amount_out_min=0)
+                                    self.logger.info(f"BASE swap fee={fee}: {swap_res}")
+                                    if swap_res.get('status') == 1:
+                                        tx_hash = swap_res.get('tx_hash')
+                                        break
+                                if tx_hash:
+                                    self.logger.info(f"✅ base trade executed: {tx_hash}")
+                                else:
+                                    self.logger.error("❌ base trade failed across fee tiers")
+                        elif token_chain.lower() == 'ethereum' and self.eth_client:
+                            amount_eth = float(entry_to_execute.get('amount_native', 0.0))
+                            if amount_eth <= 0:
+                                self.logger.error("Entry amount_native not set for ETH trade")
+                            else:
+                                # Wrap ETH -> WETH
+                                wrap_res = self.eth_client.wrap_eth(amount_eth)
+                                self.logger.info(f"ETH wrap: {wrap_res}")
+                                amount_wei = int(amount_eth * 1e18)
+                                owner = self.eth_client.account.address
+                                # Ensure allowances for v2 and v3 routers
+                                for spender in [ETH_V3_ROUTER_ADDRESS, ETH_V2_ROUTER_ADDRESS]:
+                                    current_allow = self.eth_client.erc20_allowance(ETH_WETH_ADDRESS, owner, spender)
+                                    self.logger.info(f"ETH allowance spender={spender} current={current_allow}")
+                                    if current_allow < amount_wei:
+                                        approve_res = self.eth_client.approve_erc20(ETH_WETH_ADDRESS, spender, amount_wei)
+                                        self.logger.info(f"ETH approve spender={spender}: {approve_res}")
+                                # Prefer v2 direct path
+                                amounts = self.eth_client.v2_get_amounts_out(ETH_WETH_ADDRESS, token_contract, amount_wei)
+                                if amounts:
+                                    v2_res = self.eth_client.v2_swap_exact_tokens_for_tokens(ETH_WETH_ADDRESS, token_contract, amount_wei, amount_out_min_wei=0)
+                                    self.logger.info(f"ETH v2 swap: {v2_res}")
+                                    if v2_res.get('status') == 1:
+                                        tx_hash = v2_res.get('tx_hash')
+                                # Fallback to v3 fee tiers if v2 not filled
+                                if not tx_hash:
+                                    for fee in [500, 3000, 10000]:
+                                        swap_res = self.eth_client.swap_exact_input_single(ETH_WETH_ADDRESS, token_contract, amount_wei, fee=fee, amount_out_min=0)
+                                        self.logger.info(f"ETH v3 swap fee={fee}: {swap_res}")
+                                        if swap_res.get('status') == 1:
+                                            tx_hash = swap_res.get('tx_hash')
+                                            break
+                                if tx_hash:
+                                    self.logger.info(f"✅ ethereum trade executed: {tx_hash}")
+                                else:
+                                    self.logger.error("❌ ethereum trade failed (v2 and v3)")
                         else:
                             self.logger.warning(f"No execution client available for {token_chain}")
                             
@@ -744,7 +854,7 @@ class TraderLowcapSimple:
             # Mark entry as executed
             entry_to_execute['status'] = 'executed'
             entry_to_execute['executed_at'] = datetime.now(timezone.utc).isoformat()
-            entry_to_execute['tx_hash'] = tx_hash or f"mock_tx_{entry_number}_{int(datetime.now().timestamp())}"
+            entry_to_execute['tx_hash'] = tx_hash or "no_hash_stored"
             
             # Calculate tokens bought for this entry
             entry_to_execute['tokens_bought'] = entry_to_execute['amount_native'] / entry_to_execute['price']
@@ -754,7 +864,7 @@ class TraderLowcapSimple:
                 'entries': entries
             }).eq('id', position_id).execute()
             
-            # Update position totals (total_quantity, average_entry_price, total_allocation_usd)
+            # Update position totals (total_quantity, total_allocation_usd)
             await self._update_position_totals(position_id)
             
             # Recalculate exits if this is not the first entry (average price changed)
@@ -1168,7 +1278,7 @@ class TraderLowcapSimple:
 
     async def _update_position_totals(self, position_id: str) -> None:
         """
-        Update position totals (total_quantity, average_entry_price, total_allocation_usd)
+        Update position totals (total_quantity, total_allocation_usd)
         based on executed entries
         """
         try:
@@ -1201,7 +1311,6 @@ class TraderLowcapSimple:
                 # Update position
                 self.supabase_manager.client.table('lowcap_positions').update({
                     'total_quantity': total_tokens_bought,
-                    'average_entry_price': average_entry_price,
                     'total_allocation_usd': total_allocation_usd
                 }).eq('id', position_id).execute()
                 
@@ -1218,44 +1327,24 @@ class TraderLowcapSimple:
         """
         try:
             # Get position data
-            position_result = self.supabase_manager.client.table('lowcap_positions').select('total_quantity, average_entry_price, exits').eq('id', position_id).execute()
+            position_result = self.supabase_manager.client.table('lowcap_positions').select('total_quantity, exits').eq('id', position_id).execute()
             if not position_result.data:
                 self.logger.error(f"Position {position_id} not found")
                 return
                 
             position = position_result.data[0]
             total_quantity = position.get('total_quantity', 0)
-            average_entry_price = position.get('average_entry_price', 0)
             
-            if total_quantity <= 0 or average_entry_price <= 0:
-                self.logger.warning(f"Invalid position data for recalculation: quantity={total_quantity}, avg_price={average_entry_price}")
+            if total_quantity <= 0:
+                self.logger.warning(f"Invalid position data for recalculation: quantity={total_quantity}")
                 return
             
             # Get current exits
             exits = position.get('exits', [])
             
-            # Recalculate exit targets based on new average price
-            for exit_data in exits:
-                if exit_data.get('status') == 'pending':
-                    exit_number = exit_data.get('exit_number', 1)
-                    gain_multiplier = exit_number  # 100%, 200%, 300% gain
-                    
-                    # Calculate new target price
-                    target_price = average_entry_price * (1 + gain_multiplier)
-                    
-                    # Update exit target
-                    exit_data['target_price'] = target_price
-                    exit_data['tokens_to_sell'] = total_quantity * 0.30  # 30% of remaining
-                    exit_data['expected_native'] = exit_data['tokens_to_sell'] * target_price
-                    
-                    self.logger.info(f"Recalculated exit {exit_number}: target price ${target_price:.6f}, tokens: {exit_data['tokens_to_sell']:.2f}")
-            
-            # Update exits in database
-            self.supabase_manager.client.table('lowcap_positions').update({
-                'exits': exits
-            }).eq('id', position_id).execute()
-            
-            self.logger.info(f"Recalculated exits for position {position_id} based on new average price ${average_entry_price:.6f}")
+            # TODO: Recalculate exit targets when average price changes
+            # For now, skip recalculation since we don't have average_entry_price column
+            self.logger.info(f"Skipping exit recalculation for position {position_id} - average_entry_price column not available")
             
         except Exception as e:
             self.logger.error(f"Error recalculating exits: {e}")

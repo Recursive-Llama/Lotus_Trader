@@ -315,6 +315,7 @@ class UniversalLearningSystem:
             if should_trigger:
                 print(f"🧠 Triggering Decision Maker...")
                 await self._trigger_decision_maker(strand)
+                print(f"🧠 Decision Maker completed - strand processed")
             
             # Check if this strand should trigger the Trader
             print(f"🧠 Checking if should trigger Trader...")
@@ -323,6 +324,7 @@ class UniversalLearningSystem:
             if should_trigger_trader:
                 print(f"🧠 Triggering Trader...")
                 await self._trigger_trader(strand)
+                print(f"🧠 Trader completed - strand processed")
             
             # Check if this strand is a braid candidate
             if self._is_braid_candidate(strand):
@@ -347,16 +349,26 @@ class UniversalLearningSystem:
     def _should_trigger_trader(self, strand: Dict[str, Any]) -> bool:
         """Check if strand should trigger the Trader"""
         # Trigger if it's a decision_lowcap strand with approval action
-        return (
-            strand.get('kind') == 'decision_lowcap' and
-            strand.get('content', {}).get('action') == 'approve' and
-            'approved' in strand.get('tags', [])
+        kind = strand.get('kind')
+        action = strand.get('content', {}).get('action')
+        tags = strand.get('tags', [])
+        
+        print(f"🧠 Trader trigger check: kind={kind}, action={action}, tags={tags}")
+        
+        should_trigger = (
+            kind == 'decision_lowcap' and
+            action == 'approve' and
+            'approved' in tags
         )
+        
+        print(f"🧠 Trader trigger result: {should_trigger}")
+        return should_trigger
     
     async def _trigger_decision_maker(self, strand: Dict[str, Any]) -> None:
         """Trigger the Decision Maker with the strand"""
         try:
-            print(f"🧠 Decision Maker: Starting trigger for strand {strand.get('id', 'unknown')}")
+            parent_id_short = (strand.get('id', '')[:8] + '…') if strand.get('id') else 'unknown'
+            print(f"decision | Triggering for social strand {parent_id_short}")
             
             # Import here to avoid circular imports
             from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
@@ -388,9 +400,10 @@ class UniversalLearningSystem:
             self.logger.info(f"Triggering Decision Maker for strand: {strand.get('id', 'unknown')}")
             result = await self.decision_maker.make_decision(strand)
             if result:
-                print(f"🧠 Decision Maker: Created decision strand {result.get('id', 'unknown')}")
+                child_id_short = (result.get('id', '')[:8] + '…') if result.get('id') else 'unknown'
+                print(f"decision | Strand {child_id_short} (from {parent_id_short}) → action: {result.get('content', {}).get('action')}")
             else:
-                print(f"🧠 Decision Maker: No decision created (rejected)")
+                print(f"decision | No decision created (rejected)")
             
         except Exception as e:
             print(f"🧠 Decision Maker: ERROR - {e}")
@@ -401,7 +414,8 @@ class UniversalLearningSystem:
     async def _trigger_trader(self, strand: Dict[str, Any]) -> None:
         """Trigger the Trader with the decision strand"""
         try:
-            print(f"🧠 Trader: Starting trigger for strand {strand.get('id', 'unknown')}")
+            dec_id_short = (strand.get('id', '')[:8] + '…') if strand.get('id') else 'unknown'
+            print(f"trader | Triggered by decision {dec_id_short}")
             
             # Import here to avoid circular imports
             from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
@@ -410,28 +424,43 @@ class UniversalLearningSystem:
             # Initialize trader if not already done
             if not hasattr(self, 'trader'):
                 print(f"🧠 Trader: Initializing Trader...")
-                # Use default config for trader
-                trader_config = {
-                    'book_id': 'social',
-                    'book_nav': 100000.0,
-                    'max_position_size_pct': 2.0,
-                    'entry_strategy': 'three_entry',
-                    'exit_strategy': 'staged_exit'
-                }
-                self.trader = TraderLowcapSimple(
-                    self.supabase_manager, 
-                    trader_config
-                )
-                print(f"🧠 Trader: Initialized successfully")
+                try:
+                    # Use default config for trader
+                    trader_config = {
+                        'book_id': 'social',
+                        'book_nav': 100000.0,
+                        'max_position_size_pct': 2.0,
+                        'entry_strategy': 'three_entry',
+                        'exit_strategy': 'staged_exit'
+                    }
+                    self.trader = TraderLowcapSimple(
+                        self.supabase_manager, 
+                        trader_config
+                    )
+                    print(f"🧠 Trader: Initialized successfully")
+                except Exception as e:
+                    print(f"🧠 Trader: ERROR during initialization: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return
             
             # Process the decision strand with trader
             print(f"🧠 Trader: Processing decision strand {strand.get('id', 'unknown')}")
             self.logger.info(f"Triggering Trader for decision strand: {strand.get('id', 'unknown')}")
+            
+            # Add debugging for trader execution
             result = await self.trader.execute_decision(strand)
             if result:
-                print(f"🧠 Trader: Trade execution result: {result}")
+                # One-line summary with native unit price (SOL/ETH)
+                chain = (strand.get('signal_pack', {}).get('token', {}) or {}).get('chain')
+                unit = 'SOL' if chain == 'solana' else 'ETH'
+                alloc_native = result.get('allocation_native')
+                price_val = result.get('current_price')
+                alloc_str = f"{alloc_native:.6f}" if isinstance(alloc_native, (int, float)) else str(alloc_native)
+                price_str = f"{price_val:.6f}" if isinstance(price_val, (int, float)) else "n/a"
+                print(f"trader | TRADE OK: buy {result.get('token_ticker')} on {chain} @ {strand.get('signal_pack', {}).get('venue', {}).get('dex')} | qty {alloc_str} native | price {price_str} {unit} | alloc {result.get('allocation_pct')}% | position_id {result.get('position_id')}")
             else:
-                print(f"🧠 Trader: No trade executed")
+                print(f"trader | NOOP: trade not executed")
             
         except Exception as e:
             print(f"🧠 Trader: ERROR - {e}")

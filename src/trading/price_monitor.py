@@ -13,8 +13,10 @@ from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 import json
 
+import os
 from .jupiter_client import JupiterClient
 from .wallet_manager import WalletManager
+from .zeroex_client import ZeroExClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class PriceMonitor:
     - Portfolio exposure and risk management
     """
     
-    def __init__(self, supabase_manager, jupiter_client: JupiterClient, wallet_manager: WalletManager):
+    def __init__(self, supabase_manager, jupiter_client: JupiterClient, wallet_manager: WalletManager, trader=None):
         """
         Initialize price monitor
         
@@ -41,6 +43,10 @@ class PriceMonitor:
         self.supabase_manager = supabase_manager
         self.jupiter_client = jupiter_client
         self.wallet_manager = wallet_manager
+        self.trader = trader  # Optional: use trader to execute planned entries/exits
+        # Initialize 0x client for EVM pricing
+        zeroex_key = os.getenv('0X_API_KEY')
+        self.zeroex_client = ZeroExClient(zeroex_key)
         self.monitoring = False
         self.monitor_task = None
         
@@ -125,101 +131,82 @@ class PriceMonitor:
     async def _check_position(self, position: Dict[str, Any]):
         """Check a single position for exit/entry conditions"""
         try:
-            token_address = position.get('token_address')
-            if not token_address:
+            token_contract = position.get('token_contract')
+            token_chain = (position.get('token_chain') or '').lower()
+            if not token_contract or not token_chain:
                 return
-            
-            # Get current price
-            price_info = await self.jupiter_client.get_token_price(token_address)
-            if not price_info:
-                logger.warning(f"Could not get price for {token_address}")
+
+            # Get current price by chain
+            current_price = await self._get_current_price_by_chain(token_chain, token_contract, position.get('token_ticker'))
+            if current_price is None:
+                logger.warning(f"Could not get price for {token_contract} on {token_chain}")
                 return
-            
-            current_price = price_info['price']
-            
-            # Check exit conditions
-            await self._check_exit_conditions(position, current_price)
-            
-            # Check planned entries
-            await self._check_planned_entries(position, current_price)
+
+            # Planned entries and exits (DB arrays) executed via Trader if available
+            await self._check_planned_entries(position, float(current_price))
+            await self._check_exits(position, float(current_price))
             
         except Exception as e:
             logger.error(f"Error checking position {position.get('id', 'unknown')}: {e}")
     
-    async def _check_exit_conditions(self, position: Dict[str, Any], current_price: Decimal):
-        """Check if position should be exited based on current price"""
+    async def _check_exits(self, position: Dict[str, Any], current_price: float):
+        """Execute pending exits when price target reached using Trader if available"""
         try:
-            entries = position.get('entries', [])
             exits = position.get('exits', [])
-            exit_rules = position.get('exit_rules', [])
-            
-            if not entries or not exit_rules:
+            if not exits:
                 return
-            
-            # Calculate current P&L
-            total_invested = sum(entry.get('amount_usd', 0) for entry in entries)
-            total_quantity = sum(entry.get('quantity', 0) for entry in entries)
-            
-            if total_quantity == 0:
-                return
-            
-            current_value = float(total_quantity) * float(current_price)
-            pnl_pct = ((current_value - total_invested) / total_invested) * 100
-            
-            # Check each exit rule
-            for rule in exit_rules:
-                exit_price = rule.get('exit_price')
-                exit_pct = rule.get('exit_pct', 30)  # Default 30% of remaining
-                gain_threshold = rule.get('gain_threshold', 100)  # Default 100% gain
-                
-                if pnl_pct >= gain_threshold:
-                    # Calculate remaining quantity (subtract already exited)
-                    remaining_quantity = total_quantity
-                    for exit in exits:
-                        remaining_quantity -= exit.get('quantity', 0)
-                    
-                    if remaining_quantity > 0:
-                        # Execute exit
-                        exit_quantity = remaining_quantity * (exit_pct / 100)
-                        await self._execute_exit(position, exit_quantity, current_price, rule)
-                        
+            position_id = position.get('id')
+            for exit_order in exits:
+                if exit_order.get('status') == 'pending':
+                    target_price = float(exit_order.get('price', 0))
+                    exit_number = exit_order.get('exit_number')
+                    if current_price >= target_price and self.trader:
+                        logger.info(f"Triggering exit {exit_number} for {position.get('token_ticker')} at {current_price:.6f} (target {target_price:.6f})")
+                        try:
+                            await self.trader._execute_exit(position_id, exit_number)
+                        except Exception as exec_err:
+                            logger.error(f"Error executing trader exit: {exec_err}")
         except Exception as e:
-            logger.error(f"Error checking exit conditions: {e}")
+            logger.error(f"Error checking exits: {e}")
     
-    async def _check_planned_entries(self, position: Dict[str, Any], current_price: Decimal):
-        """Check if planned dip entries should be executed"""
+    async def _check_planned_entries(self, position: Dict[str, Any], current_price: float):
+        """Execute planned dip entries when targets hit using Trader if available"""
         try:
             entries = position.get('entries', [])
-            planned_entries = position.get('planned_entries', [])
-            
-            if not planned_entries:
-                return
-            
-            # Get the first entry price as reference
             if not entries:
                 return
-            
-            first_entry_price = entries[0].get('price_usd', 0)
-            if first_entry_price == 0:
-                return
-            
-            # Check each planned entry
-            for planned_entry in planned_entries:
-                if planned_entry.get('executed', False):
-                    continue
-                
-                dip_threshold = planned_entry.get('dip_threshold', 30)  # Default -30%
-                entry_amount = planned_entry.get('amount_usd', 0)
-                
-                # Calculate target price
-                target_price = first_entry_price * (1 - dip_threshold / 100)
-                
-                if current_price <= target_price:
-                    # Execute planned entry
-                    await self._execute_planned_entry(position, planned_entry, current_price)
-                    
+            position_id = position.get('id')
+            for entry in entries:
+                if entry.get('status') == 'pending':
+                    target_price = float(entry.get('price', 0))
+                    entry_number = entry.get('entry_number')
+                    if current_price <= target_price and self.trader:
+                        logger.info(f"Triggering planned entry {entry_number} at {current_price:.6f} (target {target_price:.6f})")
+                        try:
+                            await self.trader._execute_entry(position_id, entry_number)
+                        except Exception as exec_err:
+                            logger.error(f"Error executing trader entry: {exec_err}")
         except Exception as e:
             logger.error(f"Error checking planned entries: {e}")
+
+    async def _get_current_price_by_chain(self, chain: str, token_contract: str, ticker: Optional[str] = None) -> Optional[float]:
+        """Fetch current price depending on chain"""
+        try:
+            if chain == 'solana':
+                price_info = await self.jupiter_client.get_token_price(token_contract)
+                if price_info:
+                    return float(price_info['price'])
+                return None
+            elif chain in ['ethereum', 'base', 'polygon', 'arbitrum']:
+                price_info = await self.zeroex_client.get_implied_price_v2(chain, token_contract)
+                if price_info and 'price' in price_info:
+                    return float(price_info['price'])
+                return None
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching price for {ticker or token_contract} on {chain}: {e}")
+            return None
     
     async def _execute_exit(self, position: Dict[str, Any], quantity: float, price: Decimal, rule: Dict[str, Any]):
         """Execute a position exit"""
