@@ -70,6 +70,7 @@ eth-account==0.9.0
 # Web scraping for social media
 playwright==1.48.0
 telethon==1.36.0
+discord.py==2.3.2
 
 # Supabase for database
 supabase==2.18.1

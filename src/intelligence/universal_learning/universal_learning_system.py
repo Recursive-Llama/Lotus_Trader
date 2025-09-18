@@ -335,6 +335,10 @@ class UniversalLearningSystem:
             
         except Exception as e:
             self.logger.error(f"Error processing strand event: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            print(f"❌ Error processing strand event: {e}")
+            print(f"❌ Traceback: {traceback.format_exc()}")
             return strand
     
     def _should_trigger_decision_maker(self, strand: Dict[str, Any]) -> bool:
@@ -349,19 +353,30 @@ class UniversalLearningSystem:
     def _should_trigger_trader(self, strand: Dict[str, Any]) -> bool:
         """Check if strand should trigger the Trader"""
         # Trigger if it's a decision_lowcap strand with approval action
+        # OR if it's a gem_bot_conservative strand (auto-approved)
         kind = strand.get('kind')
-        action = strand.get('content', {}).get('action')
+        content = strand.get('content') or {}
+        action = content.get('action')
         tags = strand.get('tags', [])
         
         print(f"🧠 Trader trigger check: kind={kind}, action={action}, tags={tags}")
         
-        should_trigger = (
+        # Standard decision_lowcap approval
+        decision_approval = (
             kind == 'decision_lowcap' and
             action == 'approve' and
             'approved' in tags
         )
         
-        print(f"🧠 Trader trigger result: {should_trigger}")
+        # Gem Bot columns (auto-approved)
+        gem_bot_auto = (
+            kind in ['gem_bot_conservative', 'gem_bot_risky_test'] and
+            'auto_approved' in tags
+        )
+        
+        should_trigger = decision_approval or gem_bot_auto
+        
+        print(f"🧠 Trader trigger result: {should_trigger} (decision_approval={decision_approval}, gem_bot_auto={gem_bot_auto})")
         return should_trigger
     
     async def _trigger_decision_maker(self, strand: Dict[str, Any]) -> None:
@@ -421,9 +436,9 @@ class UniversalLearningSystem:
             from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
             print(f"🧠 Trader: Import successful")
             
-            # Initialize trader if not already done
-            if not hasattr(self, 'trader'):
-                print(f"🧠 Trader: Initializing Trader...")
+            # Use shared trader instance if available, otherwise initialize
+            if not hasattr(self, 'trader') or self.trader is None:
+                print(f"🧠 Trader: No shared trader found, initializing new one...")
                 try:
                     # Use default config for trader
                     trader_config = {
@@ -437,19 +452,40 @@ class UniversalLearningSystem:
                         self.supabase_manager, 
                         trader_config
                     )
+                    
+                    # Initialize Jupiter client for trader
+                    from trading.jupiter_client import JupiterClient
+                    self.trader.jupiter_client = JupiterClient()
+                    
                     print(f"🧠 Trader: Initialized successfully")
                 except Exception as e:
                     print(f"🧠 Trader: ERROR during initialization: {e}")
                     import traceback
                     traceback.print_exc()
                     return
+            else:
+                print(f"🧠 Trader: Using shared trader instance")
             
-            # Process the decision strand with trader
-            print(f"🧠 Trader: Processing decision strand {strand.get('id', 'unknown')}")
-            self.logger.info(f"Triggering Trader for decision strand: {strand.get('id', 'unknown')}")
+            # Process the strand with trader based on type
+            strand_kind = strand.get('kind')
+            print(f"🧠 Trader: Processing {strand_kind} strand {strand.get('id', 'unknown')}")
+            self.logger.info(f"Triggering Trader for {strand_kind} strand: {strand.get('id', 'unknown')}")
             
-            # Add debugging for trader execution
-            result = await self.trader.execute_decision(strand)
+            # Route to appropriate trader method based on strand type
+            if strand_kind in ['gem_bot_conservative', 'gem_bot_risky_test']:
+                print(f"🧠 Trader: Calling execute_gem_bot_strand for {strand_kind}")
+                try:
+                    result = await self.trader.execute_gem_bot_strand(strand)
+                    print(f"🧠 Trader: execute_gem_bot_strand result: {result}")
+                except Exception as e:
+                    print(f"🧠 Trader: ERROR in execute_gem_bot_strand: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    result = None
+            else:
+                # Default to decision execution for decision_lowcap strands
+                print(f"🧠 Trader: Calling execute_decision for {strand_kind}")
+                result = await self.trader.execute_decision(strand)
             if result:
                 # One-line summary with native unit price (SOL/ETH)
                 chain = (strand.get('signal_pack', {}).get('token', {}) or {}).get('chain')
@@ -472,8 +508,8 @@ class UniversalLearningSystem:
         """Check if strand is a candidate for braid creation"""
         # Simple criteria: high confidence and persistence
         return (
-            strand.get('confidence', 0) > 0.8 and
-            strand.get('persistence_score', 0) > 0.7
+            (strand.get('confidence') or 0) > 0.8 and
+            (strand.get('persistence_score') or 0) > 0.7
         )
     
     async def _mark_as_braid_candidate(self, strand: Dict[str, Any]) -> None:

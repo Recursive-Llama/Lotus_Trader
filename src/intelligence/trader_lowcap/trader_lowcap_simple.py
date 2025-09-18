@@ -105,9 +105,9 @@ class TraderLowcapSimple:
             'entry_3': {'timing': 'dip', 'dip_pct': -60, 'allocation_pct': 33.34}   # -60% dip
         }
         
-        # Exit strategy: 30% of REMAINING position at every 100% gain
+        # Exit strategy: 30% of REMAINING position at staged gains (first at +60%)
         self.exit_strategy = {
-            'exit_1': {'gain_pct': 100, 'exit_pct': 30},  # 30% of remaining at 100% gain
+            'exit_1': {'gain_pct': 60, 'exit_pct': 30},   # 30% of remaining at 60% gain
             'exit_2': {'gain_pct': 200, 'exit_pct': 30},  # 30% of remaining at 200% gain
             'exit_3': {'gain_pct': 300, 'exit_pct': 30},  # 30% of remaining at 300% gain
             'exit_4': {'gain_pct': 400, 'exit_pct': 30},  # 30% of remaining at 400% gain
@@ -227,12 +227,12 @@ class TraderLowcapSimple:
                 self.logger.error(f"Error creating position: {e}")
                 return None
             
-            # Step 4: Set exit rules (30% of remaining at each level)
+            # Step 4: Set exit rules (30% of remaining at each level; first at +60%)
             self.logger.info(f"🚀 TRADER: Setting exit rules for {position_id}")
             exit_rules = {
                 'strategy': 'staged',
                 'stages': [
-                    {'gain_pct': 100, 'exit_pct': 30, 'executed': False},  # 30% of remaining
+                    {'gain_pct': 60, 'exit_pct': 30, 'executed': False},   # 30% of remaining
                     {'gain_pct': 200, 'exit_pct': 30, 'executed': False},  # 30% of remaining
                     {'gain_pct': 300, 'exit_pct': 30, 'executed': False},  # 30% of remaining
                     {'gain_pct': 400, 'exit_pct': 30, 'executed': False},  # 30% of remaining
@@ -275,6 +275,152 @@ class TraderLowcapSimple:
             
         except Exception as e:
             self.logger.error(f"❌ TRADER: Failed to execute decision: {e}")
+            import traceback
+            self.logger.error(f"❌ TRADER: Traceback: {traceback.format_exc()}")
+            return None
+    
+    async def execute_gem_bot_strand(self, strand: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Execute trade based on gem_bot_conservative strand (auto-approved)
+        
+        Args:
+            strand: gem_bot_conservative strand from Gem Bot Monitor
+            
+        Returns:
+            Created position or None if execution failed
+        """
+        try:
+            self.logger.info(f"🚀 TRADER: execute_gem_bot_strand called with strand: {strand.get('id')}")
+            self.logger.info(f"🚀 TRADER: Gem Bot Conservative token: {strand.get('symbol')}")
+            
+            # Store the strand for use in entry/exit creation
+            self.current_decision = strand
+            
+            # Extract data from signal_pack
+            signal_pack = strand['signal_pack']
+            token_data = signal_pack['token']
+            venue_data = signal_pack['venue']
+            curator_data = signal_pack['curator']
+            trading_signals = signal_pack['trading_signals']
+            
+            self.logger.info(f"🚀 TRADER: Gem Bot token data: {token_data}")
+            self.logger.info(f"🚀 TRADER: Token: {token_data.get('ticker')} on {token_data.get('chain')}")
+            self.logger.info(f"🚀 TRADER: Contract: {token_data.get('contract')}")
+            self.logger.info(f"🚀 TRADER: Trading signals: {trading_signals}")
+            
+            # Use 12% allocation for Conservative tokens
+            allocation_pct = trading_signals.get('allocation_pct', 12.0)
+            curator_id = curator_data.get('id', 'gem_bot_conservative')
+            
+            self.logger.info(f"🚀 TRADER: Gem Bot allocation percentage: {allocation_pct}%")
+            
+            # Get network and calculate allocation in native token
+            chain = token_data.get('chain', 'solana').lower()
+            self.logger.info(f"🚀 TRADER: Getting {chain} balance...")
+            native_balance = await self._get_native_balance(chain)
+            self.logger.info(f"🚀 TRADER: Native balance: {native_balance}")
+            if not native_balance:
+                self.logger.error(f"❌ TRADER: Could not get {chain} balance - aborting")
+                return None
+                
+            allocation_native = allocation_pct * native_balance / 100
+            
+            self.logger.info(f"🚀 TRADER: Calculated allocation: {allocation_native:.4f} {chain.upper()}")
+            self.logger.info(f"🚀 TRADER: Executing Gem Bot trade: {token_data['ticker']} - {allocation_pct}% ({allocation_native:.4f} {chain.upper()})")
+            
+            # Step 1: Check native token balance
+            self.logger.info(f"🚀 TRADER: Checking balance: {native_balance:.4f} >= {allocation_native:.4f}")
+            if native_balance < allocation_native:
+                self.logger.error(f"❌ TRADER: Insufficient {chain.upper()} balance: {native_balance:.4f} < {allocation_native:.4f}")
+                return None
+            
+            # Step 2: Get current price
+            self.logger.info(f"🚀 TRADER: Getting current price for {token_data['ticker']}...")
+            current_price = await self._get_current_price(token_data)
+            if current_price:
+                unit = 'SOL' if chain == 'solana' else 'ETH'
+                self.logger.info(f"🚀 TRADER: Current price (pre): {current_price:.6f} {unit}")
+            
+            # Step 3: Create position with simplified schema
+            position_id = f"gem_bot_{token_data['ticker']}_{token_data['chain']}_{int(datetime.now().timestamp())}"
+            self.logger.info(f"🚀 TRADER: Creating Gem Bot position: {position_id}")
+            
+            # Create position using simple table insert
+            position_data = {
+                'id': position_id,
+                'token_chain': token_data['chain'],
+                'token_contract': token_data['contract'],
+                'token_ticker': token_data['ticker'],
+                'book_id': strand['id'],  # Link to strand ID
+                'status': 'active',
+                'total_allocation_pct': allocation_pct,
+                'total_allocation_usd': 0.0,
+                'total_quantity': 0.0,
+                'curator_sources': curator_id,
+                'first_entry_timestamp': datetime.now(timezone.utc).isoformat()
+                # Note: 'source' column doesn't exist in lowcap_positions table
+            }
+            
+            try:
+                result = self.supabase_manager.client.table('lowcap_positions').insert(position_data).execute()
+                if not result.data:
+                    self.logger.error(f"Failed to create Gem Bot position for {token_data['ticker']}")
+                    return None
+                self.logger.info(f"✅ Gem Bot position created: {position_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Error creating Gem Bot position: {e}")
+                return None
+            
+            # Step 4: Set exit rules (30% of remaining at each level; first at +60%)
+            self.logger.info(f"🚀 TRADER: Setting exit rules for Gem Bot position {position_id}")
+            exit_rules = {
+                'strategy': 'staged',
+                'stages': [
+                    {'gain_pct': 60, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 200, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 300, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 400, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 500, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 600, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 1000, 'exit_pct': 100, 'executed': False}
+                ]
+            }
+            
+            # Update position with exit rules
+            try:
+                self.supabase_manager.client.table('lowcap_positions').update({
+                    'exit_rules': exit_rules
+                }).eq('id', position_id).execute()
+                self.logger.info(f"✅ TRADER: Exit rules set for Gem Bot position {position_id}")
+            except Exception as e:
+                self.logger.error(f"❌ TRADER: Error setting exit rules: {e}")
+            
+            # Step 5: Create and store all 3 entries
+            self.logger.info(f"🚀 TRADER: Creating all entries for Gem Bot position {position_id}")
+            await self._create_all_entries(position_id, current_price, allocation_native)
+            
+            # Step 6: Execute first entry (immediate)
+            self.logger.info(f"🚀 TRADER: Executing first entry for Gem Bot position {position_id}")
+            await self._execute_entry(position_id, 1)
+            
+            # Step 7: Calculate and store initial exits
+            self.logger.info(f"🚀 TRADER: Calculating initial exits for Gem Bot position {position_id}")
+            await self._calculate_initial_exits(position_id, current_price, allocation_native)
+            
+            self.logger.info(f"✅ Gem Bot position created and first entry executed: {token_data['ticker']}")
+            return {
+                'position_id': position_id,
+                'token_ticker': token_data['ticker'],
+                'allocation_pct': allocation_pct,
+                'allocation_native': allocation_native,
+                'current_price': current_price,
+                'status': 'active',
+                'source': 'gem_bot_conservative'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ TRADER: Failed to execute Gem Bot strand: {e}")
             import traceback
             self.logger.error(f"❌ TRADER: Traceback: {traceback.format_exc()}")
             return None
@@ -762,26 +908,23 @@ class TraderLowcapSimple:
                         allocation_pct = position['total_allocation_pct']
                         
                         if token_chain.lower() == 'solana' and self.js_solana_client:
-                            # Execute Solana swap
-                            sol_balance = await self._get_native_balance('solana')
-                            if sol_balance:
-                                sol_amount = (allocation_pct / 100) * sol_balance
+                            # Execute Solana swap using per-entry split amount
+                            sol_amount = float(entry_to_execute.get('amount_native', 0.0))
+                            if sol_amount > 0:
                                 sol_lamports = int(sol_amount * 1e9)  # Convert to lamports
-                                
                                 swap_result = await self.js_solana_client.execute_jupiter_swap(
                                     input_mint="So11111111111111111111111111111111111111112",  # SOL
                                     output_mint=token_contract,  # Token
                                     amount=sol_lamports,
                                     slippage_bps=50
                                 )
-                                
                                 if swap_result.get('success'):
                                     tx_hash = swap_result.get('tx_hash')
                                     self.logger.info(f"✅ Solana trade executed: {tx_hash}")
                                 else:
                                     self.logger.error(f"❌ Solana trade failed: {swap_result.get('error')}")
                             else:
-                                self.logger.error("Could not get SOL balance for trade execution")
+                                self.logger.error("Entry amount_native not set for SOL trade")
                                 
                         elif token_chain.lower() == 'base' and self.base_client:
                             amount_eth = float(entry_to_execute.get('amount_native', 0.0))
@@ -886,13 +1029,13 @@ class TraderLowcapSimple:
             # Calculate exit points (30% of remaining at each level)
             total_tokens = total_allocation_native / current_price  # Total tokens we'll have
             
-            # Exit 1: 100% gain (30% of remaining)
+            # Exit 1: 60% gain (30% of remaining)
             exit_1_tokens = total_tokens * 0.30
             exit_1 = {
                 'exit_number': 1,
-                'price': current_price * 2.0,  # 100% gain
+                'price': current_price * 1.6,  # 60% gain
                 'tokens': exit_1_tokens,
-                'gain_pct': 100,
+                'gain_pct': 60,
                 'status': 'pending',
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
@@ -1231,42 +1374,142 @@ class TraderLowcapSimple:
 
     async def _execute_exit(self, position_id: str, exit_number: int) -> bool:
         """
-        Execute a specific exit (mark as executed)
+        Execute a specific exit on-chain, then mark executed on success.
         """
         try:
-            # Get current position
-            result = self.supabase_manager.client.table('lowcap_positions').select('exits').eq('id', position_id).execute()
-            if not result.data:
+            # Load position details
+            pos_res = self.supabase_manager.client.table('lowcap_positions').select('token_contract, token_chain, exits').eq('id', position_id).execute()
+            if not pos_res.data:
                 self.logger.error(f"Position {position_id} not found")
                 return False
+            position = pos_res.data[0]
+            token_contract = position.get('token_contract')
+            token_chain = (position.get('token_chain') or '').lower()
+            exits = position.get('exits', []) or []
             
-            exits = result.data[0].get('exits', [])
-            
-            # Find the exit to execute
+            # Find pending exit by number
             exit_to_execute = None
-            for exit_order in exits:
-                if exit_order['exit_number'] == exit_number and exit_order['status'] == 'pending':
-                    exit_to_execute = exit_order
+            for eo in exits:
+                if eo.get('exit_number') == exit_number and eo.get('status') == 'pending':
+                    exit_to_execute = eo
                     break
-            
             if not exit_to_execute:
-                self.logger.warning(f"Exit {exit_number} not found or already executed")
+                self.logger.warning(f"Exit {exit_number} not found or already executed for {position_id}")
                 return False
             
-            # Mark exit as executed
+            tokens_to_sell = float(exit_to_execute.get('tokens', 0) or 0)
+            if tokens_to_sell <= 0:
+                self.logger.warning(f"Exit {exit_number} has zero tokens; skipping")
+                return False
+
+            tx_hash = None
+
+            if token_chain == 'solana' and self.js_solana_client:
+                # Sell token -> SOL via Jupiter
+                try:
+                    # Determine token decimals
+                    dec = await self._get_token_decimals(token_contract)
+                    amount_raw = int(tokens_to_sell * (10 ** dec))
+                    if amount_raw <= 0:
+                        self.logger.warning("Calculated amount_raw <= 0 for Solana exit; skipping")
+                        return False
+                    swap_res = await self.js_solana_client.execute_jupiter_swap(
+                        input_mint=token_contract,
+                        output_mint="So11111111111111111111111111111111111111112",
+                        amount=amount_raw,
+                        slippage_bps=50
+                    )
+                    if swap_res.get('success'):
+                        tx_hash = swap_res.get('signature') or swap_res.get('tx_hash')
+                        self.logger.info(f"✅ Solana exit swap success: {tx_hash}")
+                    else:
+                        self.logger.error(f"❌ Solana exit swap failed: {swap_res.get('error')}")
+                        return False
+                except Exception as e:
+                    self.logger.error(f"Error during Solana exit swap: {e}")
+                    return False
+
+            elif token_chain == 'base' and self.base_client:
+                try:
+                    # Approve router to spend token and swap token -> WETH
+                    token_dec = self.base_client.get_token_decimals(token_contract)
+                    amount_wei = int(tokens_to_sell * (10 ** token_dec))
+                    if amount_wei <= 0:
+                        self.logger.warning("Calculated amount_wei <= 0 for Base exit; skipping")
+                        return False
+                    owner = self.base_client.account.address
+                    # Ensure allowance to router
+                    current_allow = self.base_client.erc20_allowance(token_contract, owner, self.base_client.router_address)
+                    if current_allow < amount_wei:
+                        approve_res = self.base_client.approve_erc20(token_contract, self.base_client.router_address, amount_wei)
+                        self.logger.info(f"BASE approve token: {approve_res}")
+                    # Try v3 fee tiers
+                    for fee in [500, 3000, 10000]:
+                        swap_res = self.base_client.swap_exact_input_single(token_contract, self.base_client.weth_address, amount_wei, fee=fee, amount_out_min=0)
+                        self.logger.info(f"BASE exit swap fee={fee}: {swap_res}")
+                        if swap_res.get('status') == 1:
+                            tx_hash = swap_res.get('tx_hash')
+                            break
+                    if not tx_hash:
+                        # Fallback to v2 path if available
+                        if hasattr(self.base_client, 'v2_swap_exact_tokens_for_tokens'):
+                            v2_res = self.base_client.v2_swap_exact_tokens_for_tokens(token_contract, self.base_client.weth_address, amount_wei, amount_out_min_wei=0)
+                            self.logger.info(f"BASE v2 exit swap: {v2_res}")
+                            if v2_res.get('status') == 1:
+                                tx_hash = v2_res.get('tx_hash')
+                    if not tx_hash:
+                        self.logger.error("❌ Base exit swap failed across fee tiers")
+                        return False
+                except Exception as e:
+                    self.logger.error(f"Error during Base exit swap: {e}")
+                    return False
+
+            elif token_chain == 'ethereum' and self.eth_client:
+                try:
+                    token_dec = self.eth_client.get_token_decimals(token_contract)
+                    amount_wei = int(tokens_to_sell * (10 ** token_dec))
+                    if amount_wei <= 0:
+                        self.logger.warning("Calculated amount_wei <= 0 for Ethereum exit; skipping")
+                        return False
+                    owner = self.eth_client.account.address
+                    # Approve both routers as needed
+                    for spender in [ETH_V3_ROUTER_ADDRESS, ETH_V2_ROUTER_ADDRESS]:
+                        current_allow = self.eth_client.erc20_allowance(token_contract, owner, spender)
+                        if current_allow < amount_wei:
+                            approve_res = self.eth_client.approve_erc20(token_contract, spender, amount_wei)
+                            self.logger.info(f"ETH approve spender={spender}: {approve_res}")
+                    # Prefer v2 direct path token -> WETH
+                    v2_res = self.eth_client.v2_swap_exact_tokens_for_tokens(token_contract, ETH_WETH_ADDRESS, amount_wei, amount_out_min_wei=0)
+                    self.logger.info(f"ETH v2 exit swap: {v2_res}")
+                    if v2_res.get('status') == 1:
+                        tx_hash = v2_res.get('tx_hash')
+                    # Fallback to v3
+                    if not tx_hash:
+                        for fee in [500, 3000, 10000]:
+                            swap_res = self.eth_client.swap_exact_input_single(token_contract, ETH_WETH_ADDRESS, amount_wei, fee=fee, amount_out_min=0)
+                            self.logger.info(f"ETH v3 exit swap fee={fee}: {swap_res}")
+                            if swap_res.get('status') == 1:
+                                tx_hash = swap_res.get('tx_hash')
+                                break
+                    if not tx_hash:
+                        self.logger.error("❌ Ethereum exit swap failed (v2 and v3)")
+                        return False
+                except Exception as e:
+                    self.logger.error(f"Error during Ethereum exit swap: {e}")
+                    return False
+            else:
+                self.logger.warning(f"No execution client available for chain {token_chain}; cannot execute exit")
+                return False
+
+            # If we reach here, swap succeeded; mark exit executed with real tx hash
             exit_to_execute['status'] = 'executed'
             exit_to_execute['executed_at'] = datetime.now(timezone.utc).isoformat()
-            exit_to_execute['tx_hash'] = f"mock_exit_{exit_number}_{int(datetime.now().timestamp())}"
-            
-            # Update the exits array
-            self.supabase_manager.client.table('lowcap_positions').update({
-                'exits': exits
-            }).eq('id', position_id).execute()
-            
-            # Create exit strand
+            if tx_hash:
+                exit_to_execute['tx_hash'] = tx_hash
+
+            self.supabase_manager.client.table('lowcap_positions').update({'exits': exits}).eq('id', position_id).execute()
             await self._create_exit_strand(position_id, exit_to_execute, exit_number)
-            
-            self.logger.info(f"✅ Executed exit {exit_number}: {exit_to_execute['tokens']:.0f} tokens at ${exit_to_execute['price']:.6f}")
+            self.logger.info(f"✅ Executed exit {exit_number}: {tokens_to_sell:.6f} tokens on {token_chain}")
             return True
             
         except Exception as e:
@@ -1320,29 +1563,81 @@ class TraderLowcapSimple:
 
     async def _recalculate_exits(self, position_id: str) -> None:
         """
-        Recalculate exit targets when new entries are made (average price changed)
+        Recalculate exit targets when new entries are made (average price changed).
+        Uses executed entries to compute average entry (in native/SOL), then rebuilds
+        pending exits based on per-position exit_rules stages and remaining quantity.
         """
         try:
-            # Get position data
-            position_result = self.supabase_manager.client.table('lowcap_positions').select('total_quantity, exits').eq('id', position_id).execute()
-            if not position_result.data:
+            # Fetch needed position fields
+            pos_res = self.supabase_manager.client.table('lowcap_positions').select('entries, exits, exit_rules, total_quantity').eq('id', position_id).execute()
+            if not pos_res.data:
                 self.logger.error(f"Position {position_id} not found")
                 return
-                
-            position = position_result.data[0]
-            total_quantity = position.get('total_quantity', 0)
-            
-            if total_quantity <= 0:
-                self.logger.warning(f"Invalid position data for recalculation: quantity={total_quantity}")
+            position = pos_res.data[0]
+
+            entries = position.get('entries', []) or []
+            exits = position.get('exits', []) or []
+            exit_rules = position.get('exit_rules', {}) or {}
+            stages = exit_rules.get('stages', []) or []
+
+            # Compute average entry price (native per token)
+            total_native = 0.0
+            total_tokens = 0.0
+            for e in entries:
+                if e.get('status') == 'executed':
+                    total_native += float(e.get('amount_native', 0) or 0)
+                    total_tokens += float(e.get('tokens_bought', 0) or 0)
+            if total_tokens <= 0:
+                self.logger.warning(f"No executed entries for {position_id}; skip recalculation")
                 return
-            
-            # Get current exits
-            exits = position.get('exits', [])
-            
-            # TODO: Recalculate exit targets when average price changes
-            # For now, skip recalculation since we don't have average_entry_price column
-            self.logger.info(f"Skipping exit recalculation for position {position_id} - average_entry_price column not available")
-            
+            avg_entry_price = total_native / total_tokens  # native per token (e.g., SOL/token)
+
+            # Compute remaining quantity (after executed exits)
+            tokens_sold = 0.0
+            for x in exits:
+                if x.get('status') == 'executed':
+                    tokens_sold += float(x.get('tokens', 0) or 0)
+            remaining = max(0.0, float(position.get('total_quantity', 0) or 0) - tokens_sold)
+            if remaining <= 0:
+                self.logger.warning(f"No remaining quantity for {position_id}; nothing to recalc")
+                return
+
+            # Rebuild pending exits using compounding remaining sizing
+            new_exits = []
+            running_remaining = remaining
+            for stage in stages:
+                gain_pct = float(stage.get('gain_pct', 0) or 0)
+                exit_pct = float(stage.get('exit_pct', 0) or 0)
+                # Keep executed exits untouched
+                # We only recreate pending ones anew below
+                price_target = avg_entry_price * (1.0 + gain_pct / 100.0)
+                tokens_stage = running_remaining * (exit_pct / 100.0)
+                new_exits.append({
+                    'exit_number': len(new_exits) + 1,
+                    'price': price_target,
+                    'tokens': tokens_stage,
+                    'gain_pct': gain_pct,
+                    'status': 'pending',
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                })
+                running_remaining -= tokens_stage
+                if running_remaining <= 0:
+                    break
+
+            # Merge: keep already executed exits at the front in original order
+            executed_exits = [x for x in exits if x.get('status') == 'executed']
+            # Renumber executed exits first
+            merged = []
+            for i, x in enumerate(executed_exits, start=1):
+                x['exit_number'] = i
+                merged.append(x)
+            # Append recalculated pending exits with continued numbering
+            for j, x in enumerate(new_exits, start=len(merged) + 1):
+                x['exit_number'] = j
+                merged.append(x)
+
+            self.supabase_manager.client.table('lowcap_positions').update({'exits': merged}).eq('id', position_id).execute()
+            self.logger.info(f"Recalculated exits for {position_id}: avg_entry={avg_entry_price:.8f}, stages={len(stages)}")
         except Exception as e:
             self.logger.error(f"Error recalculating exits: {e}")
 

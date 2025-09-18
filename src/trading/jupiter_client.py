@@ -8,6 +8,7 @@ No API key required - Jupiter is a public API.
 
 import aiohttp
 import logging
+import asyncio
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from datetime import datetime, timezone
@@ -36,6 +37,8 @@ class JupiterClient:
         self.base_url = "https://quote-api.jup.ag/v6"
         self.rpc_url = f"https://rpc.helius.xyz/?api-key={helius_api_key}" if helius_api_key else "https://api.mainnet-beta.solana.com"
         
+        # No rate limiting needed - was working fine before
+        
         logger.info("Jupiter client initialized")
     
     async def get_token_price(self, token_address: str, vs_token: str = "So11111111111111111111111111111111111111112") -> Optional[Dict[str, Any]]:
@@ -50,10 +53,10 @@ class JupiterClient:
             Price information or None if failed
         """
         try:
-            url = f"{self.base_url}/price"
+            # Use lite API for price data
+            url = "https://lite-api.jup.ag/price/v3"
             params = {
-                "ids": token_address,
-                "vsToken": vs_token
+                "ids": token_address
             }
             
             async with aiohttp.ClientSession() as session:
@@ -61,14 +64,17 @@ class JupiterClient:
                     if response.status == 200:
                         data = await response.json()
                         
-                        if token_address in data.get("data", {}):
-                            price_info = data["data"][token_address]
+                        if token_address in data:
+                            price_info = data[token_address]
                             return {
                                 "token_address": token_address,
-                                "price": Decimal(str(price_info.get("price", 0))),
+                                "price": Decimal(str(price_info.get("usdPrice", 0))),
                                 "vs_token": vs_token,
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "source": "jupiter"
+                                "source": "jupiter",
+                                "block_id": price_info.get("blockId"),
+                                "decimals": price_info.get("decimals"),
+                                "price_change_24h": price_info.get("priceChange24h")
                             }
                         else:
                             logger.warning(f"Token {token_address} not found in Jupiter response")
@@ -144,7 +150,7 @@ class JupiterClient:
             Transaction data or None if failed
         """
         try:
-            url = f"{self.base_url}/swap"
+            url = f"{self.base_url}/swap/v6"
             
             payload = {
                 "quoteResponse": quote,
@@ -184,7 +190,7 @@ class JupiterClient:
             List of token information or None if failed
         """
         try:
-            url = f"{self.base_url}/tokens"
+            url = f"{self.base_url}/tokens/v6"
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:

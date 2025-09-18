@@ -48,6 +48,11 @@ class SocialIngestModule:
         
         # DexScreener API configuration
         self.dexscreener_base_url = "https://api.dexscreener.com/latest/dex/search"
+        
+        # Token ignore list - tokens to skip due to ambiguity or other issues
+        self.ignored_tokens = {
+            'ASTER',  # Multiple ASTER tokens exist, causes confusion
+        }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base']
         self.min_volume_requirements = {
@@ -178,7 +183,15 @@ class SocialIngestModule:
             # Process each token found
             created_strands = []
             for token_info in extraction_result['tokens']:
-                print(f"   🔍 Processing token: {token_info.get('token_name', 'unknown')}")
+                token_name = token_info.get('token_name', 'unknown')
+                print(f"   🔍 Processing token: {token_name}")
+                
+                # Check if token is in ignore list
+                if token_name.upper() in self.ignored_tokens:
+                    print(f"   ⏭️  Skipping ignored token: {token_name}")
+                    self.logger.info(f"Skipping ignored token: {token_name}")
+                    continue
+                
                 # Verify token with DexScreener API
                 verified_token = await self._verify_token_with_dexscreener(token_info)
                 if not verified_token:

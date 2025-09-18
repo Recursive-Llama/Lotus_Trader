@@ -5,7 +5,7 @@ Simple 4-step decision process:
 1. Do we already have this token?
 2. How well has this trader performed?
 3. How much capital do we have to buy?
-4. Decision: allocate 1-3% (3% default)
+4. Decision: allocate 2-6% (4% default)
 """
 
 import logging
@@ -65,9 +65,9 @@ class DecisionMakerLowcapSimple:
             'min_curator_score': 0.6,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
-            'default_allocation_pct': 3.0,  # Default 3% allocation
-            'min_allocation_pct': 1.0,  # Minimum 1% allocation
-            'max_allocation_pct': 3.0   # Maximum 3% allocation
+            'default_allocation_pct': 4.0,  # Default 4% allocation
+            'min_allocation_pct': 2.0,  # Minimum 2% allocation
+            'max_allocation_pct': 6.0   # Maximum 6% allocation
         }
     
     async def make_decision(self, social_signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -282,7 +282,7 @@ class DecisionMakerLowcapSimple:
     
     def _calculate_allocation(self, curator_score: float) -> float:
         """
-        Step 4: Calculate allocation percentage (1-3%)
+        Step 4: Calculate allocation percentage (2-6%)
         
         Args:
             curator_score: Curator performance score (0.0 to 1.0)
@@ -291,17 +291,16 @@ class DecisionMakerLowcapSimple:
             Allocation percentage (1.0 to 3.0)
         """
         try:
-            # Simple allocation logic:
-            # - Score >= 0.8: 3% (excellent curator)
-            # - Score >= 0.6: 2% (good curator) 
-            # - Score < 0.6: 1% (acceptable curator)
-            
+            # Simple allocation logic scaled up:
+            # - Score >= 0.8: 6% (excellent curator)
+            # - Score >= 0.6: 4% (good curator)
+            # - Score < 0.6: 2% (acceptable curator)
             if curator_score >= 0.8:
-                allocation = 3.0
+                allocation = 6.0
             elif curator_score >= 0.6:
-                allocation = 2.0
+                allocation = 4.0
             else:
-                allocation = 1.0
+                allocation = 2.0
             
             # Ensure within bounds
             allocation = max(self.config['min_allocation_pct'], 

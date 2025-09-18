@@ -16,8 +16,8 @@ import json
 import os
 from .jupiter_client import JupiterClient
 from .wallet_manager import WalletManager
-from .evm_uniswap_client import EvmUniswapClient
-from .evm_uniswap_client_eth import EthUniswapClient
+from .evm_uniswap_client import EvmUniswapClient, WETH_ADDRESSES as BASE_WETH_ADDRESSES
+from .evm_uniswap_client_eth import EthUniswapClient, WETH_ADDRESS as ETH_WETH_ADDRESS
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,48 @@ class PriceMonitor:
         self.jupiter_client = jupiter_client
         self.wallet_manager = wallet_manager
         self.trader = trader  # Optional: use trader to execute planned entries/exits
-        # Initialize EVM clients for pricing
-        self.base_client = EvmUniswapClient() if os.getenv('BASE_RPC_URL') else None
-        self.eth_client = EthUniswapClient() if os.getenv('ETH_RPC_URL') else None
+        # Initialize EVM clients for pricing (lazy initialization)
+        self.base_client = None
+        self.eth_client = None
+        # Support both BASE_RPC_URL and legacy RPC_URL for Base
+        self.base_rpc_url = os.getenv('BASE_RPC_URL') or os.getenv('RPC_URL')
+        self.eth_rpc_url = os.getenv('ETH_RPC_URL')
+        
+        # Log client initialization status
+        logger.info(f"Price monitor clients: Jupiter=✅, Base={'✅' if self.base_rpc_url else '❌'}, Ethereum={'✅' if self.eth_rpc_url else '❌'}")
         self.monitoring = False
         self.monitor_task = None
+        # Cached SOL/USD for SOL-denominated comparisons
+        self._sol_usd_price: Optional[float] = None
+        self._sol_usd_time: Optional[datetime] = None
+        self._sol_cache_ttl: int = 60  # seconds
         
         logger.info("Price monitor initialized")
+    
+    def _get_base_client(self):
+        """Lazy initialization of Base client"""
+        if self.base_client is None:
+            try:
+                if self.base_rpc_url:
+                    self.base_client = EvmUniswapClient(chain='base', rpc_url=self.base_rpc_url)
+                else:
+                    self.base_client = EvmUniswapClient(chain='base')
+                logger.warning("Base Uniswap client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Base client: {e}")
+                self.base_client = False  # Mark as failed to avoid retrying
+        return self.base_client if self.base_client is not False else None
+    
+    def _get_eth_client(self):
+        """Lazy initialization of Ethereum client"""
+        if self.eth_client is None and self.eth_rpc_url:
+            try:
+                self.eth_client = EthUniswapClient(rpc_url=self.eth_rpc_url)
+                logger.warning("Ethereum Uniswap client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Ethereum client: {e}")
+                self.eth_client = False  # Mark as failed to avoid retrying
+        return self.eth_client if self.eth_client is not False else None
     
     async def start_monitoring(self, check_interval: int = 30):
         """
@@ -106,8 +141,12 @@ class PriceMonitor:
             
             logger.info(f"Checking {len(active_positions)} active positions")
             
-            for position in active_positions:
+            # Add delay between position checks to avoid rate limiting
+            for i, position in enumerate(active_positions):
                 await self._check_position(position)
+                # Add 3 second delay between checks to avoid rate limiting
+                if i < len(active_positions) - 1:  # Don't delay after last position
+                    await asyncio.sleep(3)
                 
         except Exception as e:
             logger.error(f"Error checking positions: {e}")
@@ -138,7 +177,18 @@ class PriceMonitor:
                 return
 
             # Get current price by chain
-            current_price = await self._get_current_price_by_chain(token_chain, token_contract, position.get('token_ticker'))
+            current_price = await self._get_current_price_by_chain(token_contract, token_chain)
+            if token_chain == 'solana' and current_price is not None:
+                # Convert USD to SOL for SOL-denominated targets
+                sol_usd = await self._get_sol_usd_price()
+                if not sol_usd or sol_usd <= 0:
+                    logger.warning("Skipping check: unable to refresh SOL/USD for SOL-denominated targets")
+                    return
+                price_in_sol = float(current_price) / float(sol_usd)
+                logger.warning(f"Price monitor (SOL): {price_in_sol:.10f} SOL (≈ ${current_price:.8f}) for {token_contract} on solana")
+                current_price = price_in_sol
+            else:
+                logger.warning(f"Price monitor got price: {current_price} for {token_contract} on {token_chain}")
             if current_price is None:
                 logger.warning(f"Could not get price for {token_contract} on {token_chain}")
                 return
@@ -190,59 +240,91 @@ class PriceMonitor:
         except Exception as e:
             logger.error(f"Error checking planned entries: {e}")
 
-    async def _get_current_price_by_chain(self, chain: str, token_contract: str, ticker: Optional[str] = None) -> Optional[float]:
+    async def _get_current_price_by_chain(self, token_contract: str, chain: str, ticker: Optional[str] = None) -> Optional[float]:
         """Fetch current price depending on chain"""
         try:
             if chain == 'solana':
-                price_info = await self.jupiter_client.get_token_price(token_contract)
+                # Use simple price method for monitoring
+                logger.warning(f"Getting price for Solana token: {token_contract}")
+                price_info = await self.jupiter_client.get_token_price(token_contract, chain)
+                logger.warning(f"Jupiter response: {price_info}")
                 if price_info:
+                    logger.warning(f"Price info exists, extracting USD price: {price_info.get('price')}")
                     return float(price_info['price'])
+                logger.warning(f"No price info returned for {token_contract}")
                 return None
-            elif chain == 'base' and self.base_client:
+            elif chain == 'base':
+                base_client = self._get_base_client()
+                if not base_client:
+                    return None
                 # Use Base Uniswap client for pricing
+                logger.warning(f"Getting price for Base token: {token_contract}")
                 try:
                     amount_in = int(0.001 * 1e18)  # 0.001 WETH
                     # Try v2 first
-                    amounts = self.base_client.v2_get_amounts_out(self.base_client.weth_address, token_contract, amount_in)
+                    amounts = base_client.v2_get_amounts_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in)
                     if amounts and len(amounts) >= 2:
                         out = amounts[-1]
-                        token_dec = self.base_client.get_token_decimals(token_contract)
+                        token_dec = base_client.get_token_decimals(token_contract)
                         price = (0.001) / (out / (10 ** token_dec))
+                        return price
+                    # Try larger input on v2 to avoid zero rounding
+                    amount_in_large = int(0.01 * 1e18)  # 0.01 WETH
+                    amounts = base_client.v2_get_amounts_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in_large)
+                    if amounts and len(amounts) >= 2 and amounts[-1] > 0:
+                        out = amounts[-1]
+                        token_dec = base_client.get_token_decimals(token_contract)
+                        price = (0.01) / (out / (10 ** token_dec))
                         return price
                     # Fallback to v3
                     for fee in [500, 3000, 10000]:
                         try:
-                            out = self.base_client.v3_quote_amount_out(self.base_client.weth_address, token_contract, amount_in, fee=fee)
+                            out = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in, fee=fee)
                             if out and out > 0:
-                                token_dec = self.base_client.get_token_decimals(token_contract)
+                                token_dec = base_client.get_token_decimals(token_contract)
                                 price = (0.001) / (out / (10 ** token_dec))
+                                return price
+                        except Exception:
+                            continue
+                    # Try larger input on v3
+                    for fee in [500, 3000, 10000]:
+                        try:
+                            out = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in_large, fee=fee)
+                            if out and out > 0:
+                                token_dec = base_client.get_token_decimals(token_contract)
+                                price = (0.01) / (out / (10 ** token_dec))
                                 return price
                         except Exception:
                             continue
                 except Exception as e:
                     logger.debug(f"Base pricing error: {e}")
                 return None
-            elif chain == 'ethereum' and self.eth_client:
+            elif chain == 'ethereum':
+                eth_client = self._get_eth_client()
+                if not eth_client:
+                    return None
                 # Use Ethereum Uniswap client for pricing
+                logger.warning(f"Getting price for Ethereum token: {token_contract}")
                 try:
                     amount_in = int(0.001 * 1e18)  # 0.001 WETH
                     # Try v2 first
-                    amounts = self.eth_client.v2_get_amounts_out(self.eth_client.weth_address, token_contract, amount_in)
+                    amounts = eth_client.v2_get_amounts_out(ETH_WETH_ADDRESS, token_contract, amount_in)
                     if amounts and len(amounts) >= 2:
                         out = amounts[-1]
-                        token_dec = self.eth_client.get_token_decimals(token_contract)
+                        token_dec = eth_client.get_token_decimals(token_contract)
                         price = (0.001) / (out / (10 ** token_dec))
                         return price
                     # Fallback to v3
-                    for fee in [500, 3000, 10000]:
-                        try:
-                            out = self.eth_client.v3_quote_amount_out(self.eth_client.weth_address, token_contract, amount_in, fee=fee)
-                            if out and out > 0:
-                                token_dec = self.eth_client.get_token_decimals(token_contract)
-                                price = (0.001) / (out / (10 ** token_dec))
-                                return price
-                        except Exception:
-                            continue
+                    if hasattr(eth_client, 'v3_quote_amount_out'):
+                        for fee in [500, 3000, 10000]:
+                            try:
+                                out = eth_client.v3_quote_amount_out(ETH_WETH_ADDRESS, token_contract, amount_in, fee=fee)
+                                if out and out > 0:
+                                    token_dec = eth_client.get_token_decimals(token_contract)
+                                    price = (0.001) / (out / (10 ** token_dec))
+                                    return price
+                            except Exception:
+                                continue
                 except Exception as e:
                     logger.debug(f"Ethereum pricing error: {e}")
                 return None
@@ -250,6 +332,25 @@ class PriceMonitor:
                 return None
         except Exception as e:
             logger.error(f"Error fetching price for {ticker or token_contract} on {chain}: {e}")
+            return None
+
+    async def _get_sol_usd_price(self) -> Optional[float]:
+        """Fetch SOL/USD and cache briefly to align Solana targets in SOL."""
+        try:
+            now = datetime.now(timezone.utc)
+            if self._sol_usd_price is not None and self._sol_usd_time is not None:
+                if (now - self._sol_usd_time) <= timedelta(seconds=self._sol_cache_ttl):
+                    return self._sol_usd_price
+            sol_mint = self.jupiter_client.get_sol_mint_address()
+            sol_info = await self.jupiter_client.get_token_price(sol_mint)
+            if sol_info and sol_info.get('price'):
+                self._sol_usd_price = float(sol_info['price'])
+                self._sol_usd_time = now
+                logger.warning(f"Refreshed SOL/USD: {self._sol_usd_price}")
+                return self._sol_usd_price
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to refresh SOL/USD: {e}")
             return None
     
     async def _execute_exit(self, position: Dict[str, Any], quantity: float, price: Decimal, rule: Dict[str, Any]):

@@ -1,0 +1,68 @@
+# Gem Bot Monitor Configuration
+# Configuration for monitoring Gem Bot dashboard columns
+
+gem_bot:
+  # Website configuration
+  url: "https://gembot.io/feed"
+  
+  # Authentication
+  cookies_file: "src/config/gem_bot_cookies.json"
+  login_required: true
+  
+  # Column selectors (CSS selectors for different columns)
+  columns:
+    risky_test:
+      selector: "[data-testid='risky-column'], .risky-column, [class*='risky']"
+      allocation_pct: 1.2  # 1.2% for testing
+      strand_kind: "gem_bot_risky_test"
+      risk_level: "medium"
+    
+    balanced:
+      selector: "[data-testid='balanced-column'], .balanced-column, [class*='balanced']"
+      allocation_pct: 6.0  # 6% for balanced
+      strand_kind: "gem_bot_balanced"
+      risk_level: "low"
+    
+    conservative:
+      selector: "[data-testid='conservative-column'], .conservative-column, [class*='conservative']"
+      allocation_pct: 12.0  # 12% for conservative
+      strand_kind: "gem_bot_conservative"
+      risk_level: "low"
+  
+  # Common selectors
+  coin_card_selector: ".coin-card, [class*='card'], [class*='entry']"
+  
+  # Monitoring settings
+  check_interval: 5  # seconds between checks
+  headless: false  # Set to true for production
+  
+  # Trading settings
+  auto_approve: true
+  default_chain: "solana"
+  default_dex: "Raydium"
+  
+  # Curator settings
+  curator:
+    platform: "gem_bot"
+    verified: true
+    reliability_score: 0.95
+    weight: 1.0
+
+# Learning system integration
+learning_system:
+  # Strand processing
+  process_strands: true
+  trigger_trader: true
+  
+  # Module triggering
+  module_triggers:
+    gem_bot_conservative: ["trader_lowcap"]
+    gem_bot_risky_test: ["trader_lowcap"]
+    gem_bot_balanced: ["trader_lowcap"]
+
+# Database settings
+database:
+  save_cookies: true
+  save_strands: true
+  strand_table: "strands"
+  position_table: "lowcap_positions"

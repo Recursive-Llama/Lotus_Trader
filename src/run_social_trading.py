@@ -38,6 +38,7 @@ from llm_integration.openrouter_client import OpenRouterClient
 
 # Import real components
 from intelligence.social_ingest.social_ingest_basic import SocialIngestModule
+from intelligence.social_ingest.discord_monitor_integrated import DiscordMonitorIntegrated
 from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
 from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
 from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
@@ -69,6 +70,7 @@ class SocialTradingSystem:
         self.supabase_manager = None
         self.llm_client = None
         self.social_ingest = None
+        self.discord_monitor = None
         self.decision_maker = None
         self.trader = None
         self.learning_system = None
@@ -97,9 +99,9 @@ class SocialTradingSystem:
                 'book_nav': float(os.getenv('BOOK_NAV', '100000.0')),  # $100k
                 'max_exposure_pct': 20.0,
                 'min_curator_score': 0.6,
-                'default_allocation_pct': 3.0,  # 3% default allocation
-                'min_allocation_pct': 1.0,  # Minimum 1% allocation
-                'max_allocation_pct': 3.0,  # Maximum 3% allocation
+                'default_allocation_pct': 4.0,  # 4% default allocation
+                'min_allocation_pct': 2.0,  # Minimum 2% allocation
+                'max_allocation_pct': 6.0,  # Maximum 6% allocation
                 'slippage_pct': 1.0
             },
             'position_management': {
@@ -146,6 +148,14 @@ class SocialTradingSystem:
             # Pass learning system to social ingest for strand processing
             self.social_ingest.learning_system = self.learning_system
             
+            # Gem Bot monitoring removed - now using Discord monitoring instead
+            
+            # Initialize Discord monitor
+            self.discord_monitor = DiscordMonitorIntegrated(
+                learning_system=self.learning_system,
+                check_interval=60  # Check every 60 seconds
+            )
+            
             # Initialize decision maker with learning system reference
             self.decision_maker = DecisionMakerLowcapSimple(
                 supabase_manager=self.supabase_manager,
@@ -158,6 +168,9 @@ class SocialTradingSystem:
                 supabase_manager=self.supabase_manager,
                 config=self.config.get('trading', {})
             )
+            
+            # Share trader instance with learning system to avoid conflicts
+            self.learning_system.trader = self.trader
             
             # Initialize price monitor (wire trader so it can execute entries/exits)
             self.price_monitor = PriceMonitor(
@@ -206,6 +219,17 @@ class SocialTradingSystem:
         except Exception as e:
             print(f"❌ Position management failed: {e}")
     
+    # Gem Bot monitoring removed - now using Discord monitoring instead
+    
+    async def start_discord_monitoring(self):
+        """Start Discord monitoring"""
+        try:
+            print("🔍 Starting Discord monitoring...")
+            await self.discord_monitor.start_monitoring()
+            
+        except Exception as e:
+            print(f"❌ Failed to start Discord monitoring: {e}")
+    
     async def start_learning_system(self):
         """Start the learning system"""
         try:
@@ -230,6 +254,7 @@ class SocialTradingSystem:
             # Start all components
             tasks = [
                 asyncio.create_task(self.start_social_monitoring()),
+                asyncio.create_task(self.start_discord_monitoring()),
                 asyncio.create_task(self.start_position_management()),
                 asyncio.create_task(self.start_learning_system())
             ]
@@ -294,6 +319,7 @@ if __name__ == "__main__":
     
     Components:
     - Social Monitoring (Twitter/Telegram)
+    - Discord Monitoring (Conservative Channel)
     - Decision Making (AI-powered)
     - Trading Execution (Multi-entry/exit)
     - Position Management (Real-time)
