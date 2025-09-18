@@ -1,0 +1,13 @@
+{
+  "name": "lotus-trader",
+  "version": "1.0.0",
+  "description": "Lotus Trader",
+  "main": "test_js_transaction.js",
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "@solana/spl-token": "^0.3.8",
+    "bs58": "^5.0.0",
+    "axios": "^1.6.0",
+    "web3": "^4.3.2"
+  }
+}

@@ -84,7 +84,11 @@ market_data/
 backtest_results/
 performance_reports/
 *.csv
-*.json
+# Exclude trading data JSON files but keep package.json
+trading_data/*.json
+market_data/*.json
+backtest_results/*.json
+performance_reports/*.json
 data/
 datasets/
 
