@@ -18,6 +18,14 @@ social_monitoring:
     check_interval: 30  # seconds
     session_file: "src/config/telegram_session.txt"
     groups_file: "src/config/telegram_groups.yaml"
+    
+    # Signal Notifications
+    signal_notifications:
+      enabled: true
+      bot_token: "${TELEGRAM_BOT_TOKEN}"  # Set in environment variables
+      channel_id: "${TELEGRAM_CHANNEL_ID}"  # Your private group ID or @username
+      api_id: 21826741  # Your existing API ID
+      api_hash: "4643cce207a1a9d56d56a5389a4f1f52"  # Your existing API hash
 
 # Trading Configuration
 trading:

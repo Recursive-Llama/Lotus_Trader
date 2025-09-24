@@ -19,6 +19,7 @@ from trading.wallet_manager import WalletManager
 from trading.jupiter_client import JupiterClient
 from trading.js_solana_client import JSSolanaClient
 from intelligence.trader_lowcap.solana_executor import SolanaExecutor
+from communication.telegram_signal_notifier import TelegramSignalNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,39 @@ class TraderLowcapSimpleV2:
         self.base_executor = BaseExecutor(self.base_client, self.repo) if self.base_client else None
         self.eth_executor = EthExecutor(self.eth_client, self.repo) if self.eth_client else None
         self.sol_executor = SolanaExecutor(self.js_solana_client) if self.js_solana_client else None
+        
+        # Initialize Telegram signal notifier
+        self.telegram_notifier = self._init_telegram_notifier()
+
+    def _init_telegram_notifier(self) -> Optional[TelegramSignalNotifier]:
+        """Initialize Telegram signal notifier if configured"""
+        try:
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            channel_id = os.getenv('TELEGRAM_CHANNEL_ID')
+            
+            if not bot_token or not channel_id:
+                self.logger.info("Telegram signal notifications not configured (missing bot token or channel ID)")
+                return None
+            
+            # Use existing API credentials from the system
+            api_id = 21826741
+            api_hash = "4643cce207a1a9d56d56a5389a4f1f52"
+            session_file = "src/config/telegram_session.txt"
+            
+            notifier = TelegramSignalNotifier(
+                bot_token=bot_token,
+                channel_id=channel_id,
+                api_id=api_id,
+                api_hash=api_hash,
+                session_file=session_file
+            )
+            
+            self.logger.info(f"Telegram signal notifier initialized for channel: {channel_id}")
+            return notifier
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Telegram signal notifier: {e}")
+            return None
 
     async def execute_decision(self, decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -88,6 +122,12 @@ class TraderLowcapSimpleV2:
             ticker = token.get('ticker')
             contract = token.get('contract')
             allocation_pct = float(decision.get('content', {}).get('allocation_pct') or 0)
+
+            # Idempotency: skip if this decision was already processed (book_id)
+            existing_for_book = self.repo.get_position_by_book_id(decision.get('id'))
+            if existing_for_book:
+                self.logger.warning(f"Trader V2: Skipping decision {decision.get('id')} - book_id already exists: {existing_for_book.get('id')}")
+                return None
 
             # Select chain path
             if chain == 'bsc':
@@ -175,6 +215,24 @@ class TraderLowcapSimpleV2:
             position_id = f"{ticker}_{chain}_{int(datetime.now(timezone.utc).timestamp())}"
 
             # Create position
+            # Extract source tweet URL for position storage
+            source_tweet_url = None
+            signal_pack = decision.get('signal_pack', {})
+            if signal_pack:
+                source_tweet_url = (
+                    signal_pack.get('source_tweet_url') or
+                    signal_pack.get('tweet_url') or
+                    signal_pack.get('url') or
+                    signal_pack.get('message', {}).get('url')
+                )
+            
+            # Also try to get from module_intelligence if available
+            if not source_tweet_url:
+                module_intelligence = decision.get('module_intelligence', {})
+                social_signal = module_intelligence.get('social_signal', {})
+                message = social_signal.get('message', {})
+                source_tweet_url = message.get('url')
+            
             position = {
                 'id': position_id,
                 'token_chain': chain,
@@ -186,6 +244,7 @@ class TraderLowcapSimpleV2:
                 'total_allocation_usd': 0.0,
                 'total_quantity': 0.0,
                 'curator_sources': decision.get('content', {}).get('curator_id'),
+                'source_tweet_url': source_tweet_url,  # Store for sell notifications
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat()
             }
             if not self.repo.create_position(position):
@@ -195,6 +254,10 @@ class TraderLowcapSimpleV2:
             # Entries (3-way split by amount)
             e_amt = alloc_native / 3.0
             entries = EntryExitPlanner.build_entries(price, alloc_native)
+            # Mark pricing unit explicitly to avoid ambiguity in storage/inspection
+            for entry in entries:
+                entry['unit'] = 'NATIVE'
+                entry['native_symbol'] = native_label
             self.repo.update_entries(position_id, entries)
 
             # Execute first entry on-chain
@@ -223,6 +286,18 @@ class TraderLowcapSimpleV2:
                     position['total_quantity'] = position.get('total_quantity', 0) + (e_amt / price)
                     position['last_activity_timestamp'] = datetime.now(timezone.utc).isoformat()
                     self.repo.update_position(position_id, position)
+                
+                # Send Telegram buy signal notification
+                await self._send_buy_notification(
+                    token_ticker=ticker,
+                    token_contract=contract,
+                    chain=chain,
+                    amount_native=e_amt,
+                    price=price,
+                    tx_hash=tx_hash,
+                    allocation_pct=allocation_pct,
+                    decision=decision
+                )
 
             # Exits (staged) - use actual tokens bought, not theoretical
             actual_tokens = e_amt / price if tx_hash else 0
@@ -394,6 +469,17 @@ class TraderLowcapSimpleV2:
                 
                 # Calculate and update P&L
                 self._update_position_pnl(position_id, target_exit)
+                
+                # Send Telegram sell signal notification
+                await self._send_sell_notification_for_exit(
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    tokens_sold=actual_sell_amount,
+                    sell_price=target_price,
+                    tx_hash=tx_hash,
+                    chain=chain,
+                    contract=contract
+                )
                 
                 self.logger.info(f"✅ Exit {exit_number} executed successfully: {tx_hash}")
                 return True
@@ -722,5 +808,155 @@ class TraderLowcapSimpleV2:
             print(f"❌ Error detecting tax for {token_address}: {e}")
             import traceback
             traceback.print_exc()
+
+    async def _send_buy_notification(self, 
+                                   token_ticker: str, 
+                                   token_contract: str, 
+                                   chain: str, 
+                                   amount_native: float, 
+                                   price: float, 
+                                   tx_hash: str,
+                                   allocation_pct: float,
+                                   decision: Dict[str, Any]) -> None:
+        """Send Telegram buy signal notification"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            # Extract source tweet URL if available
+            source_tweet_url = None
+            signal_pack = decision.get('signal_pack', {})
+            if signal_pack:
+                # Try to get tweet URL from various possible locations
+                source_tweet_url = (
+                    signal_pack.get('source_tweet_url') or
+                    signal_pack.get('tweet_url') or
+                    signal_pack.get('url') or
+                    signal_pack.get('message', {}).get('url')
+                )
+            
+            # Also try to get from module_intelligence if available
+            if not source_tweet_url:
+                module_intelligence = decision.get('module_intelligence', {})
+                social_signal = module_intelligence.get('social_signal', {})
+                message = social_signal.get('message', {})
+                source_tweet_url = message.get('url')
+            
+            await self.telegram_notifier.send_buy_signal(
+                token_ticker=token_ticker,
+                token_contract=token_contract,
+                chain=chain,
+                amount_native=amount_native,
+                price=price,
+                tx_hash=tx_hash,
+                source_tweet_url=source_tweet_url,
+                allocation_pct=allocation_pct
+            )
+            
+            self.logger.info(f"Buy signal notification sent for {token_ticker}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send buy notification: {e}")
+
+    async def _send_sell_notification(self,
+                                    token_ticker: str,
+                                    token_contract: str,
+                                    chain: str,
+                                    tokens_sold: float,
+                                    sell_price: float,
+                                    tx_hash: str,
+                                    profit_pct: Optional[float] = None,
+                                    profit_usd: Optional[float] = None,
+                                    total_profit_usd: Optional[float] = None,
+                                    position_id: Optional[str] = None) -> None:
+        """Send Telegram sell signal notification"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            # Try to get source tweet URL from position data
+            source_tweet_url = None
+            if position_id:
+                position = self.repo.get_position(position_id)
+                if position:
+                    # Try to extract from position metadata or related data
+                    source_tweet_url = position.get('source_tweet_url')
+            
+            await self.telegram_notifier.send_sell_signal(
+                token_ticker=token_ticker,
+                token_contract=token_contract,
+                chain=chain,
+                tokens_sold=tokens_sold,
+                sell_price=sell_price,
+                tx_hash=tx_hash,
+                profit_pct=profit_pct,
+                profit_usd=profit_usd,
+                total_profit_usd=total_profit_usd,
+                source_tweet_url=source_tweet_url
+            )
+            
+            self.logger.info(f"Sell signal notification sent for {token_ticker}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send sell notification: {e}")
+
+    async def _send_sell_notification_for_exit(self,
+                                             position_id: str,
+                                             exit_number: int,
+                                             tokens_sold: float,
+                                             sell_price: float,
+                                             tx_hash: str,
+                                             chain: str,
+                                             contract: str) -> None:
+        """Send Telegram sell signal notification for a specific exit"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            # Get position data
+            position = self.repo.get_position(position_id)
+            if not position:
+                self.logger.error(f"Position not found for sell notification: {position_id}")
+                return
+            
+            token_ticker = position.get('token_ticker', 'UNKNOWN')
+            
+            # Calculate profit metrics
+            profit_pct = None
+            profit_usd = None
+            total_profit_usd = None
+            
+            # Try to get profit data from the position
+            if position.get('total_pnl_pct') is not None:
+                profit_pct = position.get('total_pnl_pct')
+            if position.get('total_pnl_usd') is not None:
+                total_profit_usd = position.get('total_pnl_usd')
+            
+            # For individual exit profit, we'd need to calculate based on entry price
+            # This is a simplified version - you might want to enhance this
+            avg_entry_price = position.get('avg_entry_price')
+            if avg_entry_price and avg_entry_price > 0:
+                exit_profit_pct = ((sell_price - avg_entry_price) / avg_entry_price) * 100
+                exit_profit_usd = (sell_price - avg_entry_price) * tokens_sold
+                profit_pct = exit_profit_pct
+                profit_usd = exit_profit_usd
+            
+            await self.telegram_notifier.send_sell_signal(
+                token_ticker=token_ticker,
+                token_contract=contract,
+                chain=chain,
+                tokens_sold=tokens_sold,
+                sell_price=sell_price,
+                tx_hash=tx_hash,
+                profit_pct=profit_pct,
+                profit_usd=profit_usd,
+                total_profit_usd=total_profit_usd,
+                source_tweet_url=position.get('source_tweet_url')
+            )
+            
+            self.logger.info(f"Sell signal notification sent for {token_ticker} exit {exit_number}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send sell notification for exit: {e}")
 
 

@@ -780,17 +780,17 @@ class EthExecutor(BaseEvmExecutor):
             
             amount_wei = int(amount_eth * 1e18)
             
-            # Wrap ETH to WETH
-            if not self._wrap_native_token(amount_eth):
-                print(f"❌ ETH: WETH wrapping failed")
-                return None
-            
-            # Resolve venue if not provided
+            # Resolve venue before wrapping; fallback to Uniswap if not resolvable
             if not venue:
                 venue = self._resolve_venue(token_address)
-            
             if not venue:
-                print(f"❌ ETH: No venue found for {token_address}")
+                # Default to Uniswap if resolution failed
+                venue = {'dex': 'uniswap'}
+                print(f"ETH: Venue resolution failed; defaulting to Uniswap router")
+
+            # Only wrap when we are about to trade
+            if not self._wrap_native_token(amount_eth):
+                print(f"❌ ETH: WETH wrapping failed")
                 return None
             
             print(f"ETH: Using venue: {venue}")

@@ -27,6 +27,22 @@ class PositionRepository:
         res = self.supabase.client.table('lowcap_positions').update(position).eq('id', position_id).execute()
         return bool(res.data)
 
+    def get_position_by_book_id(self, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get the most recent position created from a specific decision/strand (book_id)."""
+        try:
+            res = (
+                self.supabase.client
+                .table('lowcap_positions')
+                .select('*')
+                .eq('book_id', book_id)
+                .order('created_at', desc=True)
+                .limit(1)
+                .execute()
+            )
+            return res.data[0] if res.data else None
+        except Exception:
+            return None
+
     def update_tax_percentage(self, token_contract: str, tax_pct: float) -> bool:
         """Update tax percentage for a token across all positions"""
         try:
