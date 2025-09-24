@@ -59,8 +59,8 @@ async def test_v2_trader():
     print("\n🔍 Testing Base executor...")
     if trader.base_executor:
         try:
-            # Test with 0.0005 ETH as requested
-            test_amount = 0.0005  # 0.0005 ETH
+            # Test with 0.0015 ETH as requested
+            test_amount = 0.0015  # 0.0015 ETH
             print(f"   Testing with {test_amount} ETH...")
             result = trader.base_executor.execute_buy(test_contract, test_amount)
             if result:

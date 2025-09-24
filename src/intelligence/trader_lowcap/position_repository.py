@@ -17,6 +17,11 @@ class PositionRepository:
         res = self.supabase.client.table('lowcap_positions').update({'exits': exits}).eq('id', position_id).execute()
         return bool(res.data)
 
+    def update_exit_rules(self, position_id: str, exit_rules: Dict[str, Any]) -> bool:
+        """Update exit rules for a position"""
+        res = self.supabase.client.table('lowcap_positions').update({'exit_rules': exit_rules}).eq('id', position_id).execute()
+        return bool(res.data)
+
     def get_position(self, position_id: str) -> Optional[Dict[str, Any]]:
         """Get a position by ID"""
         res = self.supabase.client.table('lowcap_positions').select('*').eq('id', position_id).execute()

@@ -168,20 +168,19 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'solana'
                 native_label = 'SOL'
                 balance = await self.wallet_manager.get_balance('solana')
-                # Price via Jupiter (SOL/token) using a small SOL quote
+                # Price via PriceOracle (SOL/token) with Jupiter fallback
                 price = None
                 try:
-                    # Use lite price endpoint via JupiterClient.get_token_price
-                    # Pass the Solana mint address (contract), not the token dict
-                    p = await self.jupiter_client.get_token_price(contract)
-                    # Convert USD to SOL using cached SOL price if provided; or treat p['usdPrice'] with SOL/USD if available
-                    # For V2 simplicity, if usdPrice exists and SOL/USD not cached, skip; entries require a native price
-                    # Fallback to quote-based estimate with 0.1 SOL if needed
-                    if p and p.get('usdPrice'):
-                        # Cannot reliably convert without SOL/USD here; use quote for accuracy
-                        raise Exception('Prefer quote for native SOL price')
+                    # Try PriceOracle first for native SOL pricing
+                    price_info = self.price_oracle.price_solana(contract)
+                    if price_info and price_info.get('price_native'):
+                        price = price_info['price_native']
+                        self.logger.info(f"Solana price from PriceOracle: {price} SOL per token")
+                    else:
+                        raise Exception('PriceOracle failed, trying Jupiter fallback')
                 except Exception:
                     try:
+                        # Fallback to Jupiter quote-based pricing
                         quote = await self.jupiter_client.get_quote(
                             input_mint="So11111111111111111111111111111111111111112",
                             output_mint=contract,
@@ -193,6 +192,7 @@ class TraderLowcapSimpleV2:
                             # For V2, assume 6 if not available; this only affects pre-price display
                             token_decimals = 6
                             price = 0.1 / (token_amount / (10 ** token_decimals))
+                            self.logger.info(f"Solana price from Jupiter fallback: {price} SOL per token")
                     except Exception:
                         price = None
                 executor = self.sol_executor
@@ -303,6 +303,17 @@ class TraderLowcapSimpleV2:
             actual_tokens = e_amt / price if tx_hash else 0
             exits = EntryExitPlanner.build_exits(price, actual_tokens * price)  # Use actual tokens
             self.repo.update_exits(position_id, exits)
+            
+            # Store exit rules that match the exit strategy
+            exit_rules = {
+                'strategy': 'staged',
+                'stages': [
+                    {'gain_pct': 30, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 200, 'exit_pct': 30, 'executed': False},
+                    {'gain_pct': 300, 'exit_pct': 30, 'executed': False}
+                ]
+            }
+            self.repo.update_exit_rules(position_id, exit_rules)
 
             if not tx_hash:
                 self.logger.error("Trader V2: No tx_hash returned; marking execution as failed")

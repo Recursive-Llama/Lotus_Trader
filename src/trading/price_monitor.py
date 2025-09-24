@@ -315,8 +315,20 @@ class PriceMonitor:
         """Fetch current price depending on chain"""
         try:
             if chain == 'solana':
-                # Use simple price method for monitoring
+                # Try PriceOracle first (via trader), then fallback to Jupiter
                 logger.warning(f"Getting price for Solana token: {token_contract}")
+                
+                # Try PriceOracle if trader is available
+                if self.trader and hasattr(self.trader, 'price_oracle'):
+                    try:
+                        price_info = self.trader.price_oracle.price_solana(token_contract)
+                        if price_info and price_info.get('price_usd'):
+                            logger.warning(f"Solana price from PriceOracle: ${price_info['price_usd']} USD")
+                            return float(price_info['price_usd'])
+                    except Exception as e:
+                        logger.warning(f"PriceOracle failed for Solana: {e}, trying Jupiter fallback")
+                
+                # Fallback to Jupiter
                 price_info = await self.jupiter_client.get_token_price(token_contract, chain)
                 logger.warning(f"Jupiter response: {price_info}")
                 if price_info:
