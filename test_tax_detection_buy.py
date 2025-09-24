@@ -46,7 +46,7 @@ async def test_tax_detection_with_buy():
         # Test token (the tax token)
         test_token = '0x696025Fab2f3E2ADE78E57A3f553e993D2996615'
         test_chain = 'ethereum'
-        test_amount = 0.00001  # Very small amount for testing
+        test_amount = 0.0001  # Small amount for testing
         
         # Check current balance before buy
         print(f"\n💰 Checking balance before buy...")
@@ -58,16 +58,17 @@ async def test_tax_detection_with_buy():
         eth_balance_eth = eth_balance / 1e18
         print(f"ETH balance: {eth_balance_eth:.6f} ETH")
         
-        if eth_balance_eth < test_amount + 0.005:  # Need extra for gas
-            print(f"⚠️  Insufficient ETH balance for test (need ~{test_amount + 0.005:.6f} ETH)")
+        if eth_balance_eth < test_amount + 0.01:  # Need extra for gas
+            print(f"⚠️  Insufficient ETH balance for test (need ~{test_amount + 0.01:.6f} ETH)")
             return
         
         # Get current price
-        price = trader.price_oracle.price_eth(test_token)
-        if not price:
+        price_info = trader.price_oracle.price_eth(test_token)
+        if not price_info:
             print(f"❌ Could not get price for token")
             return
         
+        price = price_info['price_native']
         print(f"Current price: {price} ETH per token")
         expected_tokens = test_amount / price
         print(f"Expected tokens: {expected_tokens}")

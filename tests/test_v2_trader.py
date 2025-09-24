@@ -38,13 +38,10 @@ async def test_v2_trader():
     print("\n🔍 Testing price oracle...")
     test_contract = '0x696F9436B67233384889472Cd7cD58A6fB5DF4f1'
     try:
-        price_usd = trader.price_oracle.price_base(test_contract)
-        if price_usd:
-            print(f"   ✅ PriceOracle USD price: ${price_usd:.6f} USD per token")
-            # Convert to ETH (assuming ETH = $4180)
-            eth_usd_price = 4180
-            price_eth = price_usd / eth_usd_price
-            print(f"   ✅ PriceOracle ETH price: {price_eth:.10f} ETH per token")
+        price_info = trader.price_oracle.price_base(test_contract)
+        if price_info:
+            print(f"   ✅ PriceOracle USD price: ${price_info['price_usd']:.6f} USD per token")
+            print(f"   ✅ PriceOracle ETH price: {price_info['price_native']:.10f} ETH per token")
         else:
             print("   ❌ PriceOracle price lookup failed")
     except Exception as e:

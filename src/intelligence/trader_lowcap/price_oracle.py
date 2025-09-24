@@ -34,7 +34,7 @@ class PriceOracle:
         
         logger.info("Price oracle initialized")
     
-    def price_bsc(self, token_address: str) -> Optional[float]:
+    def price_bsc(self, token_address: str) -> Optional[Dict[str, Any]]:
         """
         Get token price on BSC
         
@@ -42,7 +42,7 @@ class PriceOracle:
             token_address: Token contract address
             
         Returns:
-            Price in USD or None if failed
+            Dict with price_native (BNB per token) and price_usd (USD per token) or None if failed
         """
         try:
             if not self.bsc_client:
@@ -62,10 +62,15 @@ class PriceOracle:
                         # Get the pair with highest liquidity
                         bsc_pairs.sort(key=lambda p: (p.get('liquidity', {}).get('usd') or 0), reverse=True)
                         best_pair = bsc_pairs[0]
-                        price = best_pair.get('priceUsd')
-                        if price:
-                            logger.info(f"BSC price for {token_address}: ${price}")
-                            return float(price)
+                        price_native = best_pair.get('priceNative')
+                        price_usd = best_pair.get('priceUsd')
+                        if price_native and price_usd:
+                            logger.info(f"BSC price for {token_address}: {price_native} BNB, ${price_usd} USD")
+                            return {
+                                'price_native': float(price_native),
+                                'price_usd': float(price_usd),
+                                'quote_token': 'WBNB'
+                            }
                 
                 logger.warning(f"No BSC price found for {token_address}")
                 return None
@@ -78,7 +83,7 @@ class PriceOracle:
             logger.error(f"Error fetching BSC price: {e}")
             return None
     
-    def price_base(self, token_address: str) -> Optional[float]:
+    def price_base(self, token_address: str) -> Optional[Dict[str, Any]]:
         """
         Get token price on Base
         
@@ -86,7 +91,7 @@ class PriceOracle:
             token_address: Token contract address
             
         Returns:
-            Price in USD or None if failed
+            Dict with price_native (ETH per token) and price_usd (USD per token) or None if failed
         """
         try:
             if not self.base_client:
@@ -106,10 +111,15 @@ class PriceOracle:
                         # Get the pair with highest liquidity
                         base_pairs.sort(key=lambda p: (p.get('liquidity', {}).get('usd') or 0), reverse=True)
                         best_pair = base_pairs[0]
-                        price = best_pair.get('priceUsd')
-                        if price:
-                            logger.info(f"Base price for {token_address}: ${price}")
-                            return float(price)
+                        price_native = best_pair.get('priceNative')
+                        price_usd = best_pair.get('priceUsd')
+                        if price_native and price_usd:
+                            logger.info(f"Base price for {token_address}: {price_native} ETH, ${price_usd} USD")
+                            return {
+                                'price_native': float(price_native),
+                                'price_usd': float(price_usd),
+                                'quote_token': 'WETH'
+                            }
                 
                 logger.warning(f"No Base price found for {token_address}")
                 return None
@@ -122,7 +132,7 @@ class PriceOracle:
             logger.error(f"Error fetching Base price: {e}")
             return None
     
-    def price_eth(self, token_address: str) -> Optional[float]:
+    def price_eth(self, token_address: str) -> Optional[Dict[str, Any]]:
         """
         Get token price on Ethereum
         
@@ -130,7 +140,7 @@ class PriceOracle:
             token_address: Token contract address
             
         Returns:
-            Price in USD or None if failed
+            Dict with price_native (ETH per token) and price_usd (USD per token) or None if failed
         """
         try:
             if not self.eth_client:
@@ -150,10 +160,15 @@ class PriceOracle:
                         # Get the pair with highest liquidity
                         eth_pairs.sort(key=lambda p: (p.get('liquidity', {}).get('usd') or 0), reverse=True)
                         best_pair = eth_pairs[0]
-                        price = best_pair.get('priceUsd')
-                        if price:
-                            logger.info(f"ETH price for {token_address}: ${price}")
-                            return float(price)
+                        price_native = best_pair.get('priceNative')
+                        price_usd = best_pair.get('priceUsd')
+                        if price_native and price_usd:
+                            logger.info(f"ETH price for {token_address}: {price_native} ETH, ${price_usd} USD")
+                            return {
+                                'price_native': float(price_native),
+                                'price_usd': float(price_usd),
+                                'quote_token': 'WETH'
+                            }
                 
                 logger.warning(f"No Ethereum price found for {token_address}")
                 return None

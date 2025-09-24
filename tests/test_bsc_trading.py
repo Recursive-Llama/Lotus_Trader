@@ -46,8 +46,12 @@ async def test_bsc_trading():
         print(f'Price oracle available: {trader.price_oracle is not None}')
         
         # Test price oracle
-        price = trader.price_oracle.price_bsc(test_token)
-        print(f'Price: {price}')
+        price_info = trader.price_oracle.price_bsc(test_token)
+        if price_info:
+            print(f'Price: {price_info["price_native"]} BNB per token')
+            print(f'USD Price: ${price_info["price_usd"]} USD per token')
+        else:
+            print('Price: None')
         
         # Test wallet balance
         balance = await trader.wallet_manager.get_balance('bsc')

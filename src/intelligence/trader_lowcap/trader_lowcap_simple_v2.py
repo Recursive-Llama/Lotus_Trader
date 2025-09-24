@@ -97,7 +97,8 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'bsc'
                 native_label = 'BNB'
                 balance = await self.wallet_manager.get_balance('bsc')
-                price = self.price_oracle.price_bsc(contract)
+                price_info = self.price_oracle.price_bsc(contract)
+                price = price_info['price_native'] if price_info else None
                 executor = self.bsc_executor
                 venue = self._resolve_bsc_venue(contract)
             elif chain == 'base':
@@ -108,10 +109,8 @@ class TraderLowcapSimpleV2:
                 native_label = 'ETH'
                 # Base and ETH share wallet; we count balance as ETH equivalent
                 balance = await self.wallet_manager.get_balance('base')
-                price_usd = self.price_oracle.price_base(contract)
-                # Convert USD price to ETH price (using hardcoded ETH/USD rate)
-                eth_usd_price = 4180  # Approximate current ETH price
-                price = price_usd / eth_usd_price if price_usd else None
+                price_info = self.price_oracle.price_base(contract)
+                price = price_info['price_native'] if price_info else None
                 executor = self.base_executor
                 venue = self._resolve_base_venue(contract)
             elif chain == 'ethereum':
@@ -121,7 +120,8 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'ethereum'
                 native_label = 'ETH'
                 balance = await self.wallet_manager.get_balance('ethereum')
-                price = self.price_oracle.price_eth(contract)
+                price_info = self.price_oracle.price_eth(contract)
+                price = price_info['price_native'] if price_info else None
                 executor = self.eth_executor
                 venue = None
             elif chain == 'solana':
@@ -683,7 +683,7 @@ class TraderLowcapSimpleV2:
         try:
             print(f"🔍 Detecting tax for token {token_address} on {chain}")
             
-            # Calculate expected tokens based on price
+            # Calculate expected tokens based on native price
             expected_tokens = amount_spent / price
             print(f"Expected tokens: {expected_tokens}")
             
