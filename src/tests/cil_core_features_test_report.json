@@ -1,0 +1,254 @@
+{
+  "test_summary": {
+    "total_tests": 6,
+    "passed_tests": 6,
+    "failed_tests": 0,
+    "total_duration": 14.238706827163696,
+    "success_rate": "100.0%"
+  },
+  "test_results": {
+    "pattern_recognition_grouping": {
+      "status": "PASSED",
+      "duration": 0.2779829502105713,
+      "patterns_found": 20,
+      "grouping_results": {
+        "pattern_timeframe": 0,
+        "asset": 0,
+        "timeframe": 0,
+        "outcome": 1,
+        "pattern": 0,
+        "group_type": 0,
+        "method": 0
+      }
+    },
+    "prediction_creation": {
+      "status": "PASSED",
+      "duration": 6.764222860336304,
+      "code_prediction": true,
+      "llm_prediction": true,
+      "duration_hours": 1
+    },
+    "learning_system": {
+      "status": "PASSED",
+      "duration": 5.578416109085083,
+      "complete_results": {
+        "success": true,
+        "duration_seconds": 2.126064,
+        "cluster_statistics": {
+          "total_cluster_types": 7,
+          "total_groups": 0,
+          "total_reviews": 0,
+          "cluster_type_breakdown": {
+            "pattern_timeframe": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "asset": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "timeframe": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "outcome": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "pattern": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "group_type": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "method": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            }
+          }
+        },
+        "learning_results": {
+          "pattern_timeframe": [],
+          "asset": [],
+          "timeframe": [],
+          "outcome": [],
+          "pattern": [],
+          "group_type": [],
+          "method": []
+        },
+        "braid_results": {
+          "pattern_timeframe": [],
+          "asset": [],
+          "timeframe": [],
+          "outcome": [],
+          "pattern": [],
+          "group_type": [],
+          "method": []
+        },
+        "process_statistics": {
+          "total_runs": 1,
+          "total_learning_braids": 0,
+          "total_braids": 0,
+          "last_run": "2025-09-10T15:52:41.510740+00:00",
+          "success_rate": 0.0
+        },
+        "timestamp": "2025-09-10T15:52:41.510740+00:00"
+      },
+      "system_statistics": {
+        "learning_statistics": {
+          "learning_braids": 0,
+          "braid_statistics": {},
+          "cluster_statistics": {},
+          "learning_thresholds": {
+            "min_predictions_for_learning": 3,
+            "min_confidence": 0.1,
+            "min_sample_size": 3,
+            "learn_from_failures": true,
+            "learn_from_successes": true
+          },
+          "error": "0"
+        },
+        "braid_statistics": {
+          "total_braids": 0,
+          "max_braid_level": 0,
+          "level_distribution": {},
+          "cluster_distribution": {}
+        },
+        "cluster_statistics": {
+          "total_cluster_types": 7,
+          "total_groups": 0,
+          "total_reviews": 0,
+          "cluster_type_breakdown": {
+            "pattern_timeframe": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "asset": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "timeframe": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "outcome": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "pattern": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "group_type": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            },
+            "method": {
+              "group_count": 0,
+              "review_count": 0,
+              "avg_reviews_per_group": 0
+            }
+          }
+        },
+        "process_statistics": {
+          "total_runs": 1,
+          "total_learning_braids": 0,
+          "total_braids": 0,
+          "last_run": "2025-09-10T15:52:41.510740+00:00",
+          "success_rate": 0.0
+        },
+        "timestamp": "2025-09-10T15:52:43.481948+00:00"
+      },
+      "cluster_queries": {
+        "success": true,
+        "test_results": {
+          "pattern_timeframe": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "asset": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "timeframe": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "outcome": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "pattern": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "group_type": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          },
+          "method": {
+            "success": true,
+            "cluster_keys_count": 0,
+            "test_groups_count": 0,
+            "test_key": null
+          }
+        },
+        "timestamp": "2025-09-10T15:52:44.206842+00:00"
+      },
+      "analysis_example": {
+        "success": false,
+        "error": "No clusters with sufficient data for analysis",
+        "timestamp": "2025-09-10T15:52:44.961928+00:00"
+      }
+    },
+    "context_system": {
+      "status": "PASSED",
+      "duration": 0.4577019214630127,
+      "pattern_context_count": 0,
+      "review_context_count": 2,
+      "filtered_context_count": 0
+    },
+    "outcome_analysis": {
+      "status": "PASSED",
+      "duration": 0.3601720333099365,
+      "outcomes_analyzed": 8,
+      "thresholds_met": false
+    },
+    "integration": {
+      "status": "PASSED",
+      "duration": 0.8002109527587891,
+      "similar_patterns": 0,
+      "prediction_created": true,
+      "prediction_id": "prediction_1757519566",
+      "context_items": 0,
+      "llm_analysis": false
+    }
+  }
+}

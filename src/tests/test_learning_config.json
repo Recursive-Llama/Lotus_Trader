@@ -1,0 +1,36 @@
+{
+  "universal": {
+    "min_strands_for_ml_clustering": 3,
+    "min_strands_for_promotion": 10,
+    "min_avg_persistence": 0.6,
+    "min_avg_novelty": 0.5,
+    "min_avg_surprise": 0.4,
+    "max_clusters": 10,
+    "min_cluster_size": 3,
+    "llm_enabled": true,
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 500,
+    "batch_size": 100,
+    "max_processing_time": 300
+  },
+  "cil": {
+    "prediction_update_interval": 10,
+    "max_tracking_days": 7,
+    "max_drawdown_threshold": 0.15,
+    "min_sample_size": 5,
+    "min_success_rate": 0.6,
+    "confidence_threshold": 0.7,
+    "max_plan_versions": 5,
+    "plan_evolution_threshold": 0.8,
+    "min_rr_ratio": 1.5,
+    "max_drawdown_limit": 0.2
+  },
+  "database_batch_size": 50,
+  "database_timeout": 30,
+  "log_level": "INFO",
+  "log_learning_events": true,
+  "enable_metrics": true,
+  "metrics_interval": 60,
+  "max_retries": 3,
+  "retry_delay": 5
+}

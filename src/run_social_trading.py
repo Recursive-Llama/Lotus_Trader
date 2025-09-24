@@ -40,7 +40,8 @@ from llm_integration.openrouter_client import OpenRouterClient
 from intelligence.social_ingest.social_ingest_basic import SocialIngestModule
 from intelligence.social_ingest.discord_monitor_integrated import DiscordMonitorIntegrated
 from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+# Defer trader imports to initialization to allow V2-only startup without
+# importing V1 when refactor is underway.
 from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
 from trading.jupiter_client import JupiterClient
 from trading.wallet_manager import WalletManager
@@ -163,14 +164,19 @@ class SocialTradingSystem:
                 learning_system=self.learning_system
             )
             
-            # Initialize trader
-            self.trader = TraderLowcapSimple(
+            # Initialize trader (V2 - improved Base trading and modular design)
+            from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
+            self.trader = TraderLowcapSimpleV2(
                 supabase_manager=self.supabase_manager,
                 config=self.config.get('trading', {})
             )
             
             # Share trader instance with learning system to avoid conflicts
             self.learning_system.trader = self.trader
+            
+            # Set trader reference in wallet manager for SPL token balance checking
+            self.wallet_manager.trader = self.trader
+            print(f"DEBUG: Set trader reference in wallet manager: {self.wallet_manager.trader}")
             
             # Initialize price monitor (wire trader so it can execute entries/exits)
             self.price_monitor = PriceMonitor(

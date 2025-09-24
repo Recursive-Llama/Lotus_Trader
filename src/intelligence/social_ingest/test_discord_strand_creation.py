@@ -20,7 +20,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src')
 
 from utils.supabase_manager import SupabaseManager
 from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 from llm_integration.openrouter_client import OpenRouterClient
 
 class DiscordStrandTester:
@@ -38,7 +38,7 @@ class DiscordStrandTester:
         from trading.jupiter_client import JupiterClient
         jupiter_client = JupiterClient()
         
-        self.trader = TraderLowcapSimple(
+        self.trader = TraderLowcapSimpleV2(
             supabase_manager=self.supabase_manager,
             config={'book_nav': 100000.0, 'max_exposure_pct': 20.0}
         )

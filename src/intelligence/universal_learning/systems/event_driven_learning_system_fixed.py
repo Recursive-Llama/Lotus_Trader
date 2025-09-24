@@ -470,10 +470,10 @@ class MockTDModule:
         """Call Trader Lowcap module to process decision lowcap strands"""
         try:
             # Import the simplified Trader Lowcap
-            from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+            from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
             
             # Initialize Trader Lowcap
-            trader = TraderLowcapSimple(self.supabase_manager)
+            trader = TraderLowcapSimpleV2(self.supabase_manager)
             
             # Process the decision lowcap strand
             position = trader.execute_decision(strand)

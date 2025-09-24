@@ -94,7 +94,11 @@ class WalletManager:
                 base_rpc = self.config.get('base_rpc', 'https://mainnet.base.org')
                 self.rpc_clients['base'] = Web3(Web3.HTTPProvider(base_rpc))
                 
-                logger.info("✅ Ethereum and Base RPC clients initialized")
+                # BSC RPC
+                bsc_rpc = self.config.get('bsc_rpc', 'https://bsc-dataseed.binance.org')
+                self.rpc_clients['bsc'] = Web3(Web3.HTTPProvider(bsc_rpc))
+                
+                logger.info("✅ Ethereum, Base, and BSC RPC clients initialized")
             
         except Exception as e:
             logger.error(f"Error setting up RPC clients: {e}")
@@ -114,10 +118,11 @@ class WalletManager:
                 self.wallets['ethereum'] = self._load_ethereum_wallet(eth_key)
                 logger.info("✅ Ethereum wallet loaded")
             
-            # Base uses the same wallet as Ethereum (same private key, different network)
+            # Base and BSC use the same wallet as Ethereum (same private key, different network)
             if 'ethereum' in self.wallets:
                 self.wallets['base'] = self.wallets['ethereum']
-                logger.info("✅ Base wallet (reusing Ethereum wallet)")
+                self.wallets['bsc'] = self.wallets['ethereum']
+                logger.info("✅ Base and BSC wallets (reusing Ethereum wallet)")
             
             if not self.wallets:
                 logger.warning("⚠️ No wallets loaded. Add private keys to .env file")
@@ -245,7 +250,7 @@ class WalletManager:
         try:
             if chain == 'solana':
                 return await self._get_solana_balance(token_address)
-            elif chain in ['ethereum', 'base']:
+            elif chain in ['ethereum', 'base', 'bsc']:
                 return await self._get_ethereum_balance(chain, token_address)
             else:
                 logger.error(f"Unsupported chain: {chain}")
@@ -257,8 +262,11 @@ class WalletManager:
     
     async def _get_solana_balance(self, token_address: str = None) -> Optional[Decimal]:
         """Get Solana balance (SOL or SPL token)"""
+        print(f"DEBUG: WalletManager _get_solana_balance called with token_address: {token_address}")
+        logger.warning(f"WalletManager _get_solana_balance called with token_address: {token_address}")
         try:
             if not self.wallets.get('solana') or 'solana' not in self.rpc_clients:
+                logger.warning("WalletManager: No Solana wallet or RPC client available")
                 return None
             
             client = self.rpc_clients['solana']
@@ -266,9 +274,37 @@ class WalletManager:
             
             if token_address:
                 # SPL token balance
-                # This would require additional SPL token program calls
-                logger.warning("SPL token balance not implemented yet")
-                return None
+                try:
+                    # Get the JSSolanaClient from the trader if available
+                    logger.warning(f"WalletManager trader reference: {hasattr(self, 'trader')}")
+                    if hasattr(self, 'trader'):
+                        logger.warning(f"WalletManager trader object: {self.trader}")
+                        if self.trader:
+                            logger.warning(f"WalletManager trader has js_solana_client: {hasattr(self.trader, 'js_solana_client')}")
+                            if hasattr(self.trader, 'js_solana_client'):
+                                logger.warning(f"WalletManager js_solana_client: {self.trader.js_solana_client}")
+                    
+                    if hasattr(self, 'trader') and self.trader and hasattr(self.trader, 'js_solana_client') and self.trader.js_solana_client:
+                        js_client = self.trader.js_solana_client
+                        logger.warning(f"Calling comprehensive token balance for {token_address}")
+                        result = await js_client.get_spl_token_balance(token_address, str(wallet_pubkey))
+                        logger.warning(f"Comprehensive token balance result: {result}")
+                        
+                        if result.get('success'):
+                            # The new method returns the balance already converted to proper units
+                            balance_str = result.get('balance', '0')
+                            balance = Decimal(balance_str)
+                            logger.warning(f"Token balance for {token_address}: {balance}")
+                            return balance
+                        else:
+                            logger.warning(f"Failed to get token balance: {result.get('error')}")
+                            return Decimal('0')
+                    else:
+                        logger.warning("JSSolanaClient not available for token balance check")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error getting SPL token balance: {e}")
+                    return None
             else:
                 # SOL balance
                 balance = client.get_balance(wallet_pubkey)
@@ -293,9 +329,33 @@ class WalletManager:
             
             if token_address:
                 # ERC-20 token balance
-                # This would require ERC-20 contract calls
-                logger.warning("ERC-20 token balance not implemented yet")
-                return None
+                try:
+                    # Import the EVM client for this chain
+                    if chain == 'ethereum':
+                        from .evm_uniswap_client_eth import EthUniswapClient
+                        client = EthUniswapClient()
+                    elif chain == 'base':
+                        from .evm_uniswap_client import EvmUniswapClient
+                        base_rpc = self.config.get('base_rpc') or os.getenv('BASE_RPC_URL') or os.getenv('RPC_URL')
+                        client = EvmUniswapClient(chain='base', rpc_url=base_rpc)
+                    elif chain == 'bsc':
+                        from .evm_uniswap_client import EvmUniswapClient
+                        bsc_rpc = self.config.get('bsc_rpc') or os.getenv('BSC_RPC_URL')
+                        client = EvmUniswapClient(chain='bsc', rpc_url=bsc_rpc)
+                    else:
+                        logger.warning(f"Unsupported chain for ERC-20 balance: {chain}")
+                        return None
+                    
+                    # Get token balance
+                    balance = client.get_token_balance(token_address)
+                    if balance is not None:
+                        return Decimal(str(balance))
+                    else:
+                        return None
+                        
+                except Exception as e:
+                    logger.error(f"Error getting ERC-20 balance for {token_address} on {chain}: {e}")
+                    return None
             else:
                 # Native ETH balance
                 balance_wei = w3.eth.get_balance(wallet.address)

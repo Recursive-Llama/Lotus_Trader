@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timezone
 
 from utils.supabase_manager import SupabaseManager
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 async def main(enforce_first_stage_60: bool = False):
     sb = SupabaseManager()
-    trader = TraderLowcapSimple(sb)
+    trader = TraderLowcapSimpleV2(sb)
 
     # Fetch active positions
     res = sb.client.table('lowcap_positions').select('id, exit_rules').eq('status', 'active').order('created_at', desc=True).execute()

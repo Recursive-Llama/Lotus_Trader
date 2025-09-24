@@ -16,7 +16,7 @@ import argparse
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-from src.intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from src.intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 import asyncio
 
 
@@ -132,7 +132,7 @@ async def run():
     args = parser.parse_args()
 
     supa = MockSupabaseManager()
-    trader = TraderLowcapSimple(supa)
+    trader = TraderLowcapSimpleV2(supa)
     decision = build_mock_decision(args.chain, args.token, args.allocation_pct)
     print(f"mock | decision_id={decision['id']} chain={args.chain} token={args.token} alloc%={args.allocation_pct}")
     res = await trader.execute_decision(decision)

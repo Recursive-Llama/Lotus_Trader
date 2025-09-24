@@ -40,6 +40,7 @@ ROUTER_ABI = [
                     {"internalType": "address", "name": "tokenOut", "type": "address"},
                     {"internalType": "uint24", "name": "fee", "type": "uint24"},
                     {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "deadline", "type": "uint256"},
                     {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
                     {"internalType": "uint256", "name": "amountOutMinimum", "type": "uint256"},
                     {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"},
@@ -83,8 +84,41 @@ V2_ROUTER_ABI = [
         ],
         "stateMutability": "nonpayable",
         "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+        ],
+        "name": "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
     }
 ]
+
+QUOTER_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "tokenIn", "type": "address"},
+            {"internalType": "address", "name": "tokenOut", "type": "address"},
+            {"internalType": "uint24", "name": "fee", "type": "uint24"},
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+        ],
+        "name": "quoteExactInputSingle",
+        "outputs": [
+            {"internalType": "uint256", "name": "amountOut", "type": "uint256"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+QUOTER_ADDRESS = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6'
 
 
 class EthUniswapClient:
@@ -106,12 +140,13 @@ class EthUniswapClient:
         self.weth = self.w3.eth.contract(address=Web3.to_checksum_address(WETH_ADDRESS), abi=WETH_ABI)
         self.router = self.w3.eth.contract(address=Web3.to_checksum_address(ROUTER02_ADDRESS), abi=ROUTER_ABI)
         self.v2_router = self.w3.eth.contract(address=Web3.to_checksum_address(V2_ROUTER_ADDRESS), abi=V2_ROUTER_ABI)
+        self.quoter = self.w3.eth.contract(address=Web3.to_checksum_address(QUOTER_ADDRESS), abi=QUOTER_ABI)
 
     def _eip1559_base(self, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         base_fee = self.w3.eth.gas_price
         priority = int(1e9)  # 1 gwei
         max_fee = base_fee * 2 + priority
-        nonce = self.w3.eth.get_transaction_count(self.account.address)
+        nonce = self.w3.eth.get_transaction_count(self.account.address, 'pending')
         tx = {
             'from': self.account.address,
             'chainId': self.chain_id,
@@ -154,13 +189,16 @@ class EthUniswapClient:
         except Exception:
             return 18
 
-    def swap_exact_input_single(self, token_in: str, token_out: str, amount_in_wei: int, fee: int = 3000, amount_out_min: int = 0, recipient: Optional[str] = None) -> Dict[str, Any]:
+    def swap_exact_input_single(self, token_in: str, token_out: str, amount_in_wei: int, fee: int = 3000, amount_out_min: int = 0, recipient: Optional[str] = None, deadline_seconds: int = 600) -> Dict[str, Any]:
         recipient = recipient or self.account.address
+        from time import time
+        deadline = int(time()) + deadline_seconds
         params = (
             Web3.to_checksum_address(token_in),
             Web3.to_checksum_address(token_out),
             fee,
             recipient,
+            deadline,
             amount_in_wei,
             amount_out_min,
             0,
@@ -168,6 +206,19 @@ class EthUniswapClient:
         base = self._eip1559_base({'value': 0})
         tx = self.router.functions.exactInputSingle(params).build_transaction(base)
         return self._send(tx)
+
+    def v3_quote_amount_out(self, token_in: str, token_out: str, amount_in_wei: int, fee: int = 3000) -> Optional[int]:
+        try:
+            out = self.quoter.functions.quoteExactInputSingle(
+                Web3.to_checksum_address(token_in),
+                Web3.to_checksum_address(token_out),
+                fee,
+                amount_in_wei,
+                0
+            ).call()
+            return int(out)
+        except Exception:
+            return None
 
     # --- Uniswap v2 helpers ---
     def v2_get_amounts_out(self, token_in: str, token_out: str, amount_in_wei: int) -> Optional[list[int]]:
@@ -191,5 +242,60 @@ class EthUniswapClient:
             deadline
         ).build_transaction(base)
         return self._send(tx)
+
+    def v2_swap_exact_tokens_for_tokens_supporting_fee(self, token_in: str, token_out: str, amount_in_wei: int, amount_out_min_wei: int = 0, recipient: Optional[str] = None, deadline_seconds: int = 600) -> Dict[str, Any]:
+        recipient = recipient or self.account.address
+        path = [Web3.to_checksum_address(token_in), Web3.to_checksum_address(token_out)]
+        from time import time
+        deadline = int(time()) + deadline_seconds
+        base = self._eip1559_base()
+        tx = self.v2_router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amount_in_wei,
+            amount_out_min_wei,
+            path,
+            recipient,
+            deadline
+        ).build_transaction(base)
+        return self._send(tx)
+
+    def get_token_balance(self, token_address: str) -> Optional[float]:
+        """
+        Get ERC-20 token balance for the wallet
+        
+        Args:
+            token_address: ERC-20 token contract address
+            
+        Returns:
+            Token balance in token units (not wei)
+        """
+        try:
+            # Create ERC-20 contract instance
+            erc20_contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(token_address),
+                abi=[{
+                    "constant": True,
+                    "inputs": [{"name": "account", "type": "address"}],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "payable": False,
+                    "stateMutability": "view",
+                    "type": "function"
+                }]
+            )
+            
+            # Get balance in wei
+            balance_wei = erc20_contract.functions.balanceOf(self.account.address).call()
+            
+            # Get token decimals
+            decimals = self.get_token_decimals(token_address)
+            
+            # Convert to token units
+            balance = balance_wei / (10 ** decimals)
+            
+            return balance
+            
+        except Exception as e:
+            print(f"Error getting token balance for {token_address}: {e}")
+            return None
 
 

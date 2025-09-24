@@ -1,0 +1,112 @@
+[
+  {
+    "name": "__dcfduid",
+    "value": "b9e2dc20941211f0a7390b0282e47413",
+    "domain": "discord.com",
+    "path": "/",
+    "expires": 1792706859.692016,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__sdcfduid",
+    "value": "b9e2dc21941211f0a7390b0282e4741380d1070633f2ce630d358386230a59568cb26b72d816c4cb9c266ad0b6b74fb6",
+    "domain": "discord.com",
+    "path": "/",
+    "expires": 1792706859.692462,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__cfruid",
+    "value": "416f47142a5b9d825d5ec7791b1045a8495fd5b8-1758146859",
+    "domain": ".discord.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "_cfuvid",
+    "value": "doo55_KB0z8cU9hQTV9Z5m8U_VGegHzoQbQvASwmEHA-1758146859751-0.0.1.1-604800000",
+    "domain": ".discord.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "cf_clearance",
+    "value": "FBosTkCfnFiclevNFdB4Ppb.QJ_Lg7wQax4btFQ2Wsg-1758146862-1.2.1.1-0BLVJ8j9KhFI7BtDZ3RTKM6ZzO4wiKgvh3CeLpOitGO.tiGfnQP_vwXERXmnLi.yRGX5rc4HYuQ9QLnYQyNz42D3BwxoYHRCpqulY5mytLLLQPxNu4eZIgCtigbf_TC5TWherMPSZgbF_m8bkBE0ouvxNqvlv6JHXBBnHJqRFUs64IqrCPZ8ma0c5XAEfvqXfXgsPlUb2aLfibGL9iVyM74yeWWOOOIRepeXkY6letM",
+    "domain": ".discord.com",
+    "path": "/",
+    "expires": 1789682862.177317,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__cf_bm",
+    "value": "38YTC6OeFWjJX245DU_3ST0SIMz0y7HLeFYQR8UGgyU-1758146863-1.0.1.1-HIFVhC1eYyPJJ8bJTmVkF4w77lLfjnL1gsCmtJbirWS037kYTe3Fl9M.8XkyelC8pXcCaXNGS8BawtsXVa66rx.dawIb2XGWH24j_eybmVg",
+    "domain": ".discord.gg",
+    "path": "/",
+    "expires": 1758148662.952396,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "locale",
+    "value": "en-US",
+    "domain": "discord.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__cf_bm",
+    "value": "NjHqZyTX6kk.gscF3Po9XS1D4U5.9d4uuISL6qZQHNM-1758147455-1.0.1.1-r0aMuI9nD3CGbnWvkzvJ4zt1hgGpjzgpJu_zGwHIsFU3wGNh729.QXVVEyZBEhkDXJF6xMZGcMVgwrsRs0jKsIYhdfrethg.cNWm1hCVcwY",
+    "domain": ".discordapp.com",
+    "path": "/",
+    "expires": 1758149255.656936,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "_cfuvid",
+    "value": "Exu3KNRDf3XvFUjcCFhITIp9sRpCbjdf_TRr18LW0_0-1758147455716-0.0.1.1-604800000",
+    "domain": ".discordapp.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__cf_bm",
+    "value": "GJwMqQxMloRlXY7daS7YegLMS14H9.kzZd_IkcUwz_o-1758147456-1.0.1.1-7AQ.N9auoGU_5ATLklpNaaJdM7fZX4jYv_CyNQz9KkktBIeZ59Q40XTWV9hTi4Grxr.jzmeBOdbOeRWKk6ik20BtGElRFJMz6QZgU2YevrM",
+    "domain": ".discordapp.net",
+    "path": "/",
+    "expires": 1758149256.744071,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "_cfuvid",
+    "value": "H6nhig_0I1lyTi9hYaEgI0mtVTlj36AmvCo5uJ6up1Y-1758147456802-0.0.1.1-604800000",
+    "domain": ".discordapp.net",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  }
+]

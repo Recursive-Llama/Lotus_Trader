@@ -48,14 +48,29 @@ class PriceMonitor:
         # Initialize EVM clients for pricing (lazy initialization)
         self.base_client = None
         self.eth_client = None
-        # Support both BASE_RPC_URL and legacy RPC_URL for Base
+        self.bsc_client = None
+        # Support both BASE_RPC_URL and legacy RPC_URL for Base; BSC via BSC_RPC_URL
         self.base_rpc_url = os.getenv('BASE_RPC_URL') or os.getenv('RPC_URL')
         self.eth_rpc_url = os.getenv('ETH_RPC_URL')
+        self.bsc_rpc_url = os.getenv('BSC_RPC_URL')
         
         # Log client initialization status
-        logger.info(f"Price monitor clients: Jupiter=✅, Base={'✅' if self.base_rpc_url else '❌'}, Ethereum={'✅' if self.eth_rpc_url else '❌'}")
+        logger.info(f"Price monitor clients: Jupiter=✅, Base={'✅' if self.base_rpc_url else '❌'}, Ethereum={'✅' if self.eth_rpc_url else '❌'}, BSC={'✅' if self.bsc_rpc_url else '❌'}")
         self.monitoring = False
         self.monitor_task = None
+        # Price lookup cache: {chain}_{token} -> {method}
+        self.price_lookup_cache = {}
+    
+    def _get_cached_method(self, chain: str, token_contract: str) -> Optional[str]:
+        """Get cached successful method for token lookup"""
+        cache_key = f"{chain}_{token_contract}"
+        return self.price_lookup_cache.get(cache_key)
+    
+    def _cache_successful_method(self, chain: str, token_contract: str, method: str):
+        """Cache successful lookup method for future use"""
+        cache_key = f"{chain}_{token_contract}"
+        self.price_lookup_cache[cache_key] = method
+        logger.debug(f"Cached successful method for {token_contract} on {chain}: {method}")
         # Cached SOL/USD for SOL-denominated comparisons
         self._sol_usd_price: Optional[float] = None
         self._sol_usd_time: Optional[datetime] = None
@@ -67,10 +82,21 @@ class PriceMonitor:
         """Lazy initialization of Base client"""
         if self.base_client is None:
             try:
+                # Check if we have a private key for Base trading
+                base_pk = (
+                    os.getenv('BASE_WALLET_PRIVATE_KEY')
+                    or os.getenv('ETHEREUM_WALLET_PRIVATE_KEY')
+                    or os.getenv('ETH_WALLET_PRIVATE_KEY')
+                )
+                if not base_pk:
+                    logger.warning("No private key available for Base client - price lookups will be limited")
+                    self.base_client = False
+                    return None
+                
                 if self.base_rpc_url:
-                    self.base_client = EvmUniswapClient(chain='base', rpc_url=self.base_rpc_url)
+                    self.base_client = EvmUniswapClient(chain='base', rpc_url=self.base_rpc_url, private_key=base_pk)
                 else:
-                    self.base_client = EvmUniswapClient(chain='base')
+                    self.base_client = EvmUniswapClient(chain='base', private_key=base_pk)
                 logger.warning("Base Uniswap client initialized successfully")
             except Exception as e:
                 logger.warning(f"Failed to initialize Base client: {e}")
@@ -87,6 +113,25 @@ class PriceMonitor:
                 logger.warning(f"Failed to initialize Ethereum client: {e}")
                 self.eth_client = False  # Mark as failed to avoid retrying
         return self.eth_client if self.eth_client is not False else None
+
+    def _get_bsc_client(self):
+        """Lazy initialization of BSC client"""
+        if self.bsc_client is None and self.bsc_rpc_url:
+            try:
+                # Get BSC private key
+                bsc_pk = os.getenv('BSC_WALLET_PRIVATE_KEY')
+                if not bsc_pk:
+                    logger.warning("No BSC private key available - BSC price lookups will be limited")
+                    self.bsc_client = False
+                    return None
+                
+                # Chain is 'bsc'; RPC explicit
+                self.bsc_client = EvmUniswapClient(chain='bsc', rpc_url=self.bsc_rpc_url, private_key=bsc_pk)
+                logger.warning("BSC Pancake client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize BSC client: {e}")
+                self.bsc_client = False
+        return self.bsc_client if self.bsc_client is not False else None
     
     async def start_monitoring(self, check_interval: int = 30):
         """
@@ -207,6 +252,8 @@ class PriceMonitor:
             if not exits:
                 return
             position_id = position.get('id')
+            
+            # Process exits sequentially to avoid nonce conflicts
             for exit_order in exits:
                 if exit_order.get('status') == 'pending':
                     target_price = float(exit_order.get('price', 0))
@@ -214,9 +261,20 @@ class PriceMonitor:
                     if current_price >= target_price and self.trader:
                         logger.info(f"Triggering exit {exit_number} for {position.get('token_ticker')} at {current_price:.6f} (target {target_price:.6f})")
                         try:
-                            await self.trader._execute_exit(position_id, exit_number)
+                            # Execute exit and wait for confirmation
+                            success = await self.trader._execute_exit(position_id, exit_number)
+                            if success:
+                                logger.info(f"Exit {exit_number} executed and confirmed successfully")
+                                # Add cooldown between exits to prevent nonce conflicts
+                                await asyncio.sleep(5)
+                            else:
+                                logger.warning(f"Exit {exit_number} execution failed or not confirmed")
+                                # Add longer cooldown on failure
+                                await asyncio.sleep(10)
                         except Exception as exec_err:
                             logger.error(f"Error executing trader exit: {exec_err}")
+                            # Add cooldown on error
+                            await asyncio.sleep(10)
         except Exception as e:
             logger.error(f"Error checking exits: {e}")
     
@@ -227,6 +285,8 @@ class PriceMonitor:
             if not entries:
                 return
             position_id = position.get('id')
+            
+            # Process entries sequentially to avoid nonce conflicts
             for entry in entries:
                 if entry.get('status') == 'pending':
                     target_price = float(entry.get('price', 0))
@@ -234,9 +294,20 @@ class PriceMonitor:
                     if current_price <= target_price and self.trader:
                         logger.info(f"Triggering planned entry {entry_number} at {current_price:.6f} (target {target_price:.6f})")
                         try:
-                            await self.trader._execute_entry(position_id, entry_number)
+                            # Execute entry and wait for confirmation
+                            success = await self.trader._execute_entry_with_confirmation(position_id, entry_number)
+                            if success:
+                                logger.info(f"Entry {entry_number} executed and confirmed successfully")
+                                # Add cooldown between entries to prevent nonce conflicts
+                                await asyncio.sleep(5)
+                            else:
+                                logger.warning(f"Entry {entry_number} execution failed or not confirmed")
+                                # Add longer cooldown on failure
+                                await asyncio.sleep(10)
                         except Exception as exec_err:
                             logger.error(f"Error executing trader entry: {exec_err}")
+                            # Add cooldown on error
+                            await asyncio.sleep(10)
         except Exception as e:
             logger.error(f"Error checking planned entries: {e}")
 
@@ -257,47 +328,172 @@ class PriceMonitor:
                 base_client = self._get_base_client()
                 if not base_client:
                     return None
-                # Use Base Uniswap client for pricing
+                
+                # Check cache first
+                cached_method = self._get_cached_method(chain, token_contract)
                 logger.warning(f"Getting price for Base token: {token_contract}")
+                
                 try:
                     amount_in = int(0.001 * 1e18)  # 0.001 WETH
-                    # Try v2 first
-                    amounts = base_client.v2_get_amounts_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in)
-                    if amounts and len(amounts) >= 2:
-                        out = amounts[-1]
-                        token_dec = base_client.get_token_decimals(token_contract)
-                        price = (0.001) / (out / (10 ** token_dec))
-                        return price
-                    # Try larger input on v2 to avoid zero rounding
-                    amount_in_large = int(0.01 * 1e18)  # 0.01 WETH
-                    amounts = base_client.v2_get_amounts_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in_large)
-                    if amounts and len(amounts) >= 2 and amounts[-1] > 0:
-                        out = amounts[-1]
-                        token_dec = base_client.get_token_decimals(token_contract)
-                        price = (0.01) / (out / (10 ** token_dec))
-                        return price
-                    # Fallback to v3
-                    for fee in [500, 3000, 10000]:
+                    
+                    # Try cached method first if available
+                    if cached_method == 'aerodrome_pair':
                         try:
-                            out = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in, fee=fee)
-                            if out and out > 0:
-                                token_dec = base_client.get_token_decimals(token_contract)
-                                price = (0.001) / (out / (10 ** token_dec))
-                                return price
-                        except Exception:
-                            continue
-                    # Try larger input on v3
-                    for fee in [500, 3000, 10000]:
+                            import requests
+                            r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token_contract}", timeout=8)
+                            if r.ok:
+                                data = r.json() or {}
+                                pairs = data.get('pairs') or []
+                                base_pairs = [p for p in pairs if p.get('chainId') == 'base']
+                                aerodrome_pairs = [p for p in base_pairs if p.get('dexId') == 'aerodrome' and p.get('quoteToken',{}).get('symbol') == 'WETH']
+                                if aerodrome_pairs:
+                                    preferred = sorted(aerodrome_pairs, key=lambda p: (p.get('liquidity',{}).get('usd') or 0), reverse=True)[0]
+                                    if preferred and preferred.get('pairAddress'):
+                                        pair_addr = preferred['pairAddress']
+                                        out = base_client.pair_get_amount_out(pair_addr, amount_in, BASE_WETH_ADDRESSES['base'])
+                                        if out and out > 0:
+                                            token_dec = base_client.get_token_decimals(token_contract)
+                                            price = (0.001) / (out / (10 ** token_dec))
+                                            logger.warning(f"Base pair price (cached aerodrome): {price}")
+                                            return price
+                        except Exception as e:
+                            logger.debug(f"Cached aerodrome method failed: {e}")
+                    
+                    elif cached_method == 'v3_quoter':
                         try:
-                            out = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in_large, fee=fee)
-                            if out and out > 0:
-                                token_dec = base_client.get_token_decimals(token_contract)
-                                price = (0.01) / (out / (10 ** token_dec))
-                                return price
-                        except Exception:
-                            continue
+                            for fee in [500, 3000, 10000]:
+                                q = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in, fee=fee)
+                                if q and q > 0:
+                                    token_dec = base_client.get_token_decimals(token_contract)
+                                    price = (0.001) / (q / (10 ** token_dec))
+                                    logger.warning(f"Base v3 price (cached, fee={fee}): {price}")
+                                    return price
+                        except Exception as e:
+                            logger.debug(f"Cached v3 method failed: {e}")
+                    
+                    # If no cache or cached method failed, try all methods
+                    # Pair-based primary pricing (DexScreener resolution)
+                    import requests
+                    ds_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_contract}"
+                    try:
+                        r = requests.get(ds_url, timeout=8)
+                        if r.ok:
+                            data = r.json() or {}
+                            pairs = data.get('pairs') or []
+                            base_pairs = [p for p in pairs if p.get('chainId') == 'base']
+                            # Prefer Aerodrome WETH quote, else Uniswap WETH quote
+                            preferred = None
+                            for dex in ('aerodrome', 'uniswap'):
+                                cand = [p for p in base_pairs if (p.get('dexId') == dex and p.get('quoteToken',{}).get('symbol') == 'WETH')]
+                                if cand:
+                                    # pick highest liquidity
+                                    preferred = sorted(cand, key=lambda p: (p.get('liquidity',{}).get('usd') or 0), reverse=True)[0]
+                                    break
+                            if preferred and preferred.get('pairAddress'):
+                                pair_addr = preferred['pairAddress']
+                                out = base_client.pair_get_amount_out(pair_addr, amount_in, BASE_WETH_ADDRESSES['base'])
+                                if out and out > 0:
+                                    token_dec = base_client.get_token_decimals(token_contract)
+                                    price = (0.001) / (out / (10 ** token_dec))
+                                    logger.warning(f"Base pair price (dex={preferred.get('dexId')}): {price}")
+                                    # Cache successful method
+                                    self._cache_successful_method(chain, token_contract, 'aerodrome_pair')
+                                    return price
+                    except Exception as ext:
+                        logger.debug(f"DexScreener pair resolution failed: {ext}")
+
+                    # Router/Quoter fallbacks
+                    logger.debug(f"Pair pricing failed, trying router/quoter fallbacks for {token_contract}")
+                    out = base_client.v2_get_amounts_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in)
+                    if out and len(out) >= 2 and out[-1] > 0:
+                        token_dec = base_client.get_token_decimals(token_contract)
+                        price = (0.001) / (out[-1] / (10 ** token_dec))
+                        logger.warning(f"Base v2 router price: {price}")
+                        self._cache_successful_method(chain, token_contract, 'v2_router')
+                        return price
+                    
+                    for fee in [500, 3000, 10000]:
+                        q = base_client.v3_quote_amount_out(BASE_WETH_ADDRESSES['base'], token_contract, amount_in, fee=fee)
+                        if q and q > 0:
+                            token_dec = base_client.get_token_decimals(token_contract)
+                            price = (0.001) / (q / (10 ** token_dec))
+                            logger.warning(f"Base v3 price (fee={fee}): {price}")
+                            self._cache_successful_method(chain, token_contract, 'v3_quoter')
+                            return price
                 except Exception as e:
                     logger.debug(f"Base pricing error: {e}")
+                return None
+            elif chain == 'bsc':
+                bsc_client = self._get_bsc_client()
+                if not bsc_client:
+                    return None
+                logger.warning(f"Getting price for BSC token: {token_contract}")
+                try:
+                    import requests
+                    amount_in = int(0.01 * 1e18)  # 0.01 WBNB
+                    
+                    # Try DexScreener pair pricing first
+                    try:
+                        r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token_contract}", timeout=8)
+                        if r.ok:
+                            data = r.json() or {}
+                            pairs = data.get('pairs') or []
+                            bsc_pairs = [p for p in pairs if p.get('chainId') == 'bsc']
+                            # Prefer WBNB quote pairs by highest liquidity
+                            cand = [p for p in bsc_pairs if (p.get('quoteToken',{}).get('symbol') in ('WBNB','BNB'))]
+                            if cand:
+                                cand.sort(key=lambda p: (p.get('liquidity',{}).get('usd') or 0), reverse=True)
+                                chosen = cand[0]
+                                pair_addr = chosen.get('pairAddress')
+                                dex_id = chosen.get('dexId','')
+                                logger.warning(f"BSC pricing via pair: dex={dex_id} pair={pair_addr}")
+                                
+                                # Try v2 pair direct formula if not v3
+                                if pair_addr and ('v3' not in (dex_id or '').lower()):
+                                    out = bsc_client.v2_pair_get_amount_out(pair_addr, amount_in, bsc_client.weth_address)
+                                    if out and out > 0:
+                                        token_dec = bsc_client.get_token_decimals(token_contract)
+                                        price = (0.01) / (out / (10 ** token_dec))
+                                        logger.warning(f"BSC v2 pair price: {price}")
+                                        return price
+                                # Try v3 pair direct formula if v3
+                                elif pair_addr and ('v3' in (dex_id or '').lower()):
+                                    # For v3 pairs, try v3 quoter with different fees
+                                    for fee in [500, 2500, 10000]:
+                                        out = bsc_client.v3_quote_amount_out(bsc_client.weth_address, token_contract, amount_in, fee=fee)
+                                        if out and out > 0:
+                                            token_dec = bsc_client.get_token_decimals(token_contract)
+                                            price = (0.01) / (out / (10 ** token_dec))
+                                            logger.warning(f"BSC v3 pair price (fee={fee}): {price}")
+                                            return price
+                    except Exception as e:
+                        logger.debug(f"BSC DexScreener pricing error: {e}")
+                    
+                    # Fallback: v2 router path
+                    try:
+                        out_list = bsc_client.v2_get_amounts_out(bsc_client.weth_address, token_contract, amount_in)
+                        if out_list and len(out_list) >= 2 and out_list[-1] > 0:
+                            token_dec = bsc_client.get_token_decimals(token_contract)
+                            price = (0.01) / (out_list[-1] / (10 ** token_dec))
+                            logger.warning(f"BSC v2 router price: {price}")
+                            return price
+                    except Exception as e:
+                        logger.debug(f"BSC v2 router pricing error: {e}")
+                    
+                    # Fallback: v3 quoter if configured
+                    try:
+                        for fee in [500, 2500, 10000]:
+                            out = bsc_client.v3_quote_amount_out(bsc_client.weth_address, token_contract, amount_in, fee=fee)
+                            if out and out > 0:
+                                token_dec = bsc_client.get_token_decimals(token_contract)
+                                price = (0.01) / (out / (10 ** token_dec))
+                                logger.warning(f"BSC v3 price (fee={fee}): {price}")
+                                return price
+                    except Exception as e:
+                        logger.debug(f"BSC v3 quoter pricing error: {e}")
+                        
+                except Exception as e:
+                    logger.debug(f"BSC pricing error: {e}")
                 return None
             elif chain == 'ethereum':
                 eth_client = self._get_eth_client()

@@ -13,7 +13,7 @@ from decimal import Decimal
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 from trading.evm_uniswap_client import EvmUniswapClient
 from trading.evm_uniswap_client_eth import EthUniswapClient
 
@@ -105,7 +105,7 @@ class TestTraderEvmDecision:
             'BASE_RPC_URL': 'https://test.base.rpc',
             'ETH_RPC_URL': 'https://test.eth.rpc'
         }):
-            trader = TraderLowcapSimple(mock_supabase)
+            trader = TraderLowcapSimpleV2(mock_supabase)
             # Mock the clients to avoid RPC connection issues
             trader.base_client = Mock()
             trader.eth_client = Mock()

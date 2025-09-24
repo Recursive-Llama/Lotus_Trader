@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.utils.supabase_manager import SupabaseManager
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 
 async def test_trader_fixed():
     """Test the fixed trader with signal_pack and native token amounts"""
@@ -31,7 +31,7 @@ async def test_trader_fixed():
         'exit_strategy': 'staged_exit'
     }
     
-    trader = TraderLowcapSimple(supabase_manager, trader_config)
+    trader = TraderLowcapSimpleV2(supabase_manager, trader_config)
     
     # Use real Jupiter API for BONK price
     # trader._get_current_price = mock_get_current_price  # Removed mock

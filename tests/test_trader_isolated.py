@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.utils.supabase_manager import SupabaseManager
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 
 async def test_trader():
     """Test trader with a mock decision strand"""
@@ -32,7 +32,7 @@ async def test_trader():
         'exit_strategy': 'staged_exit'
     }
     
-    trader = TraderLowcapSimple(supabase_manager, trader_config)
+    trader = TraderLowcapSimpleV2(supabase_manager, trader_config)
     print("✅ Trader initialized")
     
     # Create a mock decision strand (approved)

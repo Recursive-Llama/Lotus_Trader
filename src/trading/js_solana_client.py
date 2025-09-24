@@ -280,6 +280,17 @@ async function getTokenDecimals() {{
         }};
         
     }} catch (error) {{
+        // If we can't get decimals, return a default of 9
+        if (error.message.includes('could not find account') || 
+            error.message.includes('Account does not exist') ||
+            error.message === '') {{
+            return {{
+                success: true,
+                decimals: 9,
+                mint: '{mint_address}'
+            }};
+        }}
+        
         return {{
             success: false,
             error: error.message
@@ -326,3 +337,116 @@ getTokenDecimals().then(result => {{
                 'success': False,
                 'error': str(e)
             }
+    
+    async def get_spl_token_balance(self, mint_address: str, wallet_address: str) -> Dict[str, Any]:
+        """Get SPL token balance for a wallet (comprehensive check for SPL and Token2022)"""
+        try:
+            # Create JavaScript code to get comprehensive token balance
+            js_code = f"""
+const {{ Connection, PublicKey }} = require('@solana/web3.js');
+
+async function getComprehensiveTokenBalance() {{
+    try {{
+        const connection = new Connection('{self.rpc_url}');
+        const walletAddress = new PublicKey('{wallet_address}');
+        const targetMint = '{mint_address}';
+        
+        // Check SPL tokens first
+        const SPL_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+        const splTokenAccounts = await connection.getTokenAccountsByOwner(walletAddress, {{
+            programId: new PublicKey(SPL_TOKEN_PROGRAM_ID)
+        }});
+        
+        // Check Token2022 tokens
+        const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+        const token2022Accounts = await connection.getTokenAccountsByOwner(walletAddress, {{
+            programId: new PublicKey(TOKEN_2022_PROGRAM_ID)
+        }});
+        
+        // Combine all token accounts
+        const allAccounts = [...splTokenAccounts.value, ...token2022Accounts.value];
+        
+        for (let i = 0; i < allAccounts.length; i++) {{
+            const account = allAccounts[i];
+            const data = account.account.data;
+            
+            if (data.length > 0) {{
+                try {{
+                    // Mint is at offset 0-32
+                    const mintBytes = data.slice(0, 32);
+                    const mintAddress = new PublicKey(mintBytes).toString();
+                    
+                    if (mintAddress === targetMint) {{
+                        // Amount is at offset 64-72
+                        const amountBytes = data.slice(64, 72);
+                        const amount = amountBytes.readBigUInt64LE(0);
+                        
+                        // Get decimals
+                        const mintInfo = await connection.getAccountInfo(new PublicKey(mintAddress));
+                        let decimals = 9; // Default
+                        if (mintInfo && mintInfo.data.length > 0) {{
+                            decimals = mintInfo.data[44]; // Decimals at offset 44
+                        }}
+                        
+                        const balance = Number(amount) / Math.pow(10, decimals);
+                        
+                        return {{
+                            success: true,
+                            balance: balance.toString(),
+                            decimals: decimals,
+                            mint: mintAddress,
+                            token_account: account.pubkey.toString(),
+                            owner: walletAddress.toString()
+                        }};
+                    }}
+                }} catch (error) {{
+                    // Skip invalid accounts
+                }}
+            }}
+        }}
+        
+        // Token not found
+        return {{
+            success: true,
+            balance: '0',
+            decimals: 9,
+            mint: targetMint,
+            token_account: '',
+            owner: walletAddress.toString()
+        }};
+        
+    }} catch (error) {{
+        return {{
+            success: false,
+            error: error.message
+        }};
+    }}
+}}
+
+getComprehensiveTokenBalance().then(result => console.log(JSON.stringify(result)));
+"""
+            
+            # Execute JavaScript
+            process = await asyncio.create_subprocess_exec(
+                'node', '-e', js_code,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                logger.error(f"JavaScript execution failed: {stderr.decode()}")
+                return {"success": False, "error": f"JavaScript execution failed: {stderr.decode()}"}
+            
+            # Debug output
+            logger.debug(f"JavaScript stdout: {stdout.decode()}")
+            logger.debug(f"JavaScript stderr: {stderr.decode()}")
+            
+            # Parse result
+            result = json.loads(stdout.decode().strip())
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting comprehensive token balance: {e}")
+            return {"success": False, "error": str(e)}

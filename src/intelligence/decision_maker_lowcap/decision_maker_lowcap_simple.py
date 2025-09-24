@@ -46,7 +46,7 @@ class DecisionMakerLowcapSimple:
         self.max_positions = self.config.get('max_positions', 69)  # Maximum number of active positions
         
         # Token ignore list (major tokens we don't want to trade)
-        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'stETH'])
+        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'stETH', 'BNB'])
         
         # Minimum volume requirements by chain
         self.min_volume_requirements = self.config.get('min_volume_requirements', {
@@ -83,7 +83,7 @@ class DecisionMakerLowcapSimple:
             chain = token_data.get('chain', '').lower()
             volume_24h = venue_data.get('vol24h_usd', 0)
             min_volume = self.min_volume_requirements.get(chain, 0)
-            supported_chains = ['solana', 'ethereum', 'base']
+            supported_chains = ['solana', 'ethereum', 'base', 'bsc']
 
             self.logger.info(f"Making decision for {curator_id} -> {token_ticker}")
 

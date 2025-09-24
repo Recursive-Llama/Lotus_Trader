@@ -49,22 +49,25 @@ class SocialIngestModule:
         # DexScreener API configuration
         self.dexscreener_base_url = "https://api.dexscreener.com/latest/dex/search"
         
-        # Token ignore list - tokens to skip due to ambiguity or other issues
+        # Toke§n ignore list - tokens to skip due to ambiguity or other issues
         self.ignored_tokens = {
             'ASTER',  # Multiple ASTER tokens exist, causes confusion
+            'BNB',    # Major token, not suitable for lowcap trading
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
-        self.allowed_chains = ['solana', 'ethereum', 'base']
+        self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
         self.min_volume_requirements = {
             'solana': 100000,   # $100k on Solana
             'ethereum': 25000,  # $25k on Ethereum
-            'base': 25000       # $25k on Base
+            'base': 25000,      # $25k on Base
+            'bsc': 25000        # $25k on BSC
         }
         # Minimum liquidity requirements (USD) for early filtering
         self.min_liquidity_requirements = {
             'solana': 20000,    # $20k on Solana
             'ethereum': 20000,  # $20k on Ethereum
-            'base': 20000       # $20k on Base
+            'base': 20000,      # $20k on Base
+            'bsc': 20000        # $20k on BSC
         }
         
         # Load curator configuration
@@ -407,72 +410,154 @@ class SocialIngestModule:
             return None
     
     def _find_best_dexscreener_match(self, pairs: list, token_name: str, network: str) -> Optional[Dict[str, Any]]:
-        """Select best DexScreener match with allowed-chain filtering and composite scoring."""
+        """Select best DexScreener match using exact symbol matching and smart scoring."""
         try:
             if not pairs:
                 return None
 
-            # Group by base symbol
             def symbol_of(p):
                 return (p.get('baseToken', {}) or {}).get('symbol', '').upper()
 
-            # Partition by allowed chains first (unless network explicitly specified)
+            def contract_of(p):
+                return (p.get('baseToken', {}) or {}).get('address', '')
+
+            # Step 1: Filter to exact symbol matches only
+            exact_matches = [p for p in pairs if symbol_of(p) == token_name.upper()]
+            if not exact_matches:
+                self.logger.info(f"No exact symbol matches found for {token_name}")
+                return None
+
+            # Step 2: Filter by allowed chains
             allowed = set(self.allowed_chains)
             if network:
                 allowed = {network.lower()}
 
-            allowed_pairs = [p for p in pairs if (p.get('chainId', '') or '').lower() in allowed]
-            other_pairs = [p for p in pairs if p not in allowed_pairs]
-
-            # Build global context per symbol (max mc/vol across all chains)
-            from collections import defaultdict
-            global_stats = defaultdict(lambda: {'max_vol': 0.0, 'max_mc': 0.0})
-            for p in pairs:
-                sym = symbol_of(p)
-                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
-                mc = float(p.get('marketCap', 0) or 0)
-                gs = global_stats[sym]
-                if vol > gs['max_vol']:
-                    gs['max_vol'] = vol
-                if mc > gs['max_mc']:
-                    gs['max_mc'] = mc
-
-            # Threshold filter within allowed chains
-            def passes_threshold(p):
-                chain = (p.get('chainId', '') or '').lower()
-                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
-                min_vol = self.min_volume_requirements.get(chain, 0)
-                return vol >= min_vol
-
-            candidates = [p for p in allowed_pairs if passes_threshold(p)]
-            if not candidates:
-                self.logger.info(f"Dexscreener: no allowed-chain candidates above thresholds for {token_name}")
+            allowed_matches = [p for p in exact_matches if (p.get('chainId', '') or '').lower() in allowed]
+            if not allowed_matches:
+                self.logger.info(f"No exact matches on allowed chains for {token_name}")
                 return None
 
-            # Composite scoring: volume, liquidity, verified
-            def score(p):
-                vol = float((p.get('volume', {}) or {}).get('h24', 0) or 0)
-                liq = float((p.get('liquidity', {}) or {}).get('usd', 0) or 0)
-                verified = 1.0 if p.get('verified', False) else 0.0
-                import math
-                return 0.5 * math.log10(max(vol, 1)) + 0.3 * math.log10(max(liq, 1)) + 0.2 * verified
+            # Step 3: Group by contract address and aggregate pairs
+            from collections import defaultdict
+            token_groups = defaultdict(list)
+            
+            for pair in allowed_matches:
+                contract = contract_of(pair)
+                if contract:
+                    token_groups[contract].append(pair)
 
-            # Pick best by score, tie-break by liquidity then (if available) marketCap
-            candidates.sort(key=lambda p: (score(p), float((p.get('liquidity', {}) or {}).get('usd', 0) or 0), float(p.get('marketCap', 0) or 0)), reverse=True)
-            best = candidates[0]
+            if not token_groups:
+                self.logger.info(f"No valid contract addresses found for {token_name}")
+                return None
 
-            # Caution log if chosen mc << global mc for the symbol
-            sym = symbol_of(best)
-            chosen_mc = float(best.get('marketCap', 0) or 0)
-            gl_mc = global_stats[sym]['max_mc']
-            if gl_mc > 0 and chosen_mc < 0.3 * gl_mc:
-                self.logger.info(f"Dexscreener: caution selected {sym} on {best.get('chainId')} mc ${chosen_mc:,.0f} vs global ${gl_mc:,.0f}")
+            # Step 4: Score each unique token (contract address)
+            best_token = None
+            best_score = -1
 
-            return best
+            for contract, pairs_for_token in token_groups.items():
+                # Aggregate all pairs for this token
+                total_volume = sum(float((p.get('volume', {}) or {}).get('h24', 0) or 0) for p in pairs_for_token)
+                total_liquidity = sum(float((p.get('liquidity', {}) or {}).get('usd', 0) or 0) for p in pairs_for_token)
+                
+                # Use the first pair for other metrics (they should be the same for same contract)
+                first_pair = pairs_for_token[0]
+                market_cap = float(first_pair.get('marketCap', 0) or 0)
+                chain = (first_pair.get('chainId', '') or '').lower()
+                age_str = first_pair.get('pairCreatedAt', '')
+                
+                # Calculate scores
+                score = self._calculate_token_score(
+                    pairs_for_token, total_volume, total_liquidity, 
+                    market_cap, chain, age_str, token_name
+                )
+                
+                if score > best_score:
+                    best_score = score
+                    best_token = first_pair  # Return the first pair as representative
+
+            if best_token:
+                self.logger.info(f"Selected {symbol_of(best_token)} with score {best_score:.3f}")
+            
+            return best_token
 
         except Exception as e:
             self.logger.error(f"Error finding DexScreener match: {e}")
             return None
+
+    def _calculate_token_score(self, pairs: list, total_volume: float, total_liquidity: float, 
+                             market_cap: float, chain: str, age_str: str, token_name: str) -> float:
+        """Calculate weighted score for a token based on multiple factors."""
+        try:
+            import math
+            from datetime import datetime, timezone
+            
+            # A. DexScreener Position Score (0-1)
+            # Use the position of the first pair in original results
+            position_score = 1.0  # We'll improve this if we track original positions
+            
+            # B. Volume Score (0-1) with 3x multiplier for Base/Ethereum
+            volume_multiplier = 3.0 if chain in ['base', 'ethereum'] else 1.0
+            adjusted_volume = total_volume * volume_multiplier
+            volume_score = min(1.0, math.log10(max(adjusted_volume, 1)) / 6)
+            
+            # C. Liquidity Score (0-1)
+            liquidity_score = min(1.0, math.log10(max(total_liquidity, 1)) / 6)
+            
+            # D. Market Cap Score (0-1) - Sweet spot: $1M - $100M
+            if 1_000_000 <= market_cap <= 100_000_000:
+                market_cap_score = 1.0
+            elif market_cap < 1_000_000:
+                market_cap_score = market_cap / 1_000_000  # Linear scale up
+            else:
+                market_cap_score = max(0, 1 - (market_cap - 100_000_000) / 1_000_000_000)  # Decay above $100M
+            
+            # E. Age Score (0-1) - Sweet spot: 30-180 days
+            age_score = self._calculate_age_score(age_str)
+            
+            # Weighted final score
+            total_score = (
+                0.3 * position_score +
+                0.3 * volume_score +
+                0.2 * liquidity_score +
+                0.15 * market_cap_score +
+                0.05 * age_score
+            )
+            
+            return total_score
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating token score: {e}")
+            return 0.0
+
+    def _calculate_age_score(self, age_str: str) -> float:
+        """Calculate age score based on token age. Sweet spot: 30-180 days."""
+        try:
+            if not age_str:
+                return 0.5  # Default if no age info
+            
+            # Parse age string (e.g., "2mo 6d", "1y 1m 6d")
+            from datetime import datetime, timezone, timedelta
+            
+            # Convert to datetime
+            try:
+                created_at = datetime.fromisoformat(age_str.replace('Z', '+00:00'))
+                age_days = (datetime.now(timezone.utc) - created_at).days
+            except:
+                return 0.5  # Default if parsing fails
+            
+            # Age scoring logic
+            if 30 <= age_days <= 180:
+                return 1.0  # Sweet spot
+            elif age_days < 30:
+                return age_days / 30  # Linear scale up
+            elif age_days <= 365:
+                return 1.0 - (age_days - 180) / 185  # Linear decay
+            else:
+                return max(0, 0.5 - (age_days - 365) / 730)  # Further decay
+                
+        except Exception as e:
+            self.logger.error(f"Error calculating age score: {e}")
+            return 0.5
     
     def _extract_dexscreener_token_details(self, pair_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract token details from DexScreener pair data"""

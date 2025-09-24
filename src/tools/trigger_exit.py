@@ -15,7 +15,7 @@ import logging
 from typing import Optional
 
 from utils.supabase_manager import SupabaseManager
-from intelligence.trader_lowcap.trader_lowcap_simple import TraderLowcapSimple
+from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 async def trigger_exit_by_contract(contract: str, exit_number: Optional[int] = None):
     sb = SupabaseManager()
-    trader = TraderLowcapSimple(sb)
+    trader = TraderLowcapSimpleV2(sb)
 
     # Find active position for this contract on Solana
     res = sb.client.table('lowcap_positions').select('*').eq('status', 'active').eq('token_chain', 'solana').eq('token_contract', contract).order('created_at', desc=True).execute()

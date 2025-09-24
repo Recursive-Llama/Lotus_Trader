@@ -111,7 +111,7 @@ class DiscordMonitorIntegrated:
                         "action": "buy",
                         "timing": "immediate",
                         "confidence": 0.9,
-                        "allocation_pct": 12.0,
+                        "allocation_pct": 3.0,
                         "auto_approve": True,
                         "source": "discord_gem_bot",
                         "channel": "#gembot-conservative-calls",
