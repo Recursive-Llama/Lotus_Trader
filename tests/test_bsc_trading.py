@@ -25,7 +25,7 @@ async def test_bsc_trading():
         supabase_manager = SupabaseManager()
         trader = TraderLowcapSimpleV2(supabase_manager)
         
-        test_token = '0x8dEdf84656fa932157e27C060D8613824e7979e3'
+        test_token = '0xb5761f36FdFE2892f1b54Bc8EE8baBb2a1b698D3'  # The failing token
         
         # Test buy
         print('Testing BSC buy...')
@@ -74,7 +74,7 @@ async def test_bsc_trading():
         decision_fixed = {
             'content': {
                 'action': 'approve',
-                'allocation_pct': 0.1
+                'allocation_pct': 0.005  # 0.005 BNB test
             },
             'signal_pack': {
                 'token': {

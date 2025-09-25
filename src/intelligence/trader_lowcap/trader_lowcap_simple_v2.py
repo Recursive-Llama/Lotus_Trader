@@ -241,7 +241,7 @@ class TraderLowcapSimpleV2:
                 'book_id': decision.get('id'),
                 'status': 'active',
                 'total_allocation_pct': allocation_pct,
-                'total_allocation_usd': 0.0,
+                'current_invested_usd': 0.0,
                 'total_quantity': 0.0,
                 'curator_sources': decision.get('content', {}).get('curator_id'),
                 'source_tweet_url': source_tweet_url,  # Store for sell notifications
@@ -276,6 +276,9 @@ class TraderLowcapSimpleV2:
                 entries[0]['tx_hash'] = tx_hash
                 entries[0]['tokens_bought'] = e_amt / price
                 self.repo.update_entries(position_id, entries)
+                
+                # Update average entry price after first entry execution
+                await self._update_avg_entry_price(position_id)
                 
                 # Detect tax tokens after successful buy
                 await self._detect_and_update_tax_token(contract, e_amt, price, chain)
@@ -541,6 +544,47 @@ class TraderLowcapSimpleV2:
         except Exception as e:
             self.logger.error(f"Error updating P&L for position {position_id}: {e}")
 
+    async def _update_avg_entry_price(self, position_id: str):
+        """Update average entry price based on executed entries"""
+        try:
+            # Get current position
+            position = self.repo.get_position(position_id)
+            if not position:
+                self.logger.error(f"Position {position_id} not found for avg_entry_price update")
+                return
+            
+            entries = position.get('entries', [])
+            
+            # Only consider executed entries with tokens_bought
+            executed_entries = [
+                e for e in entries 
+                if e.get('status') == 'executed' and 'tokens_bought' in e
+            ]
+            
+            if not executed_entries:
+                # No executed entries yet
+                position['avg_entry_price'] = 0
+                self.repo.update_position(position_id, position)
+                self.logger.info(f"No executed entries found for position {position_id}")
+                return
+            
+            # Calculate weighted average entry price
+            total_cost = sum(e['price'] * e['tokens_bought'] for e in executed_entries)
+            total_tokens = sum(e['tokens_bought'] for e in executed_entries)
+            
+            if total_tokens > 0:
+                avg_entry_price = total_cost / total_tokens
+                position['avg_entry_price'] = avg_entry_price
+                self.repo.update_position(position_id, position)
+                self.logger.info(f"Updated avg_entry_price for {position_id}: {avg_entry_price:.8f} (from {len(executed_entries)} entries)")
+            else:
+                position['avg_entry_price'] = 0
+                self.repo.update_position(position_id, position)
+                self.logger.warning(f"Total tokens is 0 for position {position_id}")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating avg_entry_price for position {position_id}: {e}")
+
     async def _recalculate_position_totals(self, position: Dict[str, Any]):
         """Recalculate all position totals from entry history and wallet balance"""
         try:
@@ -636,6 +680,8 @@ class TraderLowcapSimpleV2:
             if result:
                 # Mark entry as executed
                 self.repo.mark_entry_executed(position_id, entry_number, result)
+                # Update average entry price after entry execution
+                await self._update_avg_entry_price(position_id)
                 self.logger.info(f"Entry {entry_number} executed successfully: {result}")
             else:
                 self.logger.error(f"Entry {entry_number} execution failed")
@@ -698,6 +744,8 @@ class TraderLowcapSimpleV2:
                     if confirmed:
                         # Mark entry as executed only after confirmation
                         self.repo.mark_entry_executed(position_id, entry_number, result)
+                        # Update average entry price after entry execution
+                        await self._update_avg_entry_price(position_id)
                         self.logger.info(f"Entry {entry_number} executed and confirmed: {result}")
                         return True
                     else:
@@ -706,6 +754,8 @@ class TraderLowcapSimpleV2:
                 else:
                     # For Solana, assume immediate confirmation
                     self.repo.mark_entry_executed(position_id, entry_number, result)
+                    # Update average entry price after entry execution
+                    await self._update_avg_entry_price(position_id)
                     self.logger.info(f"Entry {entry_number} executed: {result}")
                     return True
             else:

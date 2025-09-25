@@ -61,6 +61,8 @@ class SocialIngestModule:
             'YZI', 'YZILABS',  # Specific tokens to avoid
             'DOGE',  # Major meme token
             'PEPE',  # Major meme token
+            'BONK',  # Major meme token
+            'WLFI',  # Specific token to avoid
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
@@ -68,7 +70,7 @@ class SocialIngestModule:
             'solana': 100000,   # $100k on Solana
             'ethereum': 25000,  # $25k on Ethereum
             'base': 25000,      # $25k on Base
-            'bsc': 25000        # $25k on BSC
+            'bsc': 100000        # $100k on BSC
         }
         # Minimum liquidity requirements (USD) for early filtering
         self.min_liquidity_requirements = {

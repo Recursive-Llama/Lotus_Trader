@@ -23,10 +23,10 @@ Tweet → LLM Extract Tokens → Verify with DexScreener → Create Strand → D
 
 ### **Enhanced Flow**
 ```
-Tweet → LLM Extract Tokens → LLM Analyze Intent → Verify with DexScreener → Create Strand → Decision Maker
+Tweet → LLM Extract Tokens → LLM Analyze Intent (per token) → Verify with DexScreener → Create Strand → Decision Maker
 ```
 
-**Solution**: Understand curator intent before making allocation decisions.
+**Solution**: Understand curator intent for each specific token before making allocation decisions.
 
 ---
 
@@ -77,11 +77,13 @@ INTENT_MULTIPLIERS = {
     "new_discovery": 1.0,
     "comparison_ranked": 0.8,  # Depends on ranking
     "comparison_listed": 0.6,  # Lower confidence for list inclusion
+    "other_positive": 0.5,  # Default positive intent
     
     # Research pipeline (don't buy, but track)
     "research_neutral": 0.0,
     "market_analysis": 0.0,
     "educational": 0.0,
+    "other_neutral": 0.0,  # Default neutral intent
     
     # Negative signals
     "profit_taking": 0.0,
@@ -105,71 +107,73 @@ INTENT_MULTIPLIERS = {
 **Location**: `src/intelligence/social_ingest/social_ingest_basic.py`
 
 **Changes**:
-1. Add second LLM call after token extraction
+1. Add second LLM call after token extraction (one call per token)
 2. Enhanced prompt with token verification and intent analysis
 3. Update strand structure to include intent data
+
+**Stage 2 Input**:
+- **Original tweet text** (from `message_data['text']`)
+- **Stage 1 output** (extracted token data)
+- **One prompt per token** from Stage 1
 
 **New Prompt Template**:
 ```yaml
 curator_intent_analysis:
   prompt: |
-    Analyze the curator's intent for this token mention with enhanced context:
+    Analyze the curator's intent for this specific token mention:
     
-    Message: "{message_text}"
-    Extracted Token: {token_name}
-    Curator: {curator_id}
+    **Original Message:**
+    "{message_text}"
     
-    **STEP 1: Verify Token Extraction**
-    First, double-check if "{token_name}" is actually a valid token mention in this context.
-    Look for:
-    - Is it clearly a cryptocurrency ticker?
-    - Could it be confused with other words/abbreviations?
-    - Is the context about trading/investing?
+    **Token from Stage 1:**
+    - Token: {token_name}
+    - Sentiment: {sentiment}
+    - Action: {action}
+    - Confidence: {confidence}
     
-    **STEP 2: Determine Intent**
-    If token is valid, determine the curator's intent:
+    **Analysis Tasks:**
+    1. **Token Verification**: Is "{token_name}" actually a valid token mention in this context?
+    2. **Intent Analysis**: What is the curator's intent for this specific token?
+    3. **Buy Decision**: Should we actually buy this token based on the full context?
     
-    **POSITIVE BUY SIGNALS:**
-    - "adding_to_position" - Buying more, dip buying, accumulating
-    - "research_positive" - "Research this, looks promising", "Check this out"
-    - "comparison_highlighted" - Specifically called out as best/favorite in comparison
-    - "comparison_ranked" - Has specific ranking (1st, 2nd, 3rd, etc.)
-    - "technical_breakout" - Chart patterns, breakouts, technical analysis
-    - "fundamental_positive" - Utility, team, partnerships, fundamentals
-    
-    **MEDIUM CONFIDENCE BUY SIGNALS:**
+    **Intent Types:**
+    - "adding_to_position" - Buying more, dip buying
+    - "research_positive" - "Research this, looks promising"
     - "new_discovery" - First mention, new find
-    - "comparison_listed" - In a list but not specifically highlighted
-    
-    **RESEARCH PIPELINE (Not Buy Signals):**
+    - "comparison_highlighted" - Specifically called out as best/favorite
+    - "comparison_listed" - In a list but not highlighted
     - "research_neutral" - "Research this token" (neutral tone)
-    - "market_analysis" - Discussing market conditions, token included
-    - "educational" - Teaching about token/category
-    
-    **NEGATIVE/AVOID SIGNALS:**
     - "profit_taking" - Selling, taking profits
-    - "research_negative" - "Research this, seems sketchy"
-    - "comparison_negative" - Highlighted unfavorably in comparison
-    - "warning_signal" - Warning about risks, rug pulls
-    - "mocking" - Sarcastic, making fun of token
-    
-    **AMBIGUOUS:**
     - "mention_only" - Just mentioning without clear intent
-    - "unclear_sentiment" - Mixed or unclear signals
+    - "extraction_error" - Stage 1 was wrong, this isn't a valid token mention
+    - "other_positive" - Intent doesn't fit standard categories but seems positive
+    - "other_neutral" - Intent doesn't fit standard categories and seems neutral
+    
+    **Key Rules:**
+    1. Consider the FULL context of the message, not just the token
+    2. Focus on the curator's INTENT, not specific words or phrases
+    3. Stage 1's "action" is advisory - you can override it based on context
+    4. If this is a comparison/list, mark tokens as "comparison_listed" unless clearly highlighted
+    5. If Stage 1 made an error, return "extraction_error"
+    6. Use intent types as a guide - if none fit perfectly, use "other_positive" or "other_neutral"
+    7. Process ALL tokens from the message - let intent analysis determine which are buy signals
     
     Return JSON:
     {
       "token_verification": {
         "is_valid_token": true,
         "confidence": 0.9,
-        "alternative_interpretations": ["possible_alternatives"]
+        "reasoning": "Token is clearly mentioned in trading context"
       },
       "intent_analysis": {
-        "intent": "adding_to_position",
+        "intent_type": "adding_to_position",
         "confidence": 0.8,
         "reasoning": "Curator says 'adding more' and mentions dip",
-        "sentiment": "positive",
-        "allocation_multiplier": 1.2
+        "allocation_multiplier": 1.5
+      },
+      "buy_decision": {
+        "should_buy": true,
+        "reasoning": "Clear buy signal with high confidence"
       }
     }
 ```
@@ -231,8 +235,9 @@ def _calculate_allocation(self, curator_score: float, intent_analysis: Dict = No
 
 ### **Maintained Simplicity**
 - **Same 4-step decision process**: Token check → Curator score → Signal direction → Capacity
-- **Minimal architecture changes**: Just adds one LLM call
+- **Minimal architecture changes**: Just adds one LLM call per token
 - **Backward compatible**: Existing strands still work
+- **Smart filtering**: LLM naturally handles comparison context and intent analysis
 
 ---
 
@@ -240,9 +245,10 @@ def _calculate_allocation(self, curator_score: float, intent_analysis: Dict = No
 
 ### **Week 1: Intent Analysis**
 - [ ] Create enhanced prompt template
-- [ ] Add second LLM call to social ingest
+- [ ] Add second LLM call to social ingest (one per token)
 - [ ] Update strand structure with intent data
-- [ ] Test with sample tweets
+- [ ] Test with sample tweets and comparisons
+- [ ] Verify LLM naturally handles all tokens without arbitrary limits
 
 ### **Week 2: Decision Integration**
 - [ ] Update decision maker to use intent multipliers

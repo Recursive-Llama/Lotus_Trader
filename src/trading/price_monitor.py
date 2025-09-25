@@ -471,13 +471,19 @@ class PriceMonitor:
                                 # Try v3 pair direct formula if v3
                                 elif pair_addr and ('v3' in (dex_id or '').lower()):
                                     # For v3 pairs, try v3 quoter with different fees
-                                    for fee in [500, 2500, 10000]:
+                                    v3_success = False
+                                    for fee in [10000, 3000, 500, 2500]:  # Same order as trading system
                                         out = bsc_client.v3_quote_amount_out(bsc_client.weth_address, token_contract, amount_in, fee=fee)
                                         if out and out > 0:
                                             token_dec = bsc_client.get_token_decimals(token_contract)
                                             price = (0.01) / (out / (10 ** token_dec))
                                             logger.warning(f"BSC v3 pair price (fee={fee}): {price}")
                                             return price
+                                        else:
+                                            logger.debug(f"BSC v3 quoter failed for fee {fee}, trying next fee")
+                                    # If all V3 fees failed, don't return - continue to V2 router fallback
+                                    if not v3_success:
+                                        logger.debug(f"All V3 quoter attempts failed for {token_contract}, will try V2 router fallback")
                     except Exception as e:
                         logger.debug(f"BSC DexScreener pricing error: {e}")
                     
@@ -494,7 +500,7 @@ class PriceMonitor:
                     
                     # Fallback: v3 quoter if configured
                     try:
-                        for fee in [500, 2500, 10000]:
+                        for fee in [10000, 3000, 500, 2500]:  # Same order as trading system
                             out = bsc_client.v3_quote_amount_out(bsc_client.weth_address, token_contract, amount_in, fee=fee)
                             if out and out > 0:
                                 token_dec = bsc_client.get_token_decimals(token_contract)
