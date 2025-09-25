@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 
 
 class PositionRepository:
@@ -62,8 +63,9 @@ class PositionRepository:
         res = self.supabase.client.table('lowcap_positions').select('*').eq('token_contract', token_contract).order('created_at', desc=True).limit(1).execute()
         return res.data[0] if res.data else None
 
-    def mark_entry_executed(self, position_id: str, entry_number: int, tx_hash: str) -> bool:
-        """Mark a specific entry as executed with transaction hash"""
+    def mark_entry_executed(self, position_id: str, entry_number: int, tx_hash: str, 
+                          cost_native: float = None, cost_usd: float = None, tokens_bought: float = None) -> bool:
+        """Mark a specific entry as executed with transaction hash and cost tracking"""
         try:
             # Get the current position
             position = self.get_position(position_id)
@@ -76,6 +78,15 @@ class PositionRepository:
                 if entry.get('entry_number') == entry_number:
                     entry['status'] = 'executed'
                     entry['tx_hash'] = tx_hash
+                    entry['executed_at'] = datetime.now(timezone.utc).isoformat()
+                    
+                    # Add cost tracking if provided
+                    if cost_native is not None:
+                        entry['cost_native'] = cost_native
+                    if cost_usd is not None:
+                        entry['cost_usd'] = cost_usd
+                    if tokens_bought is not None:
+                        entry['tokens_bought'] = tokens_bought
                     break
             
             # Update the position with modified entries

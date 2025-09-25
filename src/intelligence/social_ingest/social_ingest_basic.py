@@ -63,6 +63,7 @@ class SocialIngestModule:
             'PEPE',  # Major meme token
             'BONK',  # Major meme token
             'WLFI',  # Specific token to avoid
+            'XPL',   # Specific token to avoid
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']

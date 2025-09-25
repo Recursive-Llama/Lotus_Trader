@@ -23,10 +23,10 @@ Tweet → LLM Extract Tokens → Verify with DexScreener → Create Strand → D
 
 ### **Enhanced Flow**
 ```
-Tweet → LLM Extract Tokens → LLM Analyze Intent (per token) → Verify with DexScreener → Create Strand → Decision Maker
+Tweet → LLM Extract Tokens (with chain context) → Verify with DexScreener → LLM Analyze Intent (per token) → Create Strand → Decision Maker
 ```
 
-**Solution**: Understand curator intent for each specific token before making allocation decisions.
+**Solution**: Extract chain context in Stage 1 to find the correct token, then understand curator intent for each specific token before making allocation decisions.
 
 ---
 
@@ -83,6 +83,7 @@ INTENT_MULTIPLIERS = {
     "research_neutral": 0.0,
     "market_analysis": 0.0,
     "educational": 0.0,
+    "unsupported_chain": 0.0,  # Goes to research pipeline
     "other_neutral": 0.0,  # Default neutral intent
     
     # Negative signals
@@ -102,21 +103,56 @@ INTENT_MULTIPLIERS = {
 
 ## **Implementation Strategy**
 
-### **Phase 1: Enhanced Intent Analysis (Easy Win)**
+### **Phase 1: Enhanced Stage 1 (Chain Context) + Stage 2 (Intent Analysis)**
 
 **Location**: `src/intelligence/social_ingest/social_ingest_basic.py`
 
 **Changes**:
-1. Add second LLM call after token extraction (one call per token)
-2. Enhanced prompt with token verification and intent analysis
-3. Update strand structure to include intent data
+1. Enhance Stage 1 prompt to extract chain context
+2. Add Stage 2 LLM call after DexScreener verification (one call per token)
+3. Enhanced prompt with token verification and intent analysis
+4. Update strand structure to include intent data
+
+**Stage 1 Enhancement**:
+- **Extract chain context** from tweet when available
+- **Leave network blank** if chain context is unclear
+- **Prevent scam token matching** by providing chain context to DexScreener
 
 **Stage 2 Input**:
 - **Original tweet text** (from `message_data['text']`)
-- **Stage 1 output** (extracted token data)
+- **Stage 1 output** (extracted token data with chain context)
+- **DexScreener verified token** (correct token found using chain context)
 - **One prompt per token** from Stage 1
 
-**New Prompt Template**:
+**Enhanced Stage 1 Prompt**:
+```yaml
+token_extraction:
+  prompt: |
+    Extract token information from this social media message:
+    
+    "{message_text}"
+    
+    **Important**: Pay attention to chain context. If the curator mentions a specific chain, 
+    that's the chain the token is on. Don't assume it's on your default chain.
+    
+    Return a JSON object with:
+    - tokens: Array of token objects, each containing:
+      - token_name: The token ticker/symbol
+      - network: The blockchain network (solana, ethereum, base, bsc, plasma, etc.) or null if not clear
+      - contract_address: Contract address if mentioned, null otherwise
+      - chain_context: Any chain-specific context mentioned in the message
+      - sentiment: positive, negative, or neutral
+      - confidence: 0.0 to 1.0
+      - has_chart: true if post contains chart/image, false otherwise
+      - chart_type: type of chart if present (price, volume, technical, etc.) or null
+      - market_context: Object with price_mention, market_cap, risk_assessment, competitors, platform
+      - trading_signals: Object with action (set to "buy" if the token is discussed positively/favorably, null otherwise), timing, confidence
+    
+    Return only the JSON object, no explanations or markdown formatting.
+    If no clear tokens are mentioned, return {"tokens": []}.
+```
+
+**Stage 2 Prompt Template**:
 ```yaml
 curator_intent_analysis:
   prompt: |
@@ -127,6 +163,7 @@ curator_intent_analysis:
     
     **Token from Stage 1:**
     - Token: {token_name}
+    - Network: {network}
     - Sentiment: {sentiment}
     - Action: {action}
     - Confidence: {confidence}
@@ -146,6 +183,7 @@ curator_intent_analysis:
     - "profit_taking" - Selling, taking profits
     - "mention_only" - Just mentioning without clear intent
     - "extraction_error" - Stage 1 was wrong, this isn't a valid token mention
+    - "unsupported_chain" - Valid token but on unsupported chain
     - "other_positive" - Intent doesn't fit standard categories but seems positive
     - "other_neutral" - Intent doesn't fit standard categories and seems neutral
     
@@ -153,10 +191,12 @@ curator_intent_analysis:
     1. Consider the FULL context of the message, not just the token
     2. Focus on the curator's INTENT, not specific words or phrases
     3. Stage 1's "action" is advisory - you can override it based on context
-    4. If this is a comparison/list, mark tokens as "comparison_listed" unless clearly highlighted
-    5. If Stage 1 made an error, return "extraction_error"
-    6. Use intent types as a guide - if none fit perfectly, use "other_positive" or "other_neutral"
-    7. Process ALL tokens from the message - let intent analysis determine which are buy signals
+    4. Check if token is on supported chains (SOL, ETH, BASE, BSC) - use the network from Stage 1
+    5. If unsupported chain, mark as "unsupported_chain" (goes to research)
+    6. If this is a comparison/list, mark tokens as "comparison_listed" unless clearly highlighted
+    7. If Stage 1 made an error, return "extraction_error"
+    8. Use intent types as a guide - if none fit perfectly, use "other_positive" or "other_neutral"
+    9. Process ALL tokens from the message - let intent analysis determine which are buy signals
     
     Return JSON:
     {
@@ -243,11 +283,13 @@ def _calculate_allocation(self, curator_score: float, intent_analysis: Dict = No
 
 ## **Implementation Timeline**
 
-### **Week 1: Intent Analysis**
-- [ ] Create enhanced prompt template
-- [ ] Add second LLM call to social ingest (one per token)
+### **Week 1: Enhanced Stage 1 + Intent Analysis**
+- [ ] Enhance Stage 1 prompt to extract chain context
+- [ ] Create Stage 2 intent analysis prompt template
+- [ ] Add Stage 2 LLM call to social ingest (one per token)
 - [ ] Update strand structure with intent data
 - [ ] Test with sample tweets and comparisons
+- [ ] Verify chain context prevents scam token matching
 - [ ] Verify LLM naturally handles all tokens without arbitrary limits
 
 ### **Week 2: Decision Integration**

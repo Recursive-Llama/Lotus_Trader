@@ -14,14 +14,54 @@ class EntryExitPlanner:
         ]
 
     @staticmethod
-    def build_exits(current_price: float, total_native: float) -> List[Dict]:
+    def build_exits(exit_rules: Dict, avg_entry_price: float, total_quantity: float, 
+                    current_price: float = None) -> List[Dict]:
+        """
+        Build exits based on exit_rules and avg_entry_price
+        
+        Args:
+            exit_rules: Dictionary with 'stages' containing gain_pct and exit_pct
+            avg_entry_price: Average entry price to base exit prices on
+            total_quantity: Current total token quantity
+            current_price: Fallback price if avg_entry_price is 0 (for backwards compatibility)
+        
+        Returns:
+            List of exit dictionaries
+        """
         now = datetime.now(timezone.utc).isoformat()
-        total_tokens = total_native / current_price
-        return [
-            {'exit_number': 1, 'price': current_price * 1.3, 'tokens': total_tokens * 0.30, 'gain_pct': 30, 'status': 'pending', 'created_at': now},
-            {'exit_number': 2, 'price': current_price * 3.0, 'tokens': total_tokens * 0.70 * 0.30, 'gain_pct': 200, 'status': 'pending', 'created_at': now},
-            {'exit_number': 3, 'price': current_price * 4.0, 'tokens': total_tokens * 0.70 * 0.70 * 0.30, 'gain_pct': 300, 'status': 'pending', 'created_at': now},
-        ]
+        
+        # Use avg_entry_price if available, otherwise fallback to current_price
+        base_price = avg_entry_price if avg_entry_price > 0 else current_price
+        if not base_price or base_price <= 0:
+            raise ValueError("Cannot build exits without valid base price")
+        
+        # Get exit stages from rules
+        stages = exit_rules.get('stages', [])
+        if not stages:
+            raise ValueError("No exit stages found in exit_rules")
+        
+        exits = []
+        for i, stage in enumerate(stages, 1):
+            gain_pct = stage.get('gain_pct', 0)
+            exit_pct = stage.get('exit_pct', 0)
+            
+            # Calculate exit price based on gain percentage
+            exit_price = base_price * (1 + gain_pct / 100)
+            
+            # Calculate tokens to sell based on exit percentage
+            tokens_to_sell = total_quantity * (exit_pct / 100)
+            
+            exits.append({
+                'exit_number': i,
+                'price': exit_price,
+                'tokens': tokens_to_sell,
+                'gain_pct': gain_pct,
+                'exit_pct': exit_pct,
+                'status': 'pending',
+                'created_at': now
+            })
+        
+        return exits
 
 
 

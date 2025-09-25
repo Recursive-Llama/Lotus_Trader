@@ -241,7 +241,9 @@ class TraderLowcapSimpleV2:
                 'book_id': decision.get('id'),
                 'status': 'active',
                 'total_allocation_pct': allocation_pct,
+                'total_investment_usd': 0.0,
                 'current_invested_usd': 0.0,
+                'current_invested_native': 0.0,
                 'total_quantity': 0.0,
                 'curator_sources': decision.get('content', {}).get('curator_id'),
                 'source_tweet_url': source_tweet_url,  # Store for sell notifications
@@ -271,14 +273,31 @@ class TraderLowcapSimpleV2:
             elif chain == 'solana' and executor:
                 tx_hash = await executor.execute_buy(contract, e_amt)
             if tx_hash:
-                entries[0]['status'] = 'executed'
-                entries[0]['executed_at'] = datetime.now(timezone.utc).isoformat()
-                entries[0]['tx_hash'] = tx_hash
-                entries[0]['tokens_bought'] = e_amt / price
-                self.repo.update_entries(position_id, entries)
+                # Calculate cost tracking
+                cost_native = e_amt
+                cost_usd = 0
+                if price_info and 'price_usd' in price_info:
+                    # Calculate USD cost based on token price
+                    token_price_usd = price_info['price_usd']
+                    cost_usd = (e_amt / price) * token_price_usd
                 
-                # Update average entry price after first entry execution
+                tokens_bought = e_amt / price
+                
+                # Use enhanced mark_entry_executed method for consistent tracking
+                self.repo.mark_entry_executed(
+                    position_id=position_id,
+                    entry_number=1,
+                    tx_hash=tx_hash,
+                    cost_native=cost_native,
+                    cost_usd=cost_usd,
+                    tokens_bought=tokens_bought
+                )
+                
+                # Update average entry price, invested amounts, and P&L after first entry execution
                 await self._update_avg_entry_price(position_id)
+                await self._update_invested_amounts(position_id)
+                await self._update_position_pnl(position_id)
+                await self._recalculate_exits_after_entry(position_id)
                 
                 # Detect tax tokens after successful buy
                 await self._detect_and_update_tax_token(contract, e_amt, price, chain)
@@ -302,21 +321,27 @@ class TraderLowcapSimpleV2:
                     decision=decision
                 )
 
-            # Exits (staged) - use actual tokens bought, not theoretical
-            actual_tokens = e_amt / price if tx_hash else 0
-            exits = EntryExitPlanner.build_exits(price, actual_tokens * price)  # Use actual tokens
-            self.repo.update_exits(position_id, exits)
-            
-            # Store exit rules that match the exit strategy
+            # Store exit rules that match the 9-stage exit strategy
             exit_rules = {
                 'strategy': 'staged',
                 'stages': [
-                    {'gain_pct': 30, 'exit_pct': 30, 'executed': False},
-                    {'gain_pct': 200, 'exit_pct': 30, 'executed': False},
-                    {'gain_pct': 300, 'exit_pct': 30, 'executed': False}
+                    {'gain_pct': 30, 'exit_pct': 30, 'executed': False},   # 30% gain
+                    {'gain_pct': 60, 'exit_pct': 30, 'executed': False},   # 60% gain
+                    {'gain_pct': 160, 'exit_pct': 30, 'executed': False},  # 160% gain
+                    {'gain_pct': 260, 'exit_pct': 30, 'executed': False},  # 260% gain
+                    {'gain_pct': 360, 'exit_pct': 30, 'executed': False},  # 360% gain
+                    {'gain_pct': 460, 'exit_pct': 30, 'executed': False},  # 460% gain
+                    {'gain_pct': 660, 'exit_pct': 30, 'executed': False},  # 660% gain
+                    {'gain_pct': 860, 'exit_pct': 30, 'executed': False},  # 860% gain
+                    {'gain_pct': 1160, 'exit_pct': 100, 'executed': False} # 1160% gain (final exit)
                 ]
             }
             self.repo.update_exit_rules(position_id, exit_rules)
+            
+            # Exits (staged) - use actual tokens bought, not theoretical
+            actual_tokens = e_amt / price if tx_hash else 0
+            exits = EntryExitPlanner.build_exits(exit_rules, price, actual_tokens, price)  # Use exit_rules and actual tokens
+            self.repo.update_exits(position_id, exits)
 
             if not tx_hash:
                 self.logger.error("Trader V2: No tx_hash returned; marking execution as failed")
@@ -472,17 +497,41 @@ class TraderLowcapSimpleV2:
                         self.logger.error(f"Exit {exit_number} transaction not confirmed: {tx_hash}")
                         return False
                 
-                # Update exit with transaction details only after confirmation
+                # Calculate exit value for cost tracking
+                exit_value_native = actual_sell_amount * target_price
+                exit_value_usd = 0
+                
+                # Get current price info for USD calculation
+                if chain == 'bsc':
+                    price_info = self.price_oracle.price_bsc(contract)
+                elif chain == 'base':
+                    price_info = self.price_oracle.price_base(contract)
+                elif chain == 'ethereum':
+                    price_info = self.price_oracle.price_eth(contract)
+                elif chain == 'solana':
+                    price_info = self.price_oracle.price_solana(contract)
+                else:
+                    price_info = None
+                
+                if price_info and 'price_usd' in price_info:
+                    token_price_usd = price_info['price_usd']
+                    exit_value_usd = actual_sell_amount * token_price_usd
+                
+                # Update exit with transaction details and cost tracking
                 target_exit['status'] = 'executed'
                 target_exit['tx_hash'] = tx_hash
                 target_exit['executed_at'] = datetime.now(timezone.utc).isoformat()
-                target_exit['actual_tokens_sold'] = actual_sell_amount  # Track actual amount
+                target_exit['actual_tokens_sold'] = actual_sell_amount
+                target_exit['cost_native'] = exit_value_native  # Amount received in native currency
+                target_exit['cost_usd'] = exit_value_usd  # Amount received in USD
                 
                 # Update position in database
                 self.repo.update_exits(position_id, exits)
                 
-                # Calculate and update P&L
-                self._update_position_pnl(position_id, target_exit)
+                # Update invested amounts and P&L
+                await self._update_invested_amounts(position_id)
+                await self._update_position_pnl(position_id)
+                await self._recalculate_exits_after_entry(position_id)
                 
                 # Send Telegram sell signal notification
                 await self._send_sell_notification_for_exit(
@@ -505,41 +554,69 @@ class TraderLowcapSimpleV2:
             self.logger.error(f"Error executing exit {exit_number} for position {position_id}: {e}")
             return False
     
-    def _update_position_pnl(self, position_id: str, executed_exit: Dict[str, Any]):
-        """Update position P&L after successful exit"""
+    async def _update_position_pnl(self, position_id: str):
+        """Update position P&L using current position value and investment tracking"""
         try:
             # Get current position
             position = self.repo.get_position(position_id)
             if not position:
+                self.logger.error(f"Position {position_id} not found for P&L update")
                 return
             
-            # Calculate exit value in ETH - use actual tokens sold, not requested
-            tokens_sold = executed_exit.get('actual_tokens_sold', executed_exit.get('tokens', 0))
-            exit_price_eth = executed_exit.get('price', 0)
-            exit_value_eth = tokens_sold * exit_price_eth
+            # Get position details
+            total_quantity = position.get('total_quantity', 0)
+            current_invested_usd = position.get('current_invested_usd', 0)
+            total_investment_usd = position.get('total_investment_usd', 0)
+            chain = position.get('token_chain', '').lower()
+            contract = position.get('token_contract')
             
-            # Get current ETH price for USD conversion (simplified)
-            # In a real implementation, you'd fetch current ETH/USD price
-            eth_usd_price = 4180  # Approximate current ETH price
-            exit_value_usd = exit_value_eth * eth_usd_price
+            if total_quantity <= 0 or not contract:
+                # No tokens or no contract, P&L is just negative of investment
+                position['total_pnl_usd'] = -current_invested_usd
+                position['total_pnl_pct'] = (-current_invested_usd / total_investment_usd * 100) if total_investment_usd > 0 else 0
+                self.repo.update_position(position_id, position)
+                self.logger.info(f"Updated P&L for {position_id}: ${-current_invested_usd:.2f} (no tokens)")
+                return
             
-            # Update position totals
-            current_quantity = position.get('total_quantity', 0)
-            new_quantity = current_quantity - tokens_sold
+            # Get current token price in USD
+            current_token_price_usd = 0
+            if chain == 'bsc':
+                price_info = self.price_oracle.price_bsc(contract)
+            elif chain == 'base':
+                price_info = self.price_oracle.price_base(contract)
+            elif chain == 'ethereum':
+                price_info = self.price_oracle.price_eth(contract)
+            elif chain == 'solana':
+                price_info = self.price_oracle.price_solana(contract)
+            else:
+                self.logger.error(f"Unsupported chain for P&L calculation: {chain}")
+                return
             
-            # Calculate P&L (simplified - would need entry price for accurate calculation)
-            current_pnl_usd = position.get('total_pnl_usd', 0) + exit_value_usd
-            total_allocation_usd = position.get('total_allocation_usd', 0)
-            pnl_pct = (current_pnl_usd / total_allocation_usd * 100) if total_allocation_usd > 0 else 0
+            if price_info and 'price_usd' in price_info:
+                current_token_price_usd = price_info['price_usd']
+            else:
+                self.logger.error(f"Could not get current price for {contract} on {chain}")
+                return
+            
+            # Calculate current position value and P&L
+            current_position_value_usd = total_quantity * current_token_price_usd
+            total_pnl_usd = current_position_value_usd - current_invested_usd
+            
+            # Calculate P&L percentage
+            total_pnl_pct = 0
+            if total_investment_usd > 0:
+                total_pnl_pct = (total_pnl_usd / total_investment_usd) * 100
             
             # Update position
-            position['total_quantity'] = new_quantity
-            position['total_pnl_usd'] = current_pnl_usd
-            position['total_pnl_pct'] = pnl_pct
+            position['total_pnl_usd'] = total_pnl_usd
+            position['total_pnl_pct'] = total_pnl_pct
+            position['current_price'] = current_token_price_usd
             position['last_activity_timestamp'] = datetime.now(timezone.utc).isoformat()
             
             # Save to database
             self.repo.update_position(position_id, position)
+            
+            self.logger.info(f"Updated P&L for {position_id}: ${total_pnl_usd:.2f} ({total_pnl_pct:+.1f}%) - Position value: ${current_position_value_usd:.2f}, Invested: ${current_invested_usd:.2f}")
             
         except Exception as e:
             self.logger.error(f"Error updating P&L for position {position_id}: {e}")
@@ -584,6 +661,96 @@ class TraderLowcapSimpleV2:
                 
         except Exception as e:
             self.logger.error(f"Error updating avg_entry_price for position {position_id}: {e}")
+
+    async def _update_invested_amounts(self, position_id: str):
+        """Update current_invested_native, current_invested_usd, and total_investment_usd based on executed entries and exits"""
+        try:
+            # Get current position
+            position = self.repo.get_position(position_id)
+            if not position:
+                self.logger.error(f"Position {position_id} not found for invested amounts update")
+                return
+            
+            entries = position.get('entries', [])
+            exits = position.get('exits', [])
+            
+            # Calculate total original investment (never decreases)
+            total_investment_usd = 0
+            for entry in entries:
+                if entry.get('status') == 'executed' and 'cost_usd' in entry:
+                    total_investment_usd += entry['cost_usd']
+            
+            # Calculate current net invested amounts
+            total_invested_native = 0
+            total_invested_usd = 0
+            
+            # Add costs from executed entries
+            for entry in entries:
+                if entry.get('status') == 'executed' and 'cost_native' in entry and 'cost_usd' in entry:
+                    total_invested_native += entry['cost_native']
+                    total_invested_usd += entry['cost_usd']
+            
+            # Subtract costs from executed exits (partial exits return some capital)
+            for exit_data in exits:
+                if exit_data.get('status') == 'executed' and 'cost_native' in exit_data and 'cost_usd' in exit_data:
+                    total_invested_native -= exit_data['cost_native']
+                    total_invested_usd -= exit_data['cost_usd']
+            
+            # Update position
+            position['total_investment_usd'] = total_investment_usd
+            position['current_invested_native'] = total_invested_native
+            position['current_invested_usd'] = total_invested_usd
+            self.repo.update_position(position_id, position)
+            
+            self.logger.info(f"Updated invested amounts for {position_id}: total_investment=${total_investment_usd:.2f}, current_invested={total_invested_native:.6f} native, ${total_invested_usd:.2f} USD")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating invested amounts for position {position_id}: {e}")
+
+    async def _recalculate_exits_after_entry(self, position_id: str):
+        """Recalculate exit prices based on new avg_entry_price after entry execution"""
+        try:
+            # Get current position
+            position = self.repo.get_position(position_id)
+            if not position:
+                self.logger.error(f"Position {position_id} not found for exit recalculation")
+                return
+            
+            # Get exit rules and current values
+            exit_rules = position.get('exit_rules', {})
+            avg_entry_price = position.get('avg_entry_price', 0)
+            total_quantity = position.get('total_quantity', 0)
+            
+            if not exit_rules or not exit_rules.get('stages'):
+                self.logger.warning(f"No exit rules found for position {position_id}")
+                return
+            
+            if avg_entry_price <= 0:
+                self.logger.warning(f"Invalid avg_entry_price for position {position_id}: {avg_entry_price}")
+                return
+            
+            if total_quantity <= 0:
+                self.logger.warning(f"No tokens to create exits for position {position_id}")
+                return
+            
+            # Reset all pending exits to 'pending' status (unexecute them)
+            exits = position.get('exits', [])
+            for exit_data in exits:
+                if exit_data.get('status') == 'pending':
+                    exit_data['status'] = 'pending'  # Keep as pending
+                # Note: We don't reset executed exits - they stay executed
+            
+            # Generate new exits based on updated avg_entry_price
+            new_exits = EntryExitPlanner.build_exits(exit_rules, avg_entry_price, total_quantity, avg_entry_price)
+            
+            # Update the exits array
+            position['exits'] = new_exits
+            self.repo.update_position(position_id, position)
+            
+            self.logger.info(f"Recalculated exits for {position_id} based on avg_entry_price: {avg_entry_price:.8f}")
+            
+        except Exception as e:
+            self.logger.error(f"Error recalculating exits for position {position_id}: {e}")
 
     async def _recalculate_position_totals(self, position: Dict[str, Any]):
         """Recalculate all position totals from entry history and wallet balance"""
@@ -678,10 +845,48 @@ class TraderLowcapSimpleV2:
                 return
             
             if result:
-                # Mark entry as executed
-                self.repo.mark_entry_executed(position_id, entry_number, result)
-                # Update average entry price after entry execution
+                # Get current price info for cost calculation
+                chain = position.get('token_chain', '').lower()
+                contract = position.get('token_contract')
+                
+                # Calculate cost tracking
+                cost_native = amount
+                cost_usd = 0
+                tokens_bought = 0
+                
+                # Get price info for USD calculation
+                if chain == 'bsc':
+                    price_info = self.price_oracle.price_bsc(contract)
+                elif chain == 'base':
+                    price_info = self.price_oracle.price_base(contract)
+                elif chain == 'ethereum':
+                    price_info = self.price_oracle.price_eth(contract)
+                elif chain == 'solana':
+                    price_info = self.price_oracle.price_solana(contract)
+                else:
+                    price_info = None
+                
+                if price_info and 'price_native' in price_info and 'price_usd' in price_info:
+                    price = price_info['price_native']
+                    token_price_usd = price_info['price_usd']
+                    tokens_bought = amount / price
+                    cost_usd = tokens_bought * token_price_usd
+                
+                # Mark entry as executed with cost tracking
+                self.repo.mark_entry_executed(
+                    position_id=position_id,
+                    entry_number=entry_number,
+                    tx_hash=result,
+                    cost_native=cost_native,
+                    cost_usd=cost_usd,
+                    tokens_bought=tokens_bought
+                )
+                
+                # Update average entry price, invested amounts, and P&L after entry execution
                 await self._update_avg_entry_price(position_id)
+                await self._update_invested_amounts(position_id)
+                await self._update_position_pnl(position_id)
+                await self._recalculate_exits_after_entry(position_id)
                 self.logger.info(f"Entry {entry_number} executed successfully: {result}")
             else:
                 self.logger.error(f"Entry {entry_number} execution failed")
@@ -742,10 +947,44 @@ class TraderLowcapSimpleV2:
                     # For EVM chains, wait for transaction confirmation
                     confirmed = await self._wait_for_transaction_confirmation(result, chain)
                     if confirmed:
-                        # Mark entry as executed only after confirmation
-                        self.repo.mark_entry_executed(position_id, entry_number, result)
-                        # Update average entry price after entry execution
+                        # Calculate cost tracking
+                        cost_native = amount
+                        cost_usd = 0
+                        tokens_bought = 0
+                        
+                        # Get price info for USD calculation
+                        if chain == 'bsc':
+                            price_info = self.price_oracle.price_bsc(contract)
+                        elif chain == 'base':
+                            price_info = self.price_oracle.price_base(contract)
+                        elif chain == 'ethereum':
+                            price_info = self.price_oracle.price_eth(contract)
+                        elif chain == 'solana':
+                            price_info = self.price_oracle.price_solana(contract)
+                        else:
+                            price_info = None
+                        
+                        if price_info and 'price_native' in price_info and 'price_usd' in price_info:
+                            price = price_info['price_native']
+                            token_price_usd = price_info['price_usd']
+                            tokens_bought = amount / price
+                            cost_usd = tokens_bought * token_price_usd
+                        
+                        # Mark entry as executed with cost tracking
+                        self.repo.mark_entry_executed(
+                            position_id=position_id,
+                            entry_number=entry_number,
+                            tx_hash=result,
+                            cost_native=cost_native,
+                            cost_usd=cost_usd,
+                            tokens_bought=tokens_bought
+                        )
+                        
+                        # Update average entry price, invested amounts, and P&L after entry execution
                         await self._update_avg_entry_price(position_id)
+                        await self._update_invested_amounts(position_id)
+                        await self._update_position_pnl(position_id)
+                        await self._recalculate_exits_after_entry(position_id)
                         self.logger.info(f"Entry {entry_number} executed and confirmed: {result}")
                         return True
                     else:
@@ -753,9 +992,38 @@ class TraderLowcapSimpleV2:
                         return False
                 else:
                     # For Solana, assume immediate confirmation
-                    self.repo.mark_entry_executed(position_id, entry_number, result)
-                    # Update average entry price after entry execution
+                    # Calculate cost tracking
+                    cost_native = amount
+                    cost_usd = 0
+                    tokens_bought = 0
+                    
+                    # Get price info for USD calculation
+                    if chain == 'solana':
+                        price_info = self.price_oracle.price_solana(contract)
+                    else:
+                        price_info = None
+                    
+                    if price_info and 'price_native' in price_info and 'price_usd' in price_info:
+                        price = price_info['price_native']
+                        token_price_usd = price_info['price_usd']
+                        tokens_bought = amount / price
+                        cost_usd = tokens_bought * token_price_usd
+                    
+                    # Mark entry as executed with cost tracking
+                    self.repo.mark_entry_executed(
+                        position_id=position_id,
+                        entry_number=entry_number,
+                        tx_hash=result,
+                        cost_native=cost_native,
+                        cost_usd=cost_usd,
+                        tokens_bought=tokens_bought
+                    )
+                    
+                    # Update average entry price, invested amounts, and P&L after entry execution
                     await self._update_avg_entry_price(position_id)
+                    await self._update_invested_amounts(position_id)
+                    await self._update_position_pnl(position_id)
+                    await self._recalculate_exits_after_entry(position_id)
                     self.logger.info(f"Entry {entry_number} executed: {result}")
                     return True
             else:
