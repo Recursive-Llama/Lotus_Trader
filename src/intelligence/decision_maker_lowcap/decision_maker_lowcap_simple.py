@@ -45,8 +45,7 @@ class DecisionMakerLowcapSimple:
         self.max_exposure_pct = self.config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
         self.max_positions = self.config.get('max_positions', 69)  # Maximum number of active positions
         
-        # Token ignore list (major tokens we don't want to trade)
-        self.ignore_tokens = self.config.get('ignore_tokens', ['SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'stETH', 'BNB'])
+        # Note: Token ignore list moved to Social Ingest for early filtering
         
         # Minimum volume requirements by chain
         self.min_volume_requirements = self.config.get('min_volume_requirements', {
@@ -90,15 +89,9 @@ class DecisionMakerLowcapSimple:
             # Evaluate all criteria
             criteria = []
 
-            # 0) Not ignored major token
-            ignore_pass = token_ticker not in self.ignore_tokens
-            criteria.append({
-                'name': 'not_ignored_token',
-                'passed': ignore_pass,
-                'detail': f"Token {token_ticker} is in ignore list" if not ignore_pass else f"Token {token_ticker} allowed"
-            })
+            # Note: Token ignore filtering now handled in Social Ingest (early filtering)
 
-            # 0.5) Supported chain
+            # 1) Supported chain
             chain_pass = chain in supported_chains
             criteria.append({
                 'name': 'supported_chain',
@@ -108,7 +101,7 @@ class DecisionMakerLowcapSimple:
 
             # Volume check removed - handled in social ingest
 
-            # 1) Not already holding token
+            # 2) Not already holding token
             already_holding = await self._already_has_token(token_data.get('contract', ''), token_data.get('chain', ''))
             hold_pass = not already_holding
             criteria.append({
@@ -117,7 +110,7 @@ class DecisionMakerLowcapSimple:
                 'detail': f"Already holding {token_ticker}" if not hold_pass else "No existing position"
             })
 
-            # 2) Curator score >= min
+            # 3) Curator score >= min
             curator_score = await self._get_curator_score(curator_id)
             score_pass = curator_score >= self.min_curator_score
             criteria.append({
@@ -126,7 +119,7 @@ class DecisionMakerLowcapSimple:
                 'detail': f"Curator {curator_score:.2f} < {self.min_curator_score}" if not score_pass else f"Curator {curator_score:.2f} >= {self.min_curator_score}"
             })
 
-            # 2.5) Signal direction is buy
+            # 4) Signal direction is buy
             sig_direction = social_signal.get('sig_direction')
             direction_pass = sig_direction == 'buy'
             criteria.append({
@@ -135,7 +128,7 @@ class DecisionMakerLowcapSimple:
                 'detail': f"Signal direction is '{sig_direction}', need 'buy'" if not direction_pass else "Signal direction is buy"
             })
 
-            # 3) Portfolio capacity available
+            # 5) Portfolio capacity available
             capital_pass = await self._has_capital_for_allocation()
             criteria.append({
                 'name': 'portfolio_capacity',

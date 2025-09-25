@@ -49,10 +49,18 @@ class SocialIngestModule:
         # DexScreener API configuration
         self.dexscreener_base_url = "https://api.dexscreener.com/latest/dex/search"
         
-        # Toke§n ignore list - tokens to skip due to ambiguity or other issues
+        # Token ignore list - tokens to skip due to ambiguity, major tokens, or other issues
         self.ignored_tokens = {
+            # Major tokens (not suitable for lowcap trading)
+            'SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'STETH', 'BNB',
+            'HYPE', 'TAO', 'DAI',
+            
+            # Problematic/ambiguous tokens
             'ASTER',  # Multiple ASTER tokens exist, causes confusion
-            'BNB',    # Major token, not suitable for lowcap trading
+            'TRUMP',
+            'YZI', 'YZILABS',  # Specific tokens to avoid
+            'DOGE',  # Major meme token
+            'PEPE',  # Major meme token
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
