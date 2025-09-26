@@ -3,7 +3,7 @@
 Gem Bot Monitor
 
 Monitors the Conservative column of the Gem Bot dashboard for new coin entries.
-Creates strands directly for the trader with 12% allocation and auto-approval.
+Creates strands directly for the trader with 6% allocation and auto-approval.
 
 This bypasses the decision maker since Conservative column tokens are pre-vetted.
 """
@@ -37,7 +37,7 @@ class GemBotMonitor:
     - Uses Playwright to monitor the Conservative column
     - Detects new coin entries by watching DOM changes
     - Extracts token data (address, name, metrics)
-    - Creates gem_bot strands with 12% allocation
+    - Creates gem_bot strands with 6% allocation
     - Triggers trader directly via learning system
     """
     
@@ -85,7 +85,7 @@ class GemBotMonitor:
             },
             'conservative': {
                 'selector': "text=Conservative",
-                'allocation_pct': 1.2 if test_mode else 12.0,
+                'allocation_pct': 1.2 if test_mode else 6.0,
                 'strand_kind': 'gem_bot_conservative_test' if test_mode else 'gem_bot_conservative', 
                 'risk_level': 'low'
             }

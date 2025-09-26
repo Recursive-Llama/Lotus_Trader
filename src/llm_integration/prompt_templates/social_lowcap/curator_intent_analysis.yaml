@@ -1,0 +1,81 @@
+curator_intent_analysis:
+  prompt: |
+    Analyze the curator's intent for this specific token mention:
+    
+    **Original Message:**
+    "{message_text}"
+    
+    **Token from Stage 1:**
+    - Token: {token_name}
+    - Network: {network}
+    - Sentiment: {sentiment}
+    - Action: {action}
+    - Confidence: {confidence}
+    
+    **Analysis Tasks:**
+    1. **Token Verification**: Is "{token_name}" actually a valid token mention in this context?
+    2. **Intent Analysis**: What is the curator's intent for this specific token?
+    3. **Buy Decision**: Should we actually buy this token based on the full context?
+    
+    **Intent Types:**
+    - "adding_to_position" - Buying more, dip buying
+    - "research_positive" - "Research this, looks promising"
+    - "new_discovery" - First mention, new find
+    - "comparison_highlighted" - Specifically called out as best/favorite
+    - "comparison_listed" - In a list but not highlighted
+    - "research_neutral" - "Research this token" (neutral tone)
+    - "profit_taking" - Selling, taking profits
+    - "mention_only" - Just mentioning without clear intent
+    - "extraction_error" - Stage 1 was wrong, this isn't a valid token mention
+    - "unsupported_chain" - Valid token but on unsupported chain
+    - "other_positive" - Intent doesn't fit standard categories but seems positive
+    - "other_neutral" - Intent doesn't fit standard categories and seems neutral
+    
+    **Key Rules:**
+    1. Consider the FULL context of the message, not just the token
+    2. Focus on the curator's INTENT, not specific words or phrases
+    3. Stage 1's "action" is advisory - you can override it based on context
+    4. Check if token is on supported chains (SOL, ETH, BASE, BSC) - use the network from Stage 1
+    5. If unsupported chain, mark as "unsupported_chain" (goes to research)
+    6. If this is a comparison/list, mark tokens as "comparison_listed" unless clearly highlighted
+    7. If Stage 1 made an error, return "extraction_error"
+    8. Use intent types as a guide - if none fit perfectly, use "other_positive" or "other_neutral"
+    9. Process ALL tokens from the message - let intent analysis determine which are buy signals
+    
+    **Bullish Language Patterns to Recognize:**
+    - "entry is decent/good here" = research_positive
+    - "will be on [exchange]" = research_positive (if positive tone)
+    - "lowest mcap on [exchange]" = research_positive
+    - "getting bid" = research_positive
+    - "imo" with positive context = research_positive
+    - Any positive assessment of fundamentals, timing, or opportunity = research_positive
+    
+    **Be Generous with "research_positive":**
+    - If the curator expresses any positive opinion about the token's potential, fundamentals, or timing, use "research_positive"
+    - Don't require explicit "buy" language - positive assessment is enough
+    - "mention_only" should only be used for truly neutral, informational mentions
+    
+    Return JSON:
+    {
+      "token_verification": {
+        "is_valid_token": true,
+        "confidence": 0.9,
+        "reasoning": "Token is clearly mentioned in trading context"
+      },
+      "intent_analysis": {
+        "intent_type": "adding_to_position",
+        "confidence": 0.8,
+        "reasoning": "Curator says 'adding more' and mentions dip",
+        "allocation_multiplier": 1.5
+      },
+      "buy_decision": {
+        "should_buy": true,
+        "reasoning": "Clear buy signal with high confidence"
+      }
+    }
+  
+  system_message: |
+    You are a specialized curator intent analysis system for cryptocurrency social media signals.
+    Analyze the curator's intent for each specific token mention with full context awareness.
+    Focus on understanding the curator's true intent, not just keywords or sentiment.
+    Return clean JSON without markdown formatting or explanations.

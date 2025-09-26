@@ -68,7 +68,7 @@ class DiscordGemBotMonitor:
             'risky': {
                 'channel_id': '1405408713505771652',  # This is actually conservative from your URL
                 'channel_name': '#gembot-conservative-calls',
-                'allocation_pct': 1.2 if test_mode else 12.0,
+                'allocation_pct': 1.2 if test_mode else 6.0,
                 'strand_kind': 'gem_bot_conservative_test' if test_mode else 'gem_bot_conservative',
                 'risk_level': 'low'
             },
@@ -82,7 +82,7 @@ class DiscordGemBotMonitor:
             'conservative': {
                 'channel_id': '1405408713505771652',  # Same as risky for now
                 'channel_name': '#gembot-conservative-calls',
-                'allocation_pct': 1.2 if test_mode else 12.0,
+                'allocation_pct': 1.2 if test_mode else 6.0,
                 'strand_kind': 'gem_bot_conservative_test' if test_mode else 'gem_bot_conservative',
                 'risk_level': 'low'
             }

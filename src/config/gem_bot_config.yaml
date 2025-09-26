@@ -25,7 +25,7 @@ gem_bot:
     
     conservative:
       selector: "[data-testid='conservative-column'], .conservative-column, [class*='conservative']"
-      allocation_pct: 12.0  # 12% for conservative
+      allocation_pct: 6.0  # 6% for conservative
       strand_kind: "gem_bot_conservative"
       risk_level: "low"
   

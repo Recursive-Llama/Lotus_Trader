@@ -149,7 +149,12 @@ class SocialTradingSystem:
             # Pass learning system to social ingest for strand processing
             self.social_ingest.learning_system = self.learning_system
             
-            # Gem Bot monitoring removed - now using Discord monitoring instead
+            # Initialize Gem Bot monitor
+            from intelligence.social_ingest.discord_gem_bot_monitor_v2 import DiscordGemBotMonitor
+            self.gem_bot_monitor = DiscordGemBotMonitor(
+                check_interval=30,  # Check every 30 seconds
+                test_mode=False  # Production mode
+            )
             
             # Initialize Discord monitor
             self.discord_monitor = DiscordMonitorIntegrated(
@@ -225,7 +230,14 @@ class SocialTradingSystem:
         except Exception as e:
             print(f"❌ Position management failed: {e}")
     
-    # Gem Bot monitoring removed - now using Discord monitoring instead
+    async def start_gem_bot_monitoring(self):
+        """Start Gem Bot monitoring"""
+        try:
+            print("🤖 Starting Gem Bot monitoring...")
+            await self.gem_bot_monitor.start_monitoring()
+            
+        except Exception as e:
+            print(f"❌ Failed to start Gem Bot monitoring: {e}")
     
     async def start_discord_monitoring(self):
         """Start Discord monitoring"""
@@ -261,6 +273,7 @@ class SocialTradingSystem:
             tasks = [
                 asyncio.create_task(self.start_social_monitoring()),
                 asyncio.create_task(self.start_discord_monitoring()),
+                asyncio.create_task(self.start_gem_bot_monitoring()),
                 asyncio.create_task(self.start_position_management()),
                 asyncio.create_task(self.start_learning_system())
             ]

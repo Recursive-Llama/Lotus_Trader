@@ -36,6 +36,28 @@ trading:
   min_allocation_pct: 1.0  # Minimum allocation
   max_allocation_pct: 3.0  # Maximum allocation
 
+# Centralized Allocation Configuration
+# This is the single source of truth for all allocation percentages
+allocation_config:
+  # Social Media Curators (based on curator score)
+  social_curators:
+    excellent_score: 0.8  # Score threshold for excellent curators
+    excellent_allocation: 20.0  # 20% for excellent curators (score >= 0.8)
+    good_score: 0.6  # Score threshold for good curators
+    good_allocation: 8.0  # 8% for good curators (score >= 0.6)
+    acceptable_allocation: 6.0  # 6% for acceptable curators (score < 0.6)
+  
+  # Gem Bot Signals
+  gem_bot:
+    conservative_allocation: 6.0  # 6% for conservative gem bot signals
+    balanced_allocation: 4.0  # 4% for balanced gem bot signals
+    risky_allocation: 2.0  # 2% for risky gem bot signals
+  
+  # Test Mode (reduced allocations for safe testing)
+  test_mode:
+    social_curators_multiplier: 0.1  # 10% of normal allocation
+    gem_bot_multiplier: 0.2  # 20% of normal allocation
+
 # Position Management
 position_management:
   price_check_interval: 60  # seconds

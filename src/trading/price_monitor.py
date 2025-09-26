@@ -18,6 +18,7 @@ from .jupiter_client import JupiterClient
 from .wallet_manager import WalletManager
 from .evm_uniswap_client import EvmUniswapClient, WETH_ADDRESSES as BASE_WETH_ADDRESSES
 from .evm_uniswap_client_eth import EthUniswapClient, WETH_ADDRESS as ETH_WETH_ADDRESS
+from communication.telegram_signal_notifier import TelegramSignalNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ class PriceMonitor:
         self.jupiter_client = jupiter_client
         self.wallet_manager = wallet_manager
         self.trader = trader  # Optional: use trader to execute planned entries/exits
+        
+        # Initialize Telegram signal notifier
+        self.telegram_notifier = self._init_telegram_notifier()
+        
         # Initialize EVM clients for pricing (lazy initialization)
         self.base_client = None
         self.eth_client = None
@@ -77,6 +82,36 @@ class PriceMonitor:
         self._sol_cache_ttl: int = 60  # seconds
         
         logger.info("Price monitor initialized")
+
+    def _init_telegram_notifier(self) -> Optional[TelegramSignalNotifier]:
+        """Initialize Telegram signal notifier if configured"""
+        try:
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            channel_id = os.getenv('TELEGRAM_CHANNEL_ID')
+            
+            if not bot_token or not channel_id:
+                logger.info("Telegram signal notifications not configured (missing bot token or channel ID)")
+                return None
+            
+            # Use existing API credentials from the system
+            api_id = 21826741
+            api_hash = "4643cce207a1a9d56d56a5389a4f1f52"
+            session_file = "src/config/telegram_session.txt"
+            
+            notifier = TelegramSignalNotifier(
+                bot_token=bot_token,
+                channel_id=channel_id,
+                api_id=api_id,
+                api_hash=api_hash,
+                session_file=session_file
+            )
+            
+            logger.info(f"Telegram signal notifier initialized for channel: {channel_id}")
+            return notifier
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Telegram signal notifier: {e}")
+            return None
     
     def _get_base_client(self):
         """Lazy initialization of Base client"""
@@ -612,8 +647,50 @@ class PriceMonitor:
             # Mark planned entry as executed
             await self._mark_planned_entry_executed(position['id'], planned_entry['id'])
             
+            # Send Telegram notification for dip entry
+            await self._send_dip_entry_notification(position, planned_entry, price, amount_usd)
+            
         except Exception as e:
             logger.error(f"Error executing planned entry: {e}")
+
+    async def _send_dip_entry_notification(self, position: Dict[str, Any], planned_entry: Dict[str, Any], price: Decimal, amount_usd: float):
+        """Send Telegram notification for dip entry"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            # Extract position data
+            token_ticker = position.get('token_ticker', 'UNKNOWN')
+            token_contract = position.get('token_contract', '')
+            chain = position.get('token_chain', '').lower()
+            
+            # Calculate native amount (simplified - would need proper conversion)
+            # For now, use USD amount as placeholder
+            amount_native = amount_usd / 3000  # Rough ETH conversion
+            
+            # Get entry type for message
+            entry_type = planned_entry.get('entry_type', 'dip')
+            entry_number = planned_entry.get('entry_number', 2)
+            
+            # Create a mock transaction hash for dip entries (they don't have real tx hashes)
+            tx_hash = f"dip_entry_{entry_number}_{int(datetime.now().timestamp())}"
+            
+            # Send buy signal notification
+            await self.telegram_notifier.send_buy_signal(
+                token_ticker=token_ticker,
+                token_contract=token_contract,
+                chain=chain,
+                amount_native=amount_native,
+                price=float(price),
+                tx_hash=tx_hash,
+                source_tweet_url=position.get('source_tweet_url'),
+                allocation_pct=None  # Dip entries don't have allocation %
+            )
+            
+            logger.info(f"Dip entry notification sent for {token_ticker} entry {entry_number}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send dip entry notification: {e}")
     
     async def _add_position_exit(self, position_id: str, exit_data: Dict[str, Any]):
         """Add exit to position in database using direct client"""

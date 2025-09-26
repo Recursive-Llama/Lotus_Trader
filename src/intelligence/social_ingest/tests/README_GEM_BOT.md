@@ -20,7 +20,7 @@ This module monitors the Gem Bot dashboard for new cryptocurrency tokens and aut
 
 ### Production Mode
 - **Column**: Conservative (right column)
-- **Allocation**: 12%
+- **Allocation**: 6%
 - **Strand Kind**: `gem_bot_conservative`
 - **Risk Level**: Low
 
@@ -96,7 +96,7 @@ Created strands follow the standard structure with:
 ## Testing
 
 The test mode allows safe testing with:
-- Lower allocation (1.2% vs 12%)
+- Lower allocation (1.2% vs 6%)
 - Risky column instead of Conservative
 - Same trading logic and strand processing
 - Real website monitoring with authentication

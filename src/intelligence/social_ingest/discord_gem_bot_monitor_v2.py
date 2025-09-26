@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Any
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from src.intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
+from src.config.allocation_manager import AllocationManager
 from src.intelligence.supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,12 @@ class DiscordGemBotMonitor:
         # Initialize dependencies
         self.supabase_manager = SupabaseManager()
         self.universal_learning_system = UniversalLearningSystem()
+        self.allocation_manager = AllocationManager()
         
         # Channel configuration (only conservative for now)
         self.channel_config = {
             'channel_name': '#gembot-conservative-calls',
-            'allocation_pct': 1.2 if test_mode else 12.0,
+            'allocation_pct': self.allocation_manager.get_gem_bot_allocation('conservative', test_mode),
             'strand_kind': 'gem_bot_conservative_test' if test_mode else 'gem_bot_conservative',
             'risk_level': 'low'
         }

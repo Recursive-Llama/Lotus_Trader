@@ -13,6 +13,7 @@ import uuid
 import asyncio
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+from ...config.allocation_manager import AllocationManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class DecisionMakerLowcapSimple:
         
         # Simple configuration
         self.config = config or self._get_default_config()
+        self.allocation_manager = AllocationManager(self.config)
         self.book_id = self.config.get('book_id', 'social')
         # No need for dollar amounts - we work with percentages only
         self.min_curator_score = self.config.get('min_curator_score', 0.6)
@@ -64,9 +66,9 @@ class DecisionMakerLowcapSimple:
             'min_curator_score': 0.6,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
-            'default_allocation_pct': 4.0,  # Default 4% allocation
-            'min_allocation_pct': 2.0,  # Minimum 2% allocation
-            'max_allocation_pct': 6.0   # Maximum 6% allocation
+            'default_allocation_pct': 8.0,  # Default 8% allocation
+            'min_allocation_pct': 6.0,  # Minimum 6% allocation
+            'max_allocation_pct': 20.0   # Maximum 20% allocation
         }
     
     async def make_decision(self, social_signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -158,10 +160,18 @@ class DecisionMakerLowcapSimple:
                 return await self._create_rejection_decision(social_signal, reason_text)
 
             # All checks passed → approve
-            allocation_pct = self._calculate_allocation(curator_score)
-            decision = await self._create_approval_decision(social_signal, allocation_pct, curator_score)
+            # Extract intent analysis from signal pack
+            intent_analysis = social_signal.get('signal_pack', {}).get('intent_analysis')
+            allocation_pct = self._calculate_allocation(curator_score, intent_analysis)
+            decision = await self._create_approval_decision(social_signal, allocation_pct, curator_score, intent_analysis)
             
-            print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f})")
+            # Enhanced logging with intent information
+            if intent_analysis:
+                intent_type = intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')
+                multiplier = intent_analysis.get('intent_analysis', {}).get('allocation_multiplier', 1.0)
+                print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f}, intent: {intent_type}, {multiplier}x)")
+            else:
+                print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f})")
             return decision
             
         except Exception as e:
@@ -273,40 +283,50 @@ class DecisionMakerLowcapSimple:
             self.logger.error(f"Error checking portfolio capacity: {e}")
             return True  # Assume we have capital if we can't check
     
-    def _calculate_allocation(self, curator_score: float) -> float:
+    def _calculate_allocation(self, curator_score: float, intent_analysis: Dict[str, Any] = None) -> float:
         """
-        Step 4: Calculate allocation percentage (2-6%)
+        Step 4: Calculate allocation percentage (2-6%) with intent multiplier
         
         Args:
             curator_score: Curator performance score (0.0 to 1.0)
+            intent_analysis: Intent analysis from Stage 2 (optional)
             
         Returns:
-            Allocation percentage (1.0 to 3.0)
+            Allocation percentage (6.0 to 20.0)
         """
         try:
-            # Simple allocation logic scaled up:
-            # - Score >= 0.8: 6% (excellent curator)
-            # - Score >= 0.6: 4% (good curator)
-            # - Score < 0.6: 2% (acceptable curator)
-            if curator_score >= 0.8:
-                allocation = 6.0
-            elif curator_score >= 0.6:
-                allocation = 4.0
+            # Use centralized allocation manager
+            base_allocation = self.allocation_manager.get_social_curator_allocation(
+                curator_score, test_mode=False
+            )
+            
+            # Apply intent multiplier if available
+            if intent_analysis:
+                intent_data = intent_analysis.get('intent_analysis', {})
+                multiplier = intent_data.get('allocation_multiplier', 1.0)
+                intent_type = intent_data.get('intent_type', 'unknown')
+                
+                # Apply multiplier
+                allocation = base_allocation * multiplier
+                
+                # Log intent-based adjustment
+                self.logger.info(f"Intent adjustment: {intent_type} -> {multiplier}x multiplier")
+                self.logger.info(f"Allocation: {base_allocation}% -> {allocation}% (curator score: {curator_score:.2f})")
             else:
-                allocation = 2.0
+                allocation = base_allocation
+                self.logger.info(f"Allocation calculated: {allocation}% (curator score: {curator_score:.2f})")
             
             # Ensure within bounds
             allocation = max(self.config['min_allocation_pct'], 
                            min(self.config['max_allocation_pct'], allocation))
             
-            self.logger.info(f"Allocation calculated: {allocation}% (curator score: {curator_score:.2f})")
             return allocation
             
         except Exception as e:
             self.logger.error(f"Error calculating allocation: {e}")
             return self.config['default_allocation_pct']
     
-    async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float) -> Dict[str, Any]:
+    async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create approval decision strand"""
         token_data = social_signal['signal_pack']['token']
         venue_data = social_signal['signal_pack']['venue']
@@ -333,7 +353,7 @@ class DecisionMakerLowcapSimple:
                 "action": "approve",
                 "allocation_pct": allocation_pct,
                 "curator_confidence": curator_score,
-                "reasoning": f"Approved: Curator score {curator_score:.2f}, allocating {allocation_pct}%"
+                "reasoning": self._build_approval_reasoning(curator_score, allocation_pct, intent_analysis)
             },
             "tags": ["decision", "social_lowcap", "approved", "simple"],
             "status": "active"
@@ -371,6 +391,27 @@ class DecisionMakerLowcapSimple:
         except Exception as e:
             self.logger.error(f"Failed to create approval decision: {e}")
             return None
+    
+    def _build_approval_reasoning(self, curator_score: float, allocation_pct: float, intent_analysis: Dict[str, Any] = None) -> str:
+        """Build detailed reasoning for approval decision including intent analysis"""
+        try:
+            base_reasoning = f"Approved: Curator score {curator_score:.2f}, allocating {allocation_pct}%"
+            
+            if intent_analysis:
+                intent_data = intent_analysis.get('intent_analysis', {})
+                intent_type = intent_data.get('intent_type', 'unknown')
+                multiplier = intent_data.get('allocation_multiplier', 1.0)
+                
+                if multiplier != 1.0:
+                    base_reasoning += f" (Intent: {intent_type}, {multiplier}x multiplier applied)"
+                else:
+                    base_reasoning += f" (Intent: {intent_type})"
+            
+            return base_reasoning
+            
+        except Exception as e:
+            self.logger.error(f"Error building approval reasoning: {e}")
+            return f"Approved: Curator score {curator_score:.2f}, allocating {allocation_pct}%"
     
     async def _create_rejection_decision(self, social_signal: Dict[str, Any], reason: str) -> Dict[str, Any]:
         """Create rejection decision strand"""
