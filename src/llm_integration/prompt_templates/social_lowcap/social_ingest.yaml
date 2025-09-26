@@ -4,11 +4,15 @@ token_extraction:
     
     "{message_text}"
     
+    **Important**: Pay attention to chain context. If the curator mentions a specific chain, 
+    that's the chain the token is on. Don't assume it's on your default chain.
+    
     Return a JSON object with:
     - tokens: Array of token objects, each containing:
       - token_name: The token ticker/symbol
-      - network: The blockchain network (solana, ethereum, base, etc.) or null if not clear
+      - network: The blockchain network (solana, ethereum, base, bsc, etc.) or null if not clear
       - contract_address: Contract address if mentioned, null otherwise
+      - chain_context: Any chain-specific context mentioned in the message
       - sentiment: positive, negative, or neutral
       - confidence: 0.0 to 1.0
       - has_chart: true if post contains chart/image, false otherwise

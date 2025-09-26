@@ -11,17 +11,29 @@ class PositionRepository:
         return bool(res.data)
 
     def update_entries(self, position_id: str, entries: List[Dict[str, Any]]) -> bool:
-        res = self.supabase.client.table('lowcap_positions').update({'entries': entries}).eq('id', position_id).execute()
-        return bool(res.data)
+        try:
+            res = self.supabase.client.table('lowcap_positions').update({'entries': entries}).eq('id', position_id).execute()
+            return bool(res.data)
+        except Exception as e:
+            print(f"Error updating entries for {position_id}: {e}")
+            return False
 
     def update_exits(self, position_id: str, exits: List[Dict[str, Any]]) -> bool:
-        res = self.supabase.client.table('lowcap_positions').update({'exits': exits}).eq('id', position_id).execute()
-        return bool(res.data)
+        try:
+            res = self.supabase.client.table('lowcap_positions').update({'exits': exits}).eq('id', position_id).execute()
+            return bool(res.data)
+        except Exception as e:
+            print(f"Error updating exits for {position_id}: {e}")
+            return False
 
     def update_exit_rules(self, position_id: str, exit_rules: Dict[str, Any]) -> bool:
         """Update exit rules for a position"""
-        res = self.supabase.client.table('lowcap_positions').update({'exit_rules': exit_rules}).eq('id', position_id).execute()
-        return bool(res.data)
+        try:
+            res = self.supabase.client.table('lowcap_positions').update({'exit_rules': exit_rules}).eq('id', position_id).execute()
+            return bool(res.data)
+        except Exception as e:
+            print(f"Error updating exit_rules for {position_id}: {e}")
+            return False
 
     def get_position(self, position_id: str) -> Optional[Dict[str, Any]]:
         """Get a position by ID"""
@@ -30,8 +42,12 @@ class PositionRepository:
 
     def update_position(self, position_id: str, position: Dict[str, Any]) -> bool:
         """Update a position with new data"""
-        res = self.supabase.client.table('lowcap_positions').update(position).eq('id', position_id).execute()
-        return bool(res.data)
+        try:
+            res = self.supabase.client.table('lowcap_positions').update(position).eq('id', position_id).execute()
+            return bool(res.data)
+        except Exception as e:
+            print(f"Error updating position {position_id}: {e}")
+            return False
 
     def get_position_by_book_id(self, book_id: str) -> Optional[Dict[str, Any]]:
         """Get the most recent position created from a specific decision/strand (book_id)."""

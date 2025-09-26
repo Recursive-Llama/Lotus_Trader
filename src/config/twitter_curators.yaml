@@ -69,16 +69,6 @@ curators:
     tags: ["alpha", "calls", "multi_platform"]
     notes: "Active on both Twitter and Telegram with alpha calls"
     
-  - id: "moneymancalls"
-    name: "Money Man Calls"
-    platforms:
-      twitter:
-        handle: "@moneymancalls"
-        active: true
-        priority: "medium"
-    tags: ["calls", "trading", "signals"]
-    notes: "Twitter-only curator focused on trading calls"
-    
   - id: "cryptolyxe"
     name: "Crypto Lyxe"
     platforms:

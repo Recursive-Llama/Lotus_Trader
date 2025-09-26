@@ -337,7 +337,7 @@ class TraderLowcapSimpleV2:
                 ]
             }
             self.repo.update_exit_rules(position_id, exit_rules)
-            
+
             # Exits (staged) - use actual tokens bought, not theoretical
             actual_tokens = e_amt / price if tx_hash else 0
             exits = EntryExitPlanner.build_exits(exit_rules, price, actual_tokens, price)  # Use exit_rules and actual tokens
@@ -351,7 +351,7 @@ class TraderLowcapSimpleV2:
                 'token_ticker': ticker,
                 'allocation_pct': allocation_pct,
                 'allocation_native': alloc_native,
-                'current_price': price,
+                # Note: current_price is not stored in database - it comes from price oracle
                 'status': 'active'
             }
 
@@ -610,7 +610,7 @@ class TraderLowcapSimpleV2:
             # Update position
             position['total_pnl_usd'] = total_pnl_usd
             position['total_pnl_pct'] = total_pnl_pct
-            position['current_price'] = current_token_price_usd
+            # Note: current_price is not stored in database - it comes from price oracle
             position['last_activity_timestamp'] = datetime.now(timezone.utc).isoformat()
             
             # Save to database
@@ -781,10 +781,10 @@ class TraderLowcapSimpleV2:
                 # Fallback to calculating from entries
                 total_tokens = sum(entry.get('tokens_bought', 0) for entry in entries if entry.get('status') == 'executed')
 
-            # Update position totals
+            # Update position totals (only aligned fields)
             position['total_quantity'] = total_tokens
-            position['total_cost_native'] = total_cost_native
-            position['total_allocation_usd'] = total_cost_usd
+            # Note: Do not write current_invested_native here. We'll recompute invested amounts
+            # via _update_invested_amounts which accounts for both entries and exits.
 
             # Calculate average entry price
             if total_tokens > 0:
@@ -792,9 +792,7 @@ class TraderLowcapSimpleV2:
             else:
                 position['avg_entry_price'] = 0
 
-            # Reset P&L (will be updated by _update_position_pnl after sell)
-            position['total_pnl_usd'] = 0
-            position['total_pnl_pct'] = 0
+            # Do not reset P&L here; it will be updated by _update_position_pnl
 
             self.logger.info(f"Recalculated position totals: {total_tokens} tokens, {total_cost_native:.6f} native")
 

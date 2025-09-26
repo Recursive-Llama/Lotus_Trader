@@ -56,7 +56,6 @@ class SocialIngestModule:
             'HYPE', 'TAO', 'DAI',
             
             # Problematic/ambiguous tokens
-            'ASTER',  # Multiple ASTER tokens exist, causes confusion
             'TRUMP',
             'YZI', 'YZILABS',  # Specific tokens to avoid
             'DOGE',  # Major meme token
@@ -215,9 +214,32 @@ class SocialIngestModule:
                 else:
                     print(f"   ✅ Token verified: {verified_token.get('ticker', 'unknown')}")
                 
-                # Create social_lowcap strand for this token
+                # Stage 2: Analyze curator intent for this token
+                print(f"   🧠 Analyzing intent for {verified_token.get('ticker', 'unknown')}...")
+                intent_analysis = await self._analyze_curator_intent(
+                    message_data.get('text', ''),
+                    token_info,
+                    curator_id
+                )
+                
+                if not intent_analysis:
+                    print(f"   ❌ Intent analysis failed for {verified_token.get('ticker', 'unknown')}")
+                    self.logger.warning(f"Intent analysis failed for {verified_token.get('ticker', 'unknown')}")
+                    continue
+                
+                # Check if this should be a buy signal based on intent
+                buy_decision = intent_analysis.get('buy_decision', {})
+                if not buy_decision.get('should_buy', False):
+                    intent_type = intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')
+                    print(f"   ⏭️  Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
+                    self.logger.info(f"Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
+                    continue
+                
+                print(f"   ✅ Intent analysis passed: {intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')}")
+                
+                # Create social_lowcap strand for this token with intent data
                 print(f"   🔧 Creating strand for {verified_token.get('ticker', 'unknown')}...")
-                strand = await self._create_social_strand(curator, message_data, verified_token, extraction_result)
+                strand = await self._create_social_strand(curator, message_data, verified_token, extraction_result, intent_analysis)
                 if strand:
                     created_strands.append(strand)
                     print(f"   ✅ Strand created successfully for {verified_token.get('ticker', 'unknown')}")
@@ -664,6 +686,74 @@ class SocialIngestModule:
             self.logger.error(f"Error selecting venue: {e}")
             return 'Jupiter'
     
+    async def _analyze_curator_intent(self, message_text: str, token_info: Dict[str, Any], curator_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Analyze curator intent for a specific token mention (Stage 2)
+        
+        Args:
+            message_text: Original tweet/message text
+            token_info: Token information from Stage 1
+            curator_id: Curator identifier
+            
+        Returns:
+            Intent analysis result or None if analysis failed
+        """
+        try:
+            # Prepare prompt variables
+            prompt_vars = {
+                'message_text': message_text,
+                'token_name': token_info.get('token_name', ''),
+                'network': token_info.get('network', ''),
+                'sentiment': token_info.get('sentiment', ''),
+                'action': token_info.get('trading_signals', {}).get('action', ''),
+                'confidence': token_info.get('confidence', 0.0)
+            }
+            
+            print(f"   🔧 Calling LLM for intent analysis: {token_info.get('token_name', 'unknown')}")
+            
+            # Use prompt manager to get intent analysis template
+            prompt = self.prompt_manager.format_prompt(
+                'curator_intent_analysis', 
+                prompt_vars
+            )
+            system_message = self.prompt_manager.get_system_message('curator_intent_analysis')
+            
+            print(f"   🔧 Using prompt manager: True")
+            print(f"   🔧 System message: {system_message[:50] if system_message else 'None'}...")
+            
+            # Generate response with system message if available
+            if system_message:
+                response = await self.llm_client.generate_async(prompt, system_message=system_message)
+            else:
+                response = await self.llm_client.generate_async(prompt)
+            
+            print(f"   🔧 Raw LLM response: {response}")
+            
+            if not response:
+                self.logger.warning(f"Intent analysis failed for token {token_info.get('token_name', 'unknown')}")
+                return None
+            
+            # Parse the result
+            if isinstance(response, str):
+                import json
+                try:
+                    result = json.loads(response)
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Failed to parse intent analysis JSON: {e}")
+                    return None
+            else:
+                result = response
+            
+            self.logger.info(f"Intent analysis for {token_info.get('token_name', 'unknown')}: {result.get('intent_analysis', {}).get('intent_type', 'unknown')}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing curator intent: {e}")
+            import traceback
+            print(f"   ❌ Intent analysis error: {e}")
+            print(f"   Traceback: {traceback.format_exc()}")
+            return None
+    
     async def _scan_handle_for_token(self, handle: str) -> Optional[Dict[str, Any]]:
         """Scan a Twitter handle's profile for token information"""
         try:
@@ -707,7 +797,7 @@ class SocialIngestModule:
             self.logger.error(f"Error scanning handle {handle}: {e}")
             return None
     
-    async def _create_social_strand(self, curator: Dict[str, Any], message_data: Dict[str, Any], token: Dict[str, Any], extraction_result: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _create_social_strand(self, curator: Dict[str, Any], message_data: Dict[str, Any], token: Dict[str, Any], extraction_result: Dict[str, Any] = None, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create social_lowcap strand for DML"""
         try:
             # Verbose details moved to DEBUG level to keep INFO concise
@@ -786,7 +876,8 @@ class SocialIngestModule:
                         "action": trading_action,
                         "timing": trading_timing,
                         "confidence": trading_confidence
-                    }
+                    },
+                    "intent_analysis": intent_analysis if intent_analysis else None
                 },
                 "module_intelligence": {
                     "social_signal": {
