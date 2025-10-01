@@ -151,7 +151,7 @@ async function executeJupiterSwap() {{
         const connection = new Connection('{self.rpc_url}');
         
         // Get quote from Jupiter
-        const quoteResponse = await axios.get('https://quote-api.jup.ag/v6/quote', {{
+        const quoteResponse = await axios.get('https://lite-api.jup.ag/swap/v1/quote', {{
             params: {{
                 inputMint: '{input_mint}',
                 outputMint: '{output_mint}',
@@ -176,7 +176,7 @@ async function executeJupiterSwap() {{
             asLegacyTransaction: false
         }};
         
-        const swapResponse = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
+        const swapResponse = await axios.post('https://lite-api.jup.ag/swap/v1/swap', swapRequest);
         
         if (!swapResponse.data || swapResponse.data.error) {{
             throw new Error(swapResponse.data?.error || 'Invalid swap response');

@@ -17,9 +17,9 @@ from typing import Dict, List, Optional, Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-from src.intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
-from src.config.allocation_manager import AllocationManager
-from src.intelligence.supabase_manager import SupabaseManager
+from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
+from config.allocation_manager import AllocationManager
+from utils.supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,11 @@ class DiscordGemBotMonitor:
         
         # Initialize dependencies
         self.supabase_manager = SupabaseManager()
-        self.universal_learning_system = UniversalLearningSystem()
+        self.universal_learning_system = UniversalLearningSystem(
+            supabase_manager=self.supabase_manager,
+            llm_client=None,
+            llm_config=None
+        )
         self.allocation_manager = AllocationManager()
         
         # Channel configuration (only conservative for now)

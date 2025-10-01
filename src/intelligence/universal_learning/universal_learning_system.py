@@ -45,6 +45,7 @@ class UniversalLearningSystem:
         self.supabase_manager = supabase_manager
         self.llm_client = llm_client
         self.logger = logging.getLogger(__name__)
+        self.decision_maker = None  # Will be set externally
         
         # Initialize LLM components
         if llm_config and not llm_client:
@@ -68,6 +69,10 @@ class UniversalLearningSystem:
             'min_avg_novelty': 0.5,
             'min_avg_surprise': 0.4
         }
+    
+    def set_decision_maker(self, decision_maker):
+        """Set the decision maker instance to use"""
+        self.decision_maker = decision_maker
     
     async def process_strands_into_braid(self, strands: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -389,26 +394,10 @@ class UniversalLearningSystem:
             from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
             print(f"🧠 Decision Maker: Import successful")
             
-            # Initialize decision maker if not already done
-            if not hasattr(self, 'decision_maker'):
-                print(f"🧠 Decision Maker: Initializing Decision Maker...")
-                # Use default config since learning system doesn't have trading config
-                default_config = {
-                    'max_exposure_pct': 100.0,
-                    'max_positions': 30,
-                    'min_curator_score': 0.6,
-                    'min_confidence': 0.5,
-                    'min_allocation_pct': 1.0,
-                    'max_allocation_pct': 5.0,
-                    'default_allocation_pct': 2.0
-                }
-                self.decision_maker = DecisionMakerLowcapSimple(
-                    self.supabase_manager, 
-                    default_config
-                )
-                # Pass learning system to decision maker for callbacks
-                self.decision_maker.learning_system = self
-                print(f"🧠 Decision Maker: Initialized successfully")
+            # Check if decision maker is available
+            if not self.decision_maker:
+                print(f"🧠 Decision Maker: Not available - skipping strand processing")
+                return
             
             # Process the strand with decision maker
             print(f"🧠 Decision Maker: Processing strand {strand.get('id', 'unknown')}")

@@ -19,23 +19,21 @@ CREATE TABLE lowcap_positions (
     token_chain TEXT NOT NULL,              -- "solana", "ethereum", "base"
     token_contract TEXT NOT NULL,           -- Token contract address
     token_ticker TEXT NOT NULL,             -- "PEPE", "BONK"
-    token_name TEXT,                        -- "Pepe Coin"
     
     -- POSITION OVERVIEW
     total_allocation_pct FLOAT NOT NULL,    -- Total allocation percentage (e.g., 3.0%)
-    total_allocation_usd FLOAT NOT NULL,    -- Total allocation USD amount
-    current_price FLOAT,                    -- Current market price per token
     total_quantity FLOAT DEFAULT 0,         -- Total tokens held (sum of all entries - exits)
-    token_marketcap TEXT,                   -- Token market cap information
     
     -- AGGREGATE PERFORMANCE
     total_pnl_usd FLOAT DEFAULT 0,          -- Total P&L in USD
     total_pnl_pct FLOAT DEFAULT 0,          -- Total P&L percentage
-    total_fees_usd FLOAT DEFAULT 0,         -- Total fees paid
     avg_entry_price FLOAT,                  -- Weighted average entry price
-    total_investment_usd FLOAT(8) DEFAULT 0.0, -- Total original investment USD (never decreases)
-    current_invested_usd FLOAT(8) DEFAULT 0.0, -- Current net investment USD (decreases on exits)
-    current_invested_native FLOAT(8) DEFAULT 0.0, -- Current net investment in native currency
+    avg_exit_price FLOAT,                   -- Weighted average exit price
+    total_tokens_bought FLOAT DEFAULT 0,    -- Total tokens bought across all entries
+    total_tokens_sold FLOAT DEFAULT 0,      -- Total tokens sold across all exits
+    total_investment_native FLOAT DEFAULT 0, -- Total native currency invested
+    total_extracted_native FLOAT DEFAULT 0,  -- Total native currency extracted
+    total_pnl_native FLOAT DEFAULT 0,       -- Total P&L in native currency
     first_entry_timestamp TIMESTAMP WITH TIME ZONE,
     last_activity_timestamp TIMESTAMP WITH TIME ZONE,
     
@@ -46,17 +44,16 @@ CREATE TABLE lowcap_positions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     closed_at TIMESTAMP WITH TIME ZONE,
     
-    -- LEARNING DATA
-    market_conditions TEXT,                 -- "bull", "bear", "sideways"
-    volatility_regime TEXT,                 -- "low", "medium", "high"
-    
     -- ADDITIONAL TRACKING
     tax_pct FLOAT,                          -- Tax percentage detected for this token
     
     -- JSONB DATA STORAGE
-    entries JSONB,                          -- Array of entry data
-    exits JSONB,                            -- Array of exit data
-    exit_rules JSONB,                       -- Exit strategy rules
+    entries JSONB,                          -- Array of standard entry data
+    exits JSONB,                            -- Array of standard exit data
+    exit_rules JSONB,                       -- Standard exit strategy rules
+    trend_entries JSONB,                    -- Array of trend entry data
+    trend_exits JSONB,                      -- Array of trend exit data
+    trend_exit_rules JSONB,                 -- Trend exit strategy rules
     curator_sources JSONB,                  -- Curator source information
     
     -- SOURCE TRACKING
@@ -67,10 +64,13 @@ CREATE TABLE lowcap_positions (
 );
 
 -- Note: Using JSONB columns in main table instead of separate tables for:
--- - entries (JSONB array)
--- - exits (JSONB array) 
--- - exit_rules (JSONB object)
--- - curator_sources (JSONB array)
+-- - entries (JSONB array) - standard entries
+-- - exits (JSONB array) - standard exits
+-- - exit_rules (JSONB object) - standard exit rules
+-- - trend_entries (JSONB array) - trend dip entries
+-- - trend_exits (JSONB array) - trend exits
+-- - trend_exit_rules (JSONB object) - trend exit rules
+-- - curator_sources (JSONB array) - curator attribution
 
 -- Create indexes for performance
 CREATE INDEX idx_lowcap_positions_token ON lowcap_positions(token_chain, token_contract);

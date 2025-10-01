@@ -53,7 +53,7 @@ class SocialIngestModule:
         self.ignored_tokens = {
             # Major tokens (not suitable for lowcap trading)
             'SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'STETH', 'BNB',
-            'HYPE', 'TAO', 'DAI',
+            'HYPE', 'TAO', 'DAI', 'OHM',
             
             # Problematic/ambiguous tokens
             'TRUMP',
@@ -227,10 +227,20 @@ class SocialIngestModule:
                     self.logger.warning(f"Intent analysis failed for {verified_token.get('ticker', 'unknown')}")
                     continue
                 
-                # Check if this should be a buy signal based on intent
-                buy_decision = intent_analysis.get('buy_decision', {})
-                if not buy_decision.get('should_buy', False):
-                    intent_type = intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')
+                # Check if this should be a buy signal based on intent type
+                intent_data = intent_analysis.get('intent_analysis', {})
+                intent_type = intent_data.get('intent_type', 'unknown')
+                
+                # Define buy signal intent types
+                buy_intent_types = {
+                    'adding_to_position',
+                    'research_positive', 
+                    'new_discovery',
+                    'comparison_highlighted',
+                    'other_positive'
+                }
+                
+                if intent_type not in buy_intent_types:
                     print(f"   ⏭️  Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
                     self.logger.info(f"Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
                     continue
@@ -528,32 +538,39 @@ class SocialIngestModule:
             # Use the position of the first pair in original results
             position_score = 1.0  # We'll improve this if we track original positions
             
-            # B. Volume Score (0-1) with 3x multiplier for Base/Ethereum
+            # B. Volume Score (0-1) with 3x multiplier for Base/Ethereum - NO CAP for legitimacy
             volume_multiplier = 3.0 if chain in ['base', 'ethereum'] else 1.0
             adjusted_volume = total_volume * volume_multiplier
-            volume_score = min(1.0, math.log10(max(adjusted_volume, 1)) / 6)
+            # Remove cap to properly differentiate high volume tokens
+            volume_score = min(2.0, math.log10(max(adjusted_volume, 1)) / 5)  # Scale to 2.0 max, /5 instead of /6
             
-            # C. Liquidity Score (0-1)
-            liquidity_score = min(1.0, math.log10(max(total_liquidity, 1)) / 6)
+            # C. Liquidity Score (0-1) - NO CAP for legitimacy
+            # Remove cap to properly differentiate high liquidity tokens
+            liquidity_score = min(2.0, math.log10(max(total_liquidity, 1)) / 5)  # Scale to 2.0 max, /5 instead of /6
             
-            # D. Market Cap Score (0-1) - Sweet spot: $1M - $100M
-            if 1_000_000 <= market_cap <= 100_000_000:
+            # D. Market Cap Score (0-1) - PREFERENCE ONLY, not filtering
+            # Higher market cap is generally better for legitimacy, sweet spot is just preference
+            if market_cap >= 1_000_000_000:  # $1B+ is excellent
                 market_cap_score = 1.0
-            elif market_cap < 1_000_000:
-                market_cap_score = market_cap / 1_000_000  # Linear scale up
-            else:
-                market_cap_score = max(0, 1 - (market_cap - 100_000_000) / 1_000_000_000)  # Decay above $100M
+            elif market_cap >= 100_000_000:  # $100M+ is very good
+                market_cap_score = 0.9
+            elif market_cap >= 10_000_000:   # $10M+ is good
+                market_cap_score = 0.8
+            elif market_cap >= 1_000_000:    # $1M+ is acceptable
+                market_cap_score = 0.7
+            else:  # < $1M is low but not disqualifying
+                market_cap_score = 0.5
             
-            # E. Age Score (0-1) - Sweet spot: 30-180 days
+            # E. Age Score (0-1) - PREFERENCE ONLY, not filtering
             age_score = self._calculate_age_score(age_str)
             
-            # Weighted final score
+            # Weighted final score - PRIORITIZE VOLUME AND LIQUIDITY
             total_score = (
-                0.3 * position_score +
-                0.3 * volume_score +
-                0.2 * liquidity_score +
-                0.15 * market_cap_score +
-                0.05 * age_score
+                0.1 * position_score +      # Reduced from 0.3
+                0.5 * volume_score +        # Increased from 0.3 - PRIMARY factor
+                0.3 * liquidity_score +     # Increased from 0.2 - SECONDARY factor
+                0.05 * market_cap_score +   # Reduced from 0.15 - PREFERENCE only
+                0.05 * age_score            # Reduced from 0.05 - PREFERENCE only
             )
             
             return total_score

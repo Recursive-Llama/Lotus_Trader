@@ -14,21 +14,24 @@ curator_intent_analysis:
     
     **Analysis Tasks:**
     1. **Token Verification**: Is "{token_name}" actually a valid token mention in this context?
+       - Only mark as 'extraction_error' if Stage 1 extracted a word that is clearly not meant to be a token in the given context (e.g., extracting 'HELP' from 'Help me to understand crypto')
+       - If Stage 1 found a token mention in trading context, that's likely correct
     2. **Intent Analysis**: What is the curator's intent for this specific token?
-    3. **Buy Decision**: Should we actually buy this token based on the full context?
     
-    **Intent Types:**
+    **Intent Types (Buy Signals):**
     - "adding_to_position" - Buying more, dip buying
     - "research_positive" - "Research this, looks promising"
     - "new_discovery" - First mention, new find
     - "comparison_highlighted" - Specifically called out as best/favorite
-    - "comparison_listed" - In a list but not highlighted
+    - "other_positive" - Intent doesn't fit standard categories but seems positive
+    
+    **Intent Types (No Buy):**
     - "research_neutral" - "Research this token" (neutral tone)
+    - "comparison_listed" - In a list but not highlighted
     - "profit_taking" - Selling, taking profits
     - "mention_only" - Just mentioning without clear intent
     - "extraction_error" - Stage 1 was wrong, this isn't a valid token mention
     - "unsupported_chain" - Valid token but on unsupported chain
-    - "other_positive" - Intent doesn't fit standard categories but seems positive
     - "other_neutral" - Intent doesn't fit standard categories and seems neutral
     
     **Key Rules:**
@@ -36,11 +39,11 @@ curator_intent_analysis:
     2. Focus on the curator's INTENT, not specific words or phrases
     3. Stage 1's "action" is advisory - you can override it based on context
     4. Check if token is on supported chains (SOL, ETH, BASE, BSC) - use the network from Stage 1
-    5. If unsupported chain, mark as "unsupported_chain" (goes to research)
+    5. If unsupported chain, mark as "unsupported_chain" (no buy)
     6. If this is a comparison/list, mark tokens as "comparison_listed" unless clearly highlighted
     7. If Stage 1 made an error, return "extraction_error"
     8. Use intent types as a guide - if none fit perfectly, use "other_positive" or "other_neutral"
-    9. Process ALL tokens from the message - let intent analysis determine which are buy signals
+    9. Process ALL tokens from the message - intent types directly determine buy signals
     
     **Bullish Language Patterns to Recognize:**
     - "entry is decent/good here" = research_positive
@@ -67,10 +70,6 @@ curator_intent_analysis:
         "confidence": 0.8,
         "reasoning": "Curator says 'adding more' and mentions dip",
         "allocation_multiplier": 1.5
-      },
-      "buy_decision": {
-        "should_buy": true,
-        "reasoning": "Clear buy signal with high confidence"
       }
     }
   

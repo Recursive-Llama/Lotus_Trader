@@ -214,3 +214,4 @@ if __name__ == "__main__":
     test_allocations = manager.get_all_allocations(test_mode=True)
     print(f"Social Curators (test): {test_allocations['social_curators']}")
     print(f"Gem Bot (test): {test_allocations['gem_bot']}")
+

@@ -13,7 +13,7 @@ import uuid
 import asyncio
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
-from ...config.allocation_manager import AllocationManager
+from config.allocation_manager import AllocationManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,14 @@ class DecisionMakerLowcapSimple:
         self.config = config or self._get_default_config()
         self.allocation_manager = AllocationManager(self.config)
         self.book_id = self.config.get('book_id', 'social')
+        
+        # Get trading config section
+        trading_config = self.config.get('trading', {})
+        
         # No need for dollar amounts - we work with percentages only
-        self.min_curator_score = self.config.get('min_curator_score', 0.6)
-        self.max_exposure_pct = self.config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
-        self.max_positions = self.config.get('max_positions', 69)  # Maximum number of active positions
+        self.min_curator_score = trading_config.get('min_curator_score', 0.6)
+        self.max_exposure_pct = trading_config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
+        self.max_positions = trading_config.get('max_positions', 69)  # Maximum number of active positions
         
         # Note: Token ignore list moved to Social Ingest for early filtering
         
@@ -66,9 +70,7 @@ class DecisionMakerLowcapSimple:
             'min_curator_score': 0.6,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
-            'default_allocation_pct': 8.0,  # Default 8% allocation
-            'min_allocation_pct': 6.0,  # Minimum 6% allocation
-            'max_allocation_pct': 20.0   # Maximum 20% allocation
+            # Note: Allocation percentages are now handled by AllocationManager
         }
     
     async def make_decision(self, social_signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -316,15 +318,13 @@ class DecisionMakerLowcapSimple:
                 allocation = base_allocation
                 self.logger.info(f"Allocation calculated: {allocation}% (curator score: {curator_score:.2f})")
             
-            # Ensure within bounds
-            allocation = max(self.config['min_allocation_pct'], 
-                           min(self.config['max_allocation_pct'], allocation))
-            
+            # AllocationManager already handles proper bounds and logic
             return allocation
             
         except Exception as e:
             self.logger.error(f"Error calculating allocation: {e}")
-            return self.config['default_allocation_pct']
+            # Fallback to acceptable allocation if error occurs
+            return self.allocation_manager.get_social_curator_allocation(0.5)  # 0.5 score = acceptable
     
     async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create approval decision strand"""

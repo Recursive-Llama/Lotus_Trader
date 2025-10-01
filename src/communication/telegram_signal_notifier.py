@@ -64,7 +64,8 @@ class TelegramSignalNotifier:
                             price: float, 
                             tx_hash: str,
                             source_tweet_url: Optional[str] = None,
-                            allocation_pct: Optional[float] = None) -> bool:
+                            allocation_pct: Optional[float] = None,
+                            amount_usd: Optional[float] = None) -> bool:
         """
         Send buy signal notification
         
@@ -94,7 +95,7 @@ class TelegramSignalNotifier:
             # Format message
             message = self._format_buy_message(
                 token_ticker, token_link, amount_native, native_symbol, 
-                price, tx_link, source_tweet_url, allocation_pct
+                price, tx_link, source_tweet_url, allocation_pct, amount_usd
             )
             
             # Send message
@@ -114,7 +115,11 @@ class TelegramSignalNotifier:
                              profit_pct: Optional[float] = None,
                              profit_usd: Optional[float] = None,
                              total_profit_usd: Optional[float] = None,
-                             source_tweet_url: Optional[str] = None) -> bool:
+                             source_tweet_url: Optional[str] = None,
+                             remaining_tokens: Optional[float] = None,
+                             position_value: Optional[float] = None,
+                             total_pnl_pct: Optional[float] = None,
+                             profit_native: Optional[float] = None) -> bool:
         """
         Send sell signal notification
         
@@ -146,7 +151,8 @@ class TelegramSignalNotifier:
             # Format message
             message = self._format_sell_message(
                 token_ticker, token_link, tokens_sold, sell_price, native_symbol,
-                tx_link, profit_pct, profit_usd, total_profit_usd, source_tweet_url
+                tx_link, profit_pct, profit_usd, total_profit_usd, source_tweet_url,
+                remaining_tokens, position_value, total_pnl_pct, profit_native
             )
             
             # Send message
@@ -154,6 +160,104 @@ class TelegramSignalNotifier:
             
         except Exception as e:
             logger.error(f"Error sending sell signal: {e}")
+            return False
+    
+    async def send_trend_entry_notification(self,
+                                          token_ticker: str,
+                                          token_contract: str,
+                                          chain: str,
+                                          amount_native: float,
+                                          price: float,
+                                          tx_hash: str,
+                                          dip_pct: float,
+                                          batch_id: str,
+                                          source_tweet_url: Optional[str] = None,
+                                          amount_usd: Optional[float] = None) -> bool:
+        """Send trend entry (dip buy) notification"""
+        try:
+            native_symbol = self._get_native_symbol(chain)
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            message = f"⚘ **LOTUS TREND ENTRY** ⟁\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Dip Buy:** {abs(dip_pct):.1f}% discount\n"
+            
+            if amount_usd:
+                message += f"**Amount:** {amount_native:.4f} {native_symbol} (${amount_usd:.2f})\n"
+            else:
+                message += f"**Amount:** {amount_native:.4f} {native_symbol}\n"
+                
+            message += f"**Entry Price:** {price:.8f} {native_symbol}\n"
+            message += f"**Batch ID:** {batch_id}\n"
+            message += f"**Transaction:** [View on Explorer]({tx_link})\n"
+            message += f"**Time:** {timestamp}\n"
+            
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            
+            message += "\n🎯 Trend dip buy executed!"
+            
+            return await self._send_message(message)
+            
+        except Exception as e:
+            logger.error(f"Error sending trend entry notification: {e}")
+            return False
+    
+    async def send_trend_exit_notification(self,
+                                         token_ticker: str,
+                                         token_contract: str,
+                                         chain: str,
+                                         tokens_sold: float,
+                                         sell_price: float,
+                                         tx_hash: str,
+                                         gain_pct: float,
+                                         batch_id: str,
+                                         profit_pct: Optional[float] = None,
+                                         profit_usd: Optional[float] = None,
+                                         profit_native: Optional[float] = None,
+                                         source_tweet_url: Optional[str] = None) -> bool:
+        """Send trend exit notification"""
+        try:
+            native_symbol = self._get_native_symbol(chain)
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            message = f"⚘ **LOTUS TREND EXIT** ⟁\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Gain Target:** +{gain_pct:.1f}%\n"
+            message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
+            message += f"**Sell Price:** ${sell_price:.8f}\n"
+            message += f"**Batch ID:** {batch_id}\n"
+            message += f"**Transaction:** [View on Explorer]({tx_link})\n"
+            
+            if profit_pct is not None:
+                emoji = "📈" if profit_pct > 0 else "📉"
+                message += f"**P&L:** {emoji} {profit_pct:+.1f}%\n"
+            
+            if profit_native is not None:
+                emoji = "💰" if profit_native > 0 else "💸"
+                message += f"**Native P&L:** {emoji} {profit_native:+.6f} {native_symbol}\n"
+            
+            if profit_usd is not None:
+                emoji = "💰" if profit_usd > 0 else "💸"
+                message += f"**USD P&L:** {emoji} ${profit_usd:+.2f}\n"
+            
+            message += f"**Time:** {timestamp}\n"
+            
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            
+            message += "\n🎯 Trend exit executed!"
+            
+            return await self._send_message(message)
+            
+        except Exception as e:
+            logger.error(f"Error sending trend exit notification: {e}")
             return False
     
     def _get_native_symbol(self, chain: str) -> str:
@@ -168,6 +272,10 @@ class TelegramSignalNotifier:
     
     def _create_transaction_link(self, tx_hash: str, chain: str) -> str:
         """Create transaction explorer link"""
+        # Ensure tx_hash has 0x prefix for EVM chains
+        if chain.lower() in ['bsc', 'base', 'ethereum'] and not tx_hash.startswith('0x'):
+            tx_hash = f"0x{tx_hash}"
+        
         explorers = {
             'bsc': f"https://bscscan.com/tx/{tx_hash}",
             'base': f"https://basescan.org/tx/{tx_hash}",
@@ -194,14 +302,21 @@ class TelegramSignalNotifier:
                           price: float, 
                           tx_link: str, 
                           source_tweet_url: Optional[str] = None,
-                          allocation_pct: Optional[float] = None) -> str:
+                          allocation_pct: Optional[float] = None,
+                          amount_usd: Optional[float] = None) -> str:
         """Format buy signal message"""
         timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
         
-        message = f"🟢 **LOTUS BUY SIGNAL** 🟢\n\n"
+        message = f"⚘ **LOTUS BUY SIGNAL** ⟁\n\n"
         message += f"**Token:** [{token_ticker}]({token_link})\n"
-        message += f"**Amount:** {amount_native:.4f} {native_symbol}\n"
-        message += f"**Entry Price:** ${price:.8f}\n"
+        
+        # Show native amount with USD equivalent if available
+        if amount_usd:
+            message += f"**Amount:** {amount_native:.4f} {native_symbol} (${amount_usd:.2f})\n"
+        else:
+            message += f"**Amount:** {amount_native:.4f} {native_symbol}\n"
+            
+        message += f"**Entry Price:** {price:.8f} {native_symbol}\n"
         
         if allocation_pct:
             message += f"**Allocation:** {allocation_pct:.1f}% of portfolio\n"
@@ -226,41 +341,57 @@ class TelegramSignalNotifier:
                            profit_pct: Optional[float] = None,
                            profit_usd: Optional[float] = None,
                            total_profit_usd: Optional[float] = None,
-                           source_tweet_url: Optional[str] = None) -> str:
+                           source_tweet_url: Optional[str] = None,
+                           remaining_tokens: Optional[float] = None,
+                           position_value: Optional[float] = None,
+                           total_pnl_pct: Optional[float] = None,
+                           profit_native: Optional[float] = None) -> str:
         """Format sell signal message"""
         timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
         
-        message = f"🔴 **LOTUS SELL SIGNAL** 🔴\n\n"
+        message = f"⚘ **LOTUS SELL SIGNAL** ⟁\n\n"
         message += f"**Token:** [{token_ticker}]({token_link})\n"
         message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
         message += f"**Sell Price:** ${sell_price:.8f}\n"
         message += f"**Transaction:** [View on Explorer]({tx_link})\n"
         
-        if profit_pct is not None:
-            emoji = "📈" if profit_pct > 0 else "📉"
-            message += f"**Profit:** {emoji} {profit_pct:+.1f}%\n"
+        # Position context
+        if remaining_tokens is not None:
+            message += f"**Remaining:** {remaining_tokens:.2f} tokens\n"
+        
+        if position_value is not None:
+            message += f"**Position Value:** ${position_value:.2f}\n"
+        
+        # P&L information
+        if profit_native is not None:
+            emoji = "💰" if profit_native > 0 else "💸"
+            message += f"**Native P&L:** {emoji} {profit_native:+.6f} {native_symbol}\n"
         
         if profit_usd is not None:
             emoji = "💰" if profit_usd > 0 else "💸"
-            message += f"**P&L:** {emoji} ${profit_usd:+.2f}\n"
+            message += f"**USD P&L:** {emoji} ${profit_usd:+.2f}\n"
         
         if total_profit_usd is not None:
             message += f"**Total Position P&L:** ${total_profit_usd:+.2f}\n"
+        
+        if total_pnl_pct is not None:
+            emoji = "📈" if total_pnl_pct > 0 else "📉"
+            message += f"**Total P&L %:** {emoji} {total_pnl_pct:+.1f}%\n"
         
         message += f"**Time:** {timestamp}\n"
         
         if source_tweet_url:
             message += f"**Source:** [Tweet]({source_tweet_url})\n"
         
-        # Add celebration or commiseration
-        if profit_pct and profit_pct > 0:
-            if profit_pct > 100:
+        # Add celebration or commiseration based on total P&L percentage
+        if total_pnl_pct and total_pnl_pct > 0:
+            if total_pnl_pct > 100:
                 message += "\n🎉 **MASSIVE WIN!** 🎉"
-            elif profit_pct > 50:
+            elif total_pnl_pct > 50:
                 message += "\n🔥 **Great trade!** 🔥"
             else:
                 message += "\n✅ **Profit secured!** ✅"
-        elif profit_pct and profit_pct < 0:
+        elif total_pnl_pct and total_pnl_pct < 0:
             message += "\n💪 **Learning experience!** 💪"
         
         return message

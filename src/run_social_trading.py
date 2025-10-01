@@ -46,7 +46,8 @@ from intelligence.universal_learning.universal_learning_system import UniversalL
 from trading.jupiter_client import JupiterClient
 from trading.wallet_manager import WalletManager
 from trading.trading_executor import TradingExecutor
-from trading.price_monitor import PriceMonitor
+from trading.scheduled_price_collector import ScheduledPriceCollector
+from trading.position_monitor import PositionMonitor
 
 
 class SocialTradingSystem:
@@ -75,7 +76,8 @@ class SocialTradingSystem:
         self.decision_maker = None
         self.trader = None
         self.learning_system = None
-        self.price_monitor = None
+        self.price_collector = None
+        self.position_monitor = None
         
         # Output tracking
         self.last_output_time = datetime.now()
@@ -84,37 +86,55 @@ class SocialTradingSystem:
         print("🚀 Social Trading System initialized")
     
     def _get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration"""
-        return {
-            'database': {
-                'url': os.getenv('SUPABASE_URL', 'postgresql://postgres:password@localhost:5432/lotus_trader'),
-                'key': os.getenv('SUPABASE_KEY', ''),
-                'schema': 'public'
-            },
-            'social_monitoring': {
-                'twitter_enabled': True,
-                'telegram_enabled': True,
-                'check_interval': 30  # seconds
-            },
-            'trading': {
-                'book_nav': float(os.getenv('BOOK_NAV', '100000.0')),  # $100k
-                'max_exposure_pct': 20.0,
-                'min_curator_score': 0.6,
-                'default_allocation_pct': 4.0,  # 4% default allocation
-                'min_allocation_pct': 2.0,  # Minimum 2% allocation
-                'max_allocation_pct': 6.0,  # Maximum 6% allocation
-                'slippage_pct': 1.0
-            },
-            'position_management': {
-                'price_check_interval': 30,  # seconds - check prices every 30s
-                'exit_check_interval': 30,   # seconds
-                'jupiter_price_enabled': True
-            },
-            'jupiter': {
-                'api_url': 'https://quote-api.jup.ag/v6',
-                'price_url': 'https://price.jup.ag/v4'
+        """Get default configuration from YAML file"""
+        import yaml
+        from pathlib import Path
+        
+        config_path = Path(__file__).parent / 'config' / 'social_trading_config.yaml'
+        
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                # Override with environment variables if available
+                if os.getenv('SUPABASE_URL'):
+                    config['database']['url'] = os.getenv('SUPABASE_URL')
+                if os.getenv('SUPABASE_KEY'):
+                    config['database']['key'] = os.getenv('SUPABASE_KEY')
+                if os.getenv('BOOK_NAV'):
+                    config['trading']['book_nav'] = float(os.getenv('BOOK_NAV'))
+                return config
+        else:
+            # Fallback to hardcoded config if YAML doesn't exist
+            return {
+                'database': {
+                    'url': os.getenv('SUPABASE_URL', 'postgresql://postgres:password@localhost:5432/lotus_trader'),
+                    'key': os.getenv('SUPABASE_KEY', ''),
+                    'schema': 'public'
+                },
+                'social_monitoring': {
+                    'twitter_enabled': True,
+                    'telegram_enabled': True,
+                    'check_interval': 30  # seconds
+                },
+                'trading': {
+                    'book_nav': float(os.getenv('BOOK_NAV', '100000.0')),  # $100k
+                    'max_exposure_pct': 20.0,
+                    'min_curator_score': 0.6,
+                    'default_allocation_pct': 4.0,  # 4% default allocation
+                    'min_allocation_pct': 2.0,  # Minimum 2% allocation
+                    'max_allocation_pct': 6.0,  # Maximum 6% allocation
+                    'slippage_pct': 1.0
+                },
+                'position_management': {
+                    'price_check_interval': 30,  # seconds - check prices every 30s
+                    'exit_check_interval': 30,   # seconds
+                    'jupiter_price_enabled': True
+                },
+                'jupiter': {
+                    'api_url': 'https://lite-api.jup.ag/swap/v1',
+                    'price_url': 'https://lite-api.jup.ag/price/v3'
+                }
             }
-        }
     
     async def initialize(self):
         """Initialize all system components"""
@@ -165,7 +185,7 @@ class SocialTradingSystem:
             # Initialize decision maker with learning system reference
             self.decision_maker = DecisionMakerLowcapSimple(
                 supabase_manager=self.supabase_manager,
-                config=self.config.get('trading', {}),
+                config=self.config,  # Pass full config so AllocationManager can access allocation_config
                 learning_system=self.learning_system
             )
             
@@ -179,15 +199,22 @@ class SocialTradingSystem:
             # Share trader instance with learning system to avoid conflicts
             self.learning_system.trader = self.trader
             
+            # Set the decision maker reference in learning system
+            self.learning_system.set_decision_maker(self.decision_maker)
+            
             # Set trader reference in wallet manager for SPL token balance checking
             self.wallet_manager.trader = self.trader
             print(f"DEBUG: Set trader reference in wallet manager: {self.wallet_manager.trader}")
             
-            # Initialize price monitor (wire trader so it can execute entries/exits)
-            self.price_monitor = PriceMonitor(
+            # Initialize scheduled price collector
+            self.price_collector = ScheduledPriceCollector(
                 supabase_manager=self.supabase_manager,
-                jupiter_client=self.jupiter_client,
-                wallet_manager=self.wallet_manager,
+                price_oracle=self.trader.price_oracle
+            )
+            
+            # Initialize position monitor
+            self.position_monitor = PositionMonitor(
+                supabase_manager=self.supabase_manager,
                 trader=self.trader
             )
             
@@ -222,10 +249,11 @@ class SocialTradingSystem:
         try:
             print("📊 Starting position management...")
             
-            # Start price monitoring with minimal output
-            await self.price_monitor.start_monitoring(
-                check_interval=self.config['position_management']['price_check_interval']
-            )
+            # Start scheduled price collection (1-minute intervals)
+            await self.price_collector.start_collection(interval_minutes=1)
+            
+            # Start position monitoring (30-second intervals)
+            await self.position_monitor.start_monitoring(check_interval=30)
             
         except Exception as e:
             print(f"❌ Position management failed: {e}")
@@ -272,8 +300,8 @@ class SocialTradingSystem:
             # Start all components
             tasks = [
                 asyncio.create_task(self.start_social_monitoring()),
-                asyncio.create_task(self.start_discord_monitoring()),
-                asyncio.create_task(self.start_gem_bot_monitoring()),
+                # asyncio.create_task(self.start_discord_monitoring()),  # Disabled for now
+                # asyncio.create_task(self.start_gem_bot_monitoring()),  # Disabled for now
                 asyncio.create_task(self.start_position_management()),
                 asyncio.create_task(self.start_learning_system())
             ]

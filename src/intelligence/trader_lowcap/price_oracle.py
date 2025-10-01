@@ -263,7 +263,9 @@ class PriceOracle:
                     if solana_pairs:
                         # Filter for SOL pairs first (native token)
                         sol_address = self.NATIVE_TOKENS['solana']
+                        logger.info(f"Found {len(solana_pairs)} Solana pairs for {token_address}")
                         sol_pairs = [p for p in solana_pairs if p.get('quoteToken', {}).get('address', '').lower() == sol_address.lower()]
+                        logger.info(f"Found {len(sol_pairs)} SOL pairs for {token_address}")
                         
                         if sol_pairs:
                             # Get the SOL pair with highest liquidity
@@ -280,6 +282,7 @@ class PriceOracle:
                         
                         # Fallback: use any pair if no SOL pairs exist
                         logger.warning(f"No SOL pairs found for {token_address}, using fallback")
+                        logger.warning(f"Available quote tokens: {[p.get('quoteToken', {}).get('address', 'N/A') for p in solana_pairs[:5]]}")
                         best_pair = max(solana_pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
                         price_native = best_pair.get('priceNative')
                         price_usd = best_pair.get('priceUsd')

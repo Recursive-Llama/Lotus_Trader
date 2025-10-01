@@ -32,9 +32,7 @@ trading:
   book_nav: 100000.0  # $100k book size
   max_exposure_pct: 20.0  # Maximum portfolio exposure
   min_curator_score: 0.6  # Minimum curator score to approve
-  default_allocation_pct: 3.0  # Default allocation percentage
-  min_allocation_pct: 1.0  # Minimum allocation
-  max_allocation_pct: 3.0  # Maximum allocation
+  # Note: Allocation percentages are now centralized in allocation_config section below
 
 # Centralized Allocation Configuration
 # This is the single source of truth for all allocation percentages
@@ -42,10 +40,10 @@ allocation_config:
   # Social Media Curators (based on curator score)
   social_curators:
     excellent_score: 0.8  # Score threshold for excellent curators
-    excellent_allocation: 20.0  # 20% for excellent curators (score >= 0.8)
+    excellent_allocation: 15.0  # 15% for excellent curators (score >= 0.8)
     good_score: 0.6  # Score threshold for good curators
-    good_allocation: 8.0  # 8% for good curators (score >= 0.6)
-    acceptable_allocation: 6.0  # 6% for acceptable curators (score < 0.6)
+    good_allocation: 6.0  # 6% for good curators (score >= 0.6)
+    acceptable_allocation: 4.0  # 4% for acceptable curators (score < 0.6)
   
   # Gem Bot Signals
   gem_bot:
@@ -68,36 +66,58 @@ position_management:
   entry_strategy:
     entry_1:  # Immediate entry
       allocation_pct: 33.33
-    entry_2:  # -30% dip
+    entry_2:  # -38.2% dip
       allocation_pct: 33.33
-      dip_pct: -30
-    entry_3:  # -60% dip
+      dip_pct: -38.2
+    entry_3:  # -61.8% dip
       allocation_pct: 33.34
-      dip_pct: -60
+      dip_pct: -61.8
   
   # Exit Strategy (30% of remaining at each level)
   exit_strategy:
     exit_1:
-      gain_pct: 100
+      gain_pct: 38.2
       exit_pct: 30
     exit_2:
-      gain_pct: 200
+      gain_pct: 61.8
       exit_pct: 30
     exit_3:
-      gain_pct: 300
+      gain_pct: 161.8
       exit_pct: 30
     exit_4:
-      gain_pct: 400
+      gain_pct: 261.8
       exit_pct: 30
     exit_5:
-      gain_pct: 500
+      gain_pct: 361.8
       exit_pct: 30
     exit_6:
-      gain_pct: 600
+      gain_pct: 561.8
+      exit_pct: 30
+    exit_7:
+      gain_pct: 761.8
+      exit_pct: 30
+    exit_8:
+      gain_pct: 1061.8
       exit_pct: 30
     final:
-      gain_pct: 1000
+      gain_pct: 1590.0
       exit_pct: 100
+
+  # Trend Strategy (spawned from each standard exit)
+  trend_strategy:
+    entry_capital_pct: 30  # % of standard exit proceeds allocated to dip buys
+    entries:
+      - dip_pct: -22    # 78.6% of exit price
+        allocation_pct: 15
+      - dip_pct: -39    # 61.8% of exit price
+        allocation_pct: 15
+    exits:  # Sell 70% total across these three
+      - gain_pct: 0      # 100% of exit price (break-even)
+        exit_pct: 23.33
+      - gain_pct: 38.2   # 138.2% of exit price
+        exit_pct: 23.33
+      - gain_pct: 61.8   # 161.8% of exit price
+        exit_pct: 23.34
 
 # Learning System
 learning:

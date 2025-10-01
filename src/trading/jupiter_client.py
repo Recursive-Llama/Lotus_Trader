@@ -34,7 +34,7 @@ class JupiterClient:
             helius_api_key: Helius API key for RPC calls
         """
         self.helius_api_key = helius_api_key
-        self.base_url = "https://quote-api.jup.ag/v6"
+        self.base_url = "https://lite-api.jup.ag/swap/v1"
         self.rpc_url = f"https://rpc.helius.xyz/?api-key={helius_api_key}" if helius_api_key else "https://api.mainnet-beta.solana.com"
         
         # No rate limiting needed - was working fine before
@@ -113,7 +113,7 @@ class JupiterClient:
                 "slippageBps": str(slippage_bps),
                 "swapMode": "ExactIn",
                 "onlyDirectRoutes": "false",
-                "prioritizationFeeLamports": "0"
+                "prioritizationFeeLamports": "auto"
             }
             
             async with aiohttp.ClientSession() as session:
@@ -150,14 +150,14 @@ class JupiterClient:
             Transaction data or None if failed
         """
         try:
-            url = f"{self.base_url}/swap/v6"
+            url = f"{self.base_url}/swap"
             
             payload = {
                 "quoteResponse": quote,
                 "userPublicKey": user_public_key,
                 "wrapAndUnwrapSol": True,
                 "asLegacyTransaction": False,
-                "prioritizationFeeLamports": priority_fee_lamports
+                "prioritizationFeeLamports": "auto" if (priority_fee_lamports == 0) else priority_fee_lamports
             }
             
             async with aiohttp.ClientSession() as session:
@@ -182,60 +182,7 @@ class JupiterClient:
             logger.error(f"Error getting swap transaction: {e}")
             return None
     
-    async def get_token_list(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Get list of supported tokens from Jupiter
-        
-        Returns:
-            List of token information or None if failed
-        """
-        try:
-            url = f"{self.base_url}/tokens/v6"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data
-                    else:
-                        logger.error(f"Jupiter tokens API error: {response.status}")
-                        return None
-                        
-        except Exception as e:
-            logger.error(f"Error getting token list: {e}")
-            return None
-    
-    async def search_tokens(self, query: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        Search for tokens by symbol or name
-        
-        Args:
-            query: Search query (symbol or name)
-            
-        Returns:
-            List of matching tokens or None if failed
-        """
-        try:
-            tokens = await self.get_token_list()
-            if not tokens:
-                return None
-            
-            # Simple search in Python (Jupiter doesn't have search endpoint)
-            query_lower = query.lower()
-            matches = []
-            
-            for token in tokens:
-                symbol = token.get("symbol", "").lower()
-                name = token.get("name", "").lower()
-                
-                if query_lower in symbol or query_lower in name:
-                    matches.append(token)
-            
-            return matches[:10]  # Return top 10 matches
-            
-        except Exception as e:
-            logger.error(f"Error searching tokens: {e}")
-            return None
+    # Token list functionality removed - use DexScreener for token discovery instead
     
     def get_sol_mint_address(self) -> str:
         """Get SOL mint address"""
@@ -286,13 +233,7 @@ if __name__ == "__main__":
                 print(f"Quote: {quote['in_amount']} -> {quote['out_amount']}")
                 print(f"Price Impact: {quote['price_impact_pct']}%")
             
-            # Test token search
-            print(f"\nSearching for 'BONK'...")
-            bonk_tokens = await jupiter.search_tokens("BONK")
-            if bonk_tokens:
-                print(f"Found {len(bonk_tokens)} BONK tokens")
-                for token in bonk_tokens[:3]:
-                    print(f"  - {token['symbol']}: {token['address']}")
+            # Token search removed - use DexScreener for token discovery
             
         except Exception as e:
             print(f"❌ Error testing Jupiter: {e}")
