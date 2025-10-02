@@ -450,3 +450,141 @@ getComprehensiveTokenBalance().then(result => console.log(JSON.stringify(result)
         except Exception as e:
             logger.error(f"Error getting comprehensive token balance: {e}")
             return {"success": False, "error": str(e)}
+
+    async def send_lotus_tokens(self, amount: float, destination_wallet: str) -> Dict[str, Any]:
+        """Send Lotus tokens to holding wallet (simplified for one token)"""
+        try:
+            # Hardcoded for Lotus token - much simpler than generic SPL transfer
+            lotus_mint = "Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC"
+            holding_wallet = destination_wallet
+            
+            # Convert amount to raw units (assuming 9 decimals for Lotus)
+            amount_raw = int(amount * 1_000_000_000)
+            
+            # Create JavaScript code for SPL token transfer
+            js_code = f"""
+const {{ Connection, Keypair, VersionedTransaction, PublicKey }} = require('@solana/web3.js');
+const {{ createTransferInstruction, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction }} = require('@solana/spl-token');
+const bs58 = require('bs58');
+
+async function sendLotusTokens() {{
+    try {{
+        // Load wallet
+        const privateKey = '{self.private_key}';
+        const keyBytes = bs58.decode(privateKey);
+        const wallet = Keypair.fromSecretKey(keyBytes);
+        
+        // Get RPC client
+        const connection = new Connection('{self.rpc_url}');
+        
+        // Token mint and destination
+        const tokenMint = new PublicKey('{lotus_mint}');
+        const destinationWallet = new PublicKey('{holding_wallet}');
+        
+        // Get source token account (our wallet's Lotus token account)
+        const sourceTokenAccount = await getAssociatedTokenAddress(tokenMint, wallet.publicKey);
+        
+        // Get destination token account (holding wallet's Lotus token account)
+        const destinationTokenAccount = await getAssociatedTokenAddress(tokenMint, destinationWallet);
+        
+        // Check if destination token account exists
+        const destinationAccountInfo = await connection.getAccountInfo(destinationTokenAccount);
+        
+        const instructions = [];
+        
+        // Create destination token account if it doesn't exist
+        if (!destinationAccountInfo) {{
+            const createAccountInstruction = createAssociatedTokenAccountInstruction(
+                wallet.publicKey, // payer
+                destinationTokenAccount, // associated token account
+                destinationWallet, // owner
+                tokenMint // mint
+            );
+            instructions.push(createAccountInstruction);
+        }}
+        
+        // Create transfer instruction
+        const transferInstruction = createTransferInstruction(
+            sourceTokenAccount, // source
+            destinationTokenAccount, // destination
+            wallet.publicKey, // owner
+            {amount_raw} // amount
+        );
+        instructions.push(transferInstruction);
+        
+        // Get recent blockhash
+        const {{ blockhash }} = await connection.getLatestBlockhash();
+        
+        // Create and send transaction
+        const transaction = new VersionedTransaction(
+            new (require('@solana/web3.js')).TransactionMessage({{
+                payerKey: wallet.publicKey,
+                recentBlockhash: blockhash,
+                instructions: instructions
+            }}).compileToV0Message()
+        );
+        
+        transaction.sign([wallet]);
+        
+        const signature = await connection.sendTransaction(transaction, {{
+            skipPreflight: false,
+            preflightCommitment: 'processed'
+        }});
+        
+        // Wait for confirmation
+        const confirmation = await connection.confirmTransaction(signature, 'processed');
+        
+        if (confirmation.value.err) {{
+            throw new Error(`Transaction failed: ${{confirmation.value.err}}`);
+        }}
+        
+        return {{
+            success: true,
+            signature: signature,
+            amount: {amount},
+            destination: '{holding_wallet}'
+        }};
+        
+    }} catch (error) {{
+        return {{
+            success: false,
+            error: error.message
+        }};
+    }}
+}}
+
+sendLotusTokens().then(result => {{
+    console.log(JSON.stringify(result));
+}}).catch(error => {{
+    console.error(JSON.stringify({{ success: false, error: error.message }}));
+}});
+"""
+            
+            # Write JavaScript to temporary file
+            with open('temp_send_lotus.js', 'w') as f:
+                f.write(js_code)
+            
+            # Execute JavaScript
+            result = subprocess.run(
+                ['node', 'temp_send_lotus.js'],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd()
+            )
+            
+            # Clean up
+            os.remove('temp_send_lotus.js')
+            
+            if result.returncode != 0:
+                raise Exception(f"JavaScript execution failed: {result.stderr}")
+            
+            # Parse result
+            response = json.loads(result.stdout.strip())
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error sending Lotus tokens: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }

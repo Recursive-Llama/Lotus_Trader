@@ -119,7 +119,10 @@ class TelegramSignalNotifier:
                              remaining_tokens: Optional[float] = None,
                              position_value: Optional[float] = None,
                              total_pnl_pct: Optional[float] = None,
-                             profit_native: Optional[float] = None) -> bool:
+                             profit_native: Optional[float] = None,
+                             buyback_amount_sol: Optional[float] = None,
+                             lotus_tokens: Optional[float] = None,
+                             buyback_tx_hash: Optional[str] = None) -> bool:
         """
         Send sell signal notification
         
@@ -152,7 +155,8 @@ class TelegramSignalNotifier:
             message = self._format_sell_message(
                 token_ticker, token_link, tokens_sold, sell_price, native_symbol,
                 tx_link, profit_pct, profit_usd, total_profit_usd, source_tweet_url,
-                remaining_tokens, position_value, total_pnl_pct, profit_native
+                remaining_tokens, position_value, total_pnl_pct, profit_native,
+                buyback_amount_sol, lotus_tokens, buyback_tx_hash
             )
             
             # Send message
@@ -345,7 +349,10 @@ class TelegramSignalNotifier:
                            remaining_tokens: Optional[float] = None,
                            position_value: Optional[float] = None,
                            total_pnl_pct: Optional[float] = None,
-                           profit_native: Optional[float] = None) -> str:
+                           profit_native: Optional[float] = None,
+                           buyback_amount_sol: Optional[float] = None,
+                           lotus_tokens: Optional[float] = None,
+                           buyback_tx_hash: Optional[str] = None) -> str:
         """Format sell signal message"""
         timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
         
@@ -377,6 +384,10 @@ class TelegramSignalNotifier:
         if total_pnl_pct is not None:
             emoji = "📈" if total_pnl_pct > 0 else "📉"
             message += f"**Total P&L %:** {emoji} {total_pnl_pct:+.1f}%\n"
+        
+        # Add Lotus buyback information if available
+        if buyback_amount_sol is not None and lotus_tokens is not None:
+            message += f"⚘ **Lotus Buyback:** {buyback_amount_sol:.6f} SOL → {lotus_tokens:.2f} ⚘❈ tokens\n"
         
         message += f"**Time:** {timestamp}\n"
         

@@ -165,6 +165,46 @@ class PositionRepository:
             print(f"Error marking trend entry as executed: {e}")
             return False
 
+    def mark_entry_failed(self, position_id: str, entry_number: int, reason: str) -> bool:
+        """Mark a planned entry as failed with reason and timestamp."""
+        try:
+            position = self.get_position(position_id)
+            if not position:
+                return False
+
+            entries = position.get('entries', []) or []
+            for e in entries:
+                if e.get('entry_number') == entry_number:
+                    e['status'] = 'failed'
+                    e['failed_reason'] = reason
+                    e['failed_at'] = datetime.now(timezone.utc).isoformat()
+                    break
+
+            return self.update_entries(position_id, entries)
+        except Exception as e:
+            print(f"Error marking entry as failed: {e}")
+            return False
+
+    def mark_trend_entry_failed(self, position_id: str, batch_id: str, trend_entry_number: int, reason: str) -> bool:
+        """Mark a trend entry as failed with reason and timestamp."""
+        try:
+            position = self.get_position(position_id)
+            if not position:
+                return False
+
+            trend_entries = position.get('trend_entries', []) or []
+            for e in trend_entries:
+                if e.get('batch_id') == batch_id and e.get('trend_entry_number') == trend_entry_number:
+                    e['status'] = 'failed'
+                    e['failed_reason'] = reason
+                    e['failed_at'] = datetime.now(timezone.utc).isoformat()
+                    break
+
+            return self.update_trend_entries(position_id, trend_entries)
+        except Exception as e:
+            print(f"Error marking trend entry as failed: {e}")
+            return False
+
     def mark_trend_exit_executed(self, position_id: str, batch_id: str, trend_exit_number: int, tx_hash: str,
                                  tokens_sold: float, native_amount: float) -> bool:
         """Mark a specific trend exit as executed and decrement tokens from linked trend entries FIFO."""

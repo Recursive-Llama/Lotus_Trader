@@ -538,6 +538,9 @@ class TraderLowcapSimpleV2:
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
+                # Execute Lotus buyback for SOL exits
+                buyback_result = await self._execute_lotus_buyback(exit_value_native, chain)
+                
                 # Send Telegram sell signal notification
                 await self._send_sell_notification_for_exit(
                     position_id=position_id,
@@ -546,7 +549,8 @@ class TraderLowcapSimpleV2:
                     sell_price=target_price,
                     tx_hash=tx_hash,
                     chain=chain,
-                    contract=contract
+                    contract=contract,
+                    buyback_result=buyback_result
                 )
                 
                 # Update position in database LAST - after all other operations succeed
@@ -968,9 +972,16 @@ class TraderLowcapSimpleV2:
                 self.logger.info(f"Entry {entry_number} executed successfully: {result}")
             else:
                 self.logger.error(f"Entry {entry_number} execution failed")
+                # Mark as failed to prevent endless retries
+                self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
                 
         except Exception as e:
             self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
+            # Mark as failed on unexpected error
+            try:
+                self.repo.mark_entry_failed(position_id, entry_number, reason='execution_exception')
+            except Exception:
+                pass
 
     async def _execute_entry_with_confirmation(self, position_id: str, entry_number: int) -> bool:
         """
@@ -1067,10 +1078,20 @@ class TraderLowcapSimpleV2:
                         # Set total_quantity immediately from trade execution and schedule reconciliation
                         await self._set_quantity_from_trade(position_id, tokens_bought)
                         
+                        # Send notification for additional entries
+                        await self._send_additional_entry_notification(
+                            position_id=position_id,
+                            entry_number=entry_number,
+                            tx_hash=result,
+                            amount_native=amount,
+                            cost_usd=cost_usd
+                        )
+                        
                         self.logger.info(f"Entry {entry_number} executed and confirmed: {result}")
                         return True
                     else:
                         self.logger.error(f"Entry {entry_number} transaction not confirmed: {result}")
+                        self.repo.mark_entry_failed(position_id, entry_number, reason='transaction_not_confirmed')
                         return False
                 else:
                     # For Solana, assume immediate confirmation
@@ -1110,14 +1131,25 @@ class TraderLowcapSimpleV2:
                     # Set total_quantity immediately from trade execution and schedule reconciliation
                     await self._set_quantity_from_trade(position_id, tokens_bought)
                     
+                    # Send notification for additional entries
+                    await self._send_additional_entry_notification(
+                        position_id=position_id,
+                        entry_number=entry_number,
+                        tx_hash=result,
+                        amount_native=amount,
+                        cost_usd=cost_usd
+                    )
+                    
                     self.logger.info(f"Entry {entry_number} executed: {result}")
                     return True
             else:
                 self.logger.error(f"Entry {entry_number} execution failed")
+                self.repo.mark_entry_failed(position_id, entry_number, reason='execution_failed')
                 return False
                 
         except Exception as e:
             self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
+            self.repo.mark_entry_failed(position_id, entry_number, reason='execution_exception')
             return False
 
     async def _wait_for_transaction_confirmation(self, tx_hash: str, chain: str, timeout: int = 60) -> bool:
@@ -1522,7 +1554,8 @@ class TraderLowcapSimpleV2:
                                              sell_price: float,
                                              tx_hash: str,
                                              chain: str,
-                                             contract: str) -> None:
+                                             contract: str,
+                                             buyback_result: dict = None) -> None:
         """Send Telegram sell signal notification for a specific exit"""
         if not self.telegram_notifier:
             return
@@ -1586,6 +1619,16 @@ class TraderLowcapSimpleV2:
                 if native_usd_rate > 0:
                     profit_native = profit_usd / native_usd_rate
             
+            # Extract buyback data if available
+            buyback_amount_sol = None
+            lotus_tokens = None
+            buyback_tx_hash = None
+            
+            if buyback_result and buyback_result.get('success') and not buyback_result.get('skipped'):
+                buyback_amount_sol = buyback_result.get('buyback_amount_sol')
+                lotus_tokens = buyback_result.get('lotus_tokens')
+                buyback_tx_hash = buyback_result.get('transfer_tx_hash')
+            
             await self.telegram_notifier.send_sell_signal(
                 token_ticker=token_ticker,
                 token_contract=contract,
@@ -1600,7 +1643,10 @@ class TraderLowcapSimpleV2:
                 remaining_tokens=remaining_tokens,
                 position_value=position_value,
                 total_pnl_pct=total_pnl_pct,
-                profit_native=profit_native
+                profit_native=profit_native,
+                buyback_amount_sol=buyback_amount_sol,
+                lotus_tokens=lotus_tokens,
+                buyback_tx_hash=buyback_tx_hash
             )
             
             self.logger.info(f"Sell signal notification sent for {token_ticker} exit {exit_number}")
@@ -1952,6 +1998,149 @@ class TraderLowcapSimpleV2:
                 
         except Exception as e:
             self.logger.error(f"Error setting quantity from trade for {position_id}: {e}")
+
+    async def _execute_lotus_buyback(self, exit_value_native: float, chain: str) -> dict:
+        """Execute Lotus token buyback for SOL exits"""
+        try:
+            # Only execute for SOL exits
+            if chain.lower() != 'solana':
+                return {'success': True, 'skipped': True, 'reason': 'Not a SOL exit'}
+            
+            # Get buyback config
+            buyback_config = self.config.get('lotus_buyback', {})
+            if not buyback_config.get('enabled', False):
+                return {'success': True, 'skipped': True, 'reason': 'Buyback disabled'}
+            
+            # Calculate buyback amount
+            percentage = buyback_config.get('percentage', 10.0)
+            min_amount = buyback_config.get('min_amount_sol', 0.001)
+            buyback_amount = float(exit_value_native) * (percentage / 100.0)
+            
+            # Check minimum threshold
+            if buyback_amount < min_amount:
+                self.logger.info(f"Lotus buyback skipped: {buyback_amount:.6f} SOL < {min_amount} SOL minimum")
+                return {'success': True, 'skipped': True, 'reason': f'Below minimum threshold ({min_amount} SOL)'}
+            
+            # Get Lotus contract and holding wallet
+            lotus_contract = buyback_config.get('lotus_contract')
+            holding_wallet = buyback_config.get('holding_wallet')
+            
+            if not lotus_contract or not holding_wallet:
+                self.logger.error("Lotus buyback config missing contract or holding wallet")
+                return {'success': False, 'error': 'Missing config'}
+            
+            self.logger.info(f"Executing Lotus buyback: {buyback_amount:.6f} SOL -> {lotus_contract}")
+            
+            # Execute the buyback using existing Solana trading infrastructure
+            # This will use the same Raydium/Jupiter integration as regular trades
+            result = await self._execute_solana_swap(
+                input_amount=buyback_amount,
+                input_token='SOL',
+                output_token=lotus_contract,
+                slippage_pct=5.0  # 5% slippage for buyback
+            )
+            
+            if result and result.get('success', False):
+                # Send Lotus tokens to holding wallet
+                lotus_amount = result.get('output_amount', 0)
+                if lotus_amount > 0:
+                    transfer_result = await self._send_tokens_to_wallet(
+                        token_contract=lotus_contract,
+                        amount=lotus_amount,
+                        destination_wallet=holding_wallet,
+                        chain='solana'
+                    )
+                    
+                    if transfer_result:
+                        self.logger.info(f"Lotus buyback successful: {lotus_amount:.2f} Lotus sent to {holding_wallet}")
+                        return {
+                            'success': True,
+                            'skipped': False,
+                            'buyback_amount_sol': buyback_amount,
+                            'lotus_tokens': lotus_amount,
+                            'transfer_tx_hash': result.get('tx_hash', ''),
+                            'holding_wallet': holding_wallet
+                        }
+                    else:
+                        self.logger.error("Failed to send Lotus tokens to holding wallet")
+                        return {'success': False, 'error': 'Transfer failed'}
+                else:
+                    self.logger.error("No Lotus tokens received from swap")
+                    return {'success': False, 'error': 'No tokens received'}
+            else:
+                self.logger.error(f"Lotus buyback swap failed: {result}")
+                return {'success': False, 'error': result.get('error', 'Swap failed')}
+                
+        except Exception as e:
+            self.logger.error(f"Error executing Lotus buyback: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _execute_solana_swap(self, input_amount: float, input_token: str, output_token: str, slippage_pct: float) -> dict:
+        """Execute a Solana token swap using existing Jupiter infrastructure"""
+        try:
+            if not self.js_solana_client:
+                self.logger.error("JSSolanaClient not available for Lotus buyback")
+                return {'success': False, 'error': 'JSSolanaClient not initialized'}
+            
+            # Convert SOL amount to lamports (9 decimals)
+            input_amount_lamports = int(input_amount * 1_000_000_000)
+            
+            # Convert slippage percentage to basis points
+            slippage_bps = int(slippage_pct * 100)
+            
+            # Execute Jupiter swap: SOL -> Lotus
+            result = await self.js_solana_client.execute_jupiter_swap(
+                input_mint="So11111111111111111111111111111111111111112",  # SOL mint
+                output_mint=output_token,  # Lotus contract
+                amount=input_amount_lamports,
+                slippage_bps=slippage_bps
+            )
+            
+            if result.get('success', False):
+                # The Jupiter response already has the correct output amount
+                output_amount = result.get('outputAmount', 0)
+                # Convert from the raw amount to token units (assuming 9 decimals for Lotus)
+                output_amount_tokens = float(output_amount) / 1_000_000_000
+                return {
+                    'success': True,
+                    'output_amount': output_amount_tokens,
+                    'tx_hash': result.get('signature', ''),
+                    'input_amount': input_amount,
+                    'output_token': output_token
+                }
+            else:
+                self.logger.error(f"Jupiter swap failed: {result.get('error', 'Unknown error')}")
+                return {'success': False, 'error': result.get('error', 'Jupiter swap failed')}
+                
+        except Exception as e:
+            self.logger.error(f"Error in Solana swap: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _send_tokens_to_wallet(self, token_contract: str, amount: float, destination_wallet: str, chain: str) -> bool:
+        """Send tokens to a specific wallet address using existing wallet system"""
+        try:
+            if chain.lower() != 'solana':
+                self.logger.error(f"Token transfer only supported for Solana, got: {chain}")
+                return False
+            
+            if not self.js_solana_client:
+                self.logger.error("JSSolanaClient not available for token transfer")
+                return False
+            
+            # Use the new send_lotus_tokens method
+            result = await self.js_solana_client.send_lotus_tokens(amount, destination_wallet)
+            
+            if result.get('success'):
+                self.logger.info(f"✅ Lotus tokens sent: {amount:.6f} to {destination_wallet}")
+                self.logger.info(f"   Transaction: {result.get('signature')}")
+                return True
+            else:
+                self.logger.error(f"❌ Failed to send Lotus tokens: {result.get('error')}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error in token transfer: {e}")
+            return False
     
     def recalculate_exits_for_position(self, position_id: str, new_avg_entry_price: float) -> bool:
         """Recalculate exit prices when avg_entry_price changes"""

@@ -703,6 +703,8 @@ class EthExecutor(BaseEvmExecutor):
     def __init__(self, eth_client, position_repository=None):
         super().__init__(eth_client, "Ethereum", position_repository)
         self.wrapped_token = "WETH"
+        # One-shot on Ethereum
+        self.max_retries = 1
 
     def _get_wrapped_token_address(self) -> str:
         return '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
@@ -783,27 +785,52 @@ class EthExecutor(BaseEvmExecutor):
             # Resolve venue before wrapping; fallback to Uniswap if not resolvable
             if not venue:
                 venue = self._resolve_venue(token_address)
+            # Pre-route check: must have some venue
             if not venue:
                 # Default to Uniswap if resolution failed
                 venue = {'dex': 'uniswap'}
                 print(f"ETH: Venue resolution failed; defaulting to Uniswap router")
 
-            # Only wrap when we are about to trade
+            # If even default cannot provide route (no pair known), abort early
+            if not venue:
+                print(f"❌ ETH: No viable venue/route for {token_address}")
+                return None
+
+            # Only wrap when we are about to trade; do minimal precheck
+            # Check ETH balance sufficient for wrap + gas before attempting
+            try:
+                balance_wei = int(self.client.w3.eth.get_balance(self.client.account.address))
+                gas_price = int(self.client.w3.eth.gas_price)
+                gas_limit = 70000
+                needed_wei = int(amount_eth * 1e18) + gas_price * gas_limit
+                if balance_wei < needed_wei:
+                    print(f"❌ ETH: Insufficient funds for wrap: have {balance_wei}, need {needed_wei}")
+                    return None
+            except Exception:
+                # If precheck fails, proceed to single attempt
+                pass
+
             if not self._wrap_native_token(amount_eth):
                 print(f"❌ ETH: WETH wrapping failed")
                 return None
             
             print(f"ETH: Using venue: {venue}")
             
-            # Try Uniswap V2 first (cheaper gas), then V3 fallback
+            # Try V2 first (cheapest), then SwapRouter02 (future-proof), then classic V3 (fallback)
             if venue.get('dex') == 'uniswap':
                 print(f"ETH: Trying Uniswap V2 swap first...")
                 result = self._try_uniswap_v2_swap_simple(token_address, amount_wei)
                 if result:
                     return result
                 
-                # Fallback to Uniswap V3
-                print(f"ETH: V2 failed, trying Uniswap V3...")
+                # Try SwapRouter02 (modern, multihop capable)
+                print(f"ETH: V2 failed, trying SwapRouter02...")
+                result = self._try_swaprouter02_swap_simple(token_address, amount_wei)
+                if result:
+                    return result
+                
+                # Fallback to classic V3 Router (reliable for problematic tokens)
+                print(f"ETH: SwapRouter02 failed, trying classic V3 Router...")
                 result = self._try_uniswap_v3_swap_simple(token_address, amount_wei)
                 if result:
                     return result
@@ -824,20 +851,20 @@ class EthExecutor(BaseEvmExecutor):
             traceback.print_exc()
             return None
 
-    def _try_uniswap_v3_swap_simple(self, token_address: str, amount_wei: int) -> Optional[str]:
-        """Simple Uniswap V3 swap for Ethereum"""
+    def _try_swaprouter02_swap_simple(self, token_address: str, amount_wei: int) -> Optional[str]:
+        """SwapRouter02 swap for Ethereum (modern, multihop capable)"""
         try:
-            print(f"ETH: Attempting Uniswap V3 swap...")
+            print(f"ETH: Attempting SwapRouter02 swap...")
             
-            # Approve WETH for V3 router
+            # Approve WETH for SwapRouter02
             current_allowance = self.client.erc20_allowance(self._get_wrapped_token_address(), self.client.account.address, self.client.router.address)
             if current_allowance < amount_wei:
-                print(f"ETH: Approving WETH for V3 router: {amount_wei} wei")
+                print(f"ETH: Approving WETH for SwapRouter02: {amount_wei} wei")
                 approve_res = self.client.approve_erc20(self._get_wrapped_token_address(), self.client.router.address, amount_wei)
                 if not approve_res or approve_res.get('status') != 1:
-                    print(f"ETH: WETH V3 approval failed: {approve_res}")
+                    print(f"ETH: WETH SwapRouter02 approval failed: {approve_res}")
                     return None
-                print(f"ETH: WETH V3 approved: {approve_res.get('tx_hash')}")
+                print(f"ETH: WETH SwapRouter02 approved: {approve_res.get('tx_hash')}")
                 import time
                 time.sleep(3)  # Wait for approval to be mined
             
@@ -846,19 +873,98 @@ class EthExecutor(BaseEvmExecutor):
             
             for fee in fee_tiers:
                 try:
-                    print(f"ETH: Trying V3 swap with fee {fee}...")
+                    print(f"ETH: Trying SwapRouter02 with fee {fee}...")
+                    
+                    # Get quote for proper minimum output calculation
+                    amount_out = self.client.v3_quote_amount_out(
+                        self._get_wrapped_token_address(), 
+                        token_address, 
+                        amount_wei, 
+                        fee=fee
+                    )
+                    min_out = 0
+                    if amount_out and amount_out > 0:
+                        # 1% slippage buffer
+                        min_out = int(amount_out * 0.99)
+                    
+                    print(f"ETH: SwapRouter02 quote for fee {fee}: {amount_out}, min_out={min_out}")
+                    
                     result = self.client.swap_exact_input_single(
                         token_in=self._get_wrapped_token_address(),
                         token_out=token_address,
                         amount_in_wei=amount_wei,
                         fee=fee,
-                        amount_out_min=0,
+                        amount_out_min=min_out,
                         recipient=self.client.account.address,
                         deadline_seconds=600
                     )
                     
                     if result and result.get('status') == 1:
-                        print(f"✅ ETH: V3 swap successful with fee {fee}: {result.get('tx_hash')}")
+                        print(f"✅ ETH: SwapRouter02 swap successful with fee {fee}: {result.get('tx_hash')}")
+                        return result.get('tx_hash')
+                    else:
+                        print(f"❌ ETH: SwapRouter02 swap failed with fee {fee}: {result}")
+                        
+                except Exception as e:
+                    print(f"❌ ETH: SwapRouter02 swap error with fee {fee}: {e}")
+            
+            print(f"❌ ETH: All SwapRouter02 fee tiers failed")
+            return None
+            
+        except Exception as e:
+            print(f"❌ ETH: SwapRouter02 swap error: {e}")
+            return None
+
+    def _try_uniswap_v3_swap_simple(self, token_address: str, amount_wei: int) -> Optional[str]:
+        """Simple Uniswap V3 swap for Ethereum using classic V3 Router"""
+        try:
+            print(f"ETH: Attempting Uniswap V3 swap with classic router...")
+            
+            # Approve WETH for classic V3 router
+            current_allowance = self.client.erc20_allowance(self._get_wrapped_token_address(), self.client.account.address, self.client.v3_router.address)
+            if current_allowance < amount_wei:
+                print(f"ETH: Approving WETH for classic V3 router: {amount_wei} wei")
+                approve_res = self.client.approve_erc20(self._get_wrapped_token_address(), self.client.v3_router.address, amount_wei)
+                if not approve_res or approve_res.get('status') != 1:
+                    print(f"ETH: WETH classic V3 approval failed: {approve_res}")
+                    return None
+                print(f"ETH: WETH classic V3 approved: {approve_res.get('tx_hash')}")
+                import time
+                time.sleep(3)  # Wait for approval to be mined
+            
+            # Try different fee tiers
+            fee_tiers = [3000, 10000, 500, 2500]
+            
+            for fee in fee_tiers:
+                try:
+                    print(f"ETH: Trying classic V3 swap with fee {fee}...")
+                    
+                    # Get quote for proper minimum output calculation
+                    amount_out = self.client.v3_quote_amount_out(
+                        self._get_wrapped_token_address(), 
+                        token_address, 
+                        amount_wei, 
+                        fee=fee
+                    )
+                    min_out = 0
+                    if amount_out and amount_out > 0:
+                        # 1% slippage buffer
+                        min_out = int(amount_out * 0.99)
+                    
+                    print(f"ETH: Classic V3 quote for fee {fee}: {amount_out}, min_out={min_out}")
+                    
+                    result = self.client.v3_swap_exact_input_single(
+                        token_in=self._get_wrapped_token_address(),
+                        token_out=token_address,
+                        amount_in_wei=amount_wei,
+                        fee=fee,
+                        amount_out_min=min_out,
+                        recipient=self.client.account.address,
+                        deadline_seconds=600
+                    )
+                    
+                    if result and result.get('status') == 1:
+                        print(f"✅ ETH: Classic V3 swap successful with fee {fee}: {result.get('tx_hash')}")
                         return result.get('tx_hash')
                     else:
                         print(f"❌ ETH: V3 swap failed with fee {fee}: {result}")
@@ -890,12 +996,21 @@ class EthExecutor(BaseEvmExecutor):
                 import time
                 time.sleep(3)  # Wait for approval to be mined
             
+            # Get quote for proper minimum output calculation
+            amounts = self.client.v2_get_amounts_out(self._get_wrapped_token_address(), token_address, amount_wei)
+            min_out = 0
+            if amounts and len(amounts) >= 2 and amounts[1] and int(amounts[1]) > 0:
+                # 1% slippage buffer
+                min_out = int(int(amounts[1]) * 0.99)
+            
+            print(f"ETH: V2 swap quote: {amounts}, min_out={min_out}")
+            
             # Use the V2 swap method from the client
             result = self.client.v2_swap_exact_tokens_for_tokens(
                 token_in=self._get_wrapped_token_address(),
                 token_out=token_address,
                 amount_in_wei=amount_wei,
-                amount_out_min_wei=0,
+                amount_out_min_wei=min_out,
                 recipient=self.client.account.address,
                 deadline_seconds=600
             )

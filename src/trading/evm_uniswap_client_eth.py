@@ -17,6 +17,7 @@ from eth_account import Account
 
 WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
 ROUTER02_ADDRESS = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'  # Uniswap v3 SwapRouter02
+V3_ROUTER_ADDRESS = '0xE592427A0AEce92De3Edee1F18E0157C05861564'  # Uniswap v3 Router (classic)
 V2_ROUTER_ADDRESS = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'  # Uniswap v2 Router02
 
 
@@ -139,6 +140,7 @@ class EthUniswapClient:
 
         self.weth = self.w3.eth.contract(address=Web3.to_checksum_address(WETH_ADDRESS), abi=WETH_ABI)
         self.router = self.w3.eth.contract(address=Web3.to_checksum_address(ROUTER02_ADDRESS), abi=ROUTER_ABI)
+        self.v3_router = self.w3.eth.contract(address=Web3.to_checksum_address(V3_ROUTER_ADDRESS), abi=ROUTER_ABI)
         self.v2_router = self.w3.eth.contract(address=Web3.to_checksum_address(V2_ROUTER_ADDRESS), abi=V2_ROUTER_ABI)
         self.quoter = self.w3.eth.contract(address=Web3.to_checksum_address(QUOTER_ADDRESS), abi=QUOTER_ABI)
 
@@ -205,6 +207,25 @@ class EthUniswapClient:
         )
         base = self._eip1559_base({'value': 0})
         tx = self.router.functions.exactInputSingle(params).build_transaction(base)
+        return self._send(tx)
+
+    def v3_swap_exact_input_single(self, token_in: str, token_out: str, amount_in_wei: int, fee: int = 3000, amount_out_min: int = 0, recipient: Optional[str] = None, deadline_seconds: int = 600) -> Dict[str, Any]:
+        """Classic V3 Router swap (more reliable for problematic tokens)"""
+        recipient = recipient or self.account.address
+        from time import time
+        deadline = int(time()) + deadline_seconds
+        params = (
+            Web3.to_checksum_address(token_in),
+            Web3.to_checksum_address(token_out),
+            fee,
+            recipient,
+            deadline,
+            amount_in_wei,
+            amount_out_min,
+            0,
+        )
+        base = self._eip1559_base({'value': 0})
+        tx = self.v3_router.functions.exactInputSingle(params).build_transaction(base)
         return self._send(tx)
 
     def v3_quote_amount_out(self, token_in: str, token_out: str, amount_in_wei: int, fee: int = 3000) -> Optional[int]:

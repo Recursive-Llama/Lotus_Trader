@@ -84,18 +84,38 @@ class PriceOracle:
                                     'quote_token': 'WBNB'
                                 }
                         
-                        # Fallback: use any pair if no WBNB pairs exist
-                        logger.warning(f"No WBNB pairs found for {token_address}, using fallback")
+                        # Fallback: use any pair if no WBNB pairs exist, but convert USD to native
+                        logger.warning(f"No WBNB pairs found for {token_address}, using fallback with USD conversion")
                         best_pair = max(bsc_pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                        price_native = best_pair.get('priceNative')
                         price_usd = best_pair.get('priceUsd')
-                        if price_native and price_usd:
-                            logger.warning(f"BSC fallback price for {token_address}: {price_native} {best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}, ${price_usd} USD")
-                            return {
-                                'price_native': float(price_native),
-                                'price_usd': float(price_usd),
-                                'quote_token': best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
-                            }
+                        quote_token = best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
+                        
+                        if price_usd:
+                            # Convert USD price to BNB price using WBNB USD price
+                            try:
+                                wbnb_response = requests.get("https://api.dexscreener.com/latest/dex/tokens/0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", timeout=5)
+                                if wbnb_response.ok:
+                                    wbnb_data = wbnb_response.json()
+                                    wbnb_pairs = wbnb_data.get('pairs', [])
+                                    if wbnb_pairs:
+                                        # Get WBNB/USD pair (usually USDC or USDT)
+                                        wbnb_usd_pair = next((p for p in wbnb_pairs if p.get('chainId') == 'bsc' and p.get('quoteToken', {}).get('symbol') in ['USDC', 'USDT', 'BUSD']), None)
+                                        if wbnb_usd_pair:
+                                            wbnb_price_usd = float(wbnb_usd_pair.get('priceUsd', 0))
+                                            if wbnb_price_usd > 0:
+                                                price_native = float(price_usd) / wbnb_price_usd
+                                                logger.warning(f"BSC fallback price for {token_address}: {price_native:.8f} BNB (converted from ${price_usd} USD via WBNB ${wbnb_price_usd})")
+                                                return {
+                                                    'price_native': price_native,
+                                                    'price_usd': float(price_usd),
+                                                    'quote_token': f"{quote_token}->WBNB"
+                                                }
+                            except Exception as e:
+                                logger.error(f"Failed to get WBNB price for conversion: {e}")
+                            
+                            # If WBNB conversion fails, log warning and return None
+                            logger.warning(f"Could not convert USD price to BNB for {token_address}: ${price_usd} USD")
+                            return None
                 
                 logger.warning(f"No BSC price found for {token_address}")
                 return None
@@ -150,18 +170,38 @@ class PriceOracle:
                                     'quote_token': 'WETH'
                                 }
                         
-                        # Fallback: use any pair if no WETH pairs exist
-                        logger.warning(f"No WETH pairs found for {token_address}, using fallback")
+                        # Fallback: use any pair if no WETH pairs exist, but convert USD to native
+                        logger.warning(f"No WETH pairs found for {token_address}, using fallback with USD conversion")
                         best_pair = max(base_pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                        price_native = best_pair.get('priceNative')
                         price_usd = best_pair.get('priceUsd')
-                        if price_native and price_usd:
-                            logger.warning(f"Base fallback price for {token_address}: {price_native} {best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}, ${price_usd} USD")
-                            return {
-                                'price_native': float(price_native),
-                                'price_usd': float(price_usd),
-                                'quote_token': best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
-                            }
+                        quote_token = best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
+                        
+                        if price_usd:
+                            # Convert USD price to ETH price using WETH USD price (Base uses WETH)
+                            try:
+                                weth_response = requests.get("https://api.dexscreener.com/latest/dex/tokens/0x4200000000000000000000000000000000000006", timeout=5)
+                                if weth_response.ok:
+                                    weth_data = weth_response.json()
+                                    weth_pairs = weth_data.get('pairs', [])
+                                    if weth_pairs:
+                                        # Get WETH/USD pair (usually USDC)
+                                        weth_usd_pair = next((p for p in weth_pairs if p.get('chainId') == 'base' and p.get('quoteToken', {}).get('symbol') in ['USDC', 'USDT']), None)
+                                        if weth_usd_pair:
+                                            weth_price_usd = float(weth_usd_pair.get('priceUsd', 0))
+                                            if weth_price_usd > 0:
+                                                price_native = float(price_usd) / weth_price_usd
+                                                logger.warning(f"Base fallback price for {token_address}: {price_native:.8f} ETH (converted from ${price_usd} USD via WETH ${weth_price_usd})")
+                                                return {
+                                                    'price_native': price_native,
+                                                    'price_usd': float(price_usd),
+                                                    'quote_token': f"{quote_token}->WETH"
+                                                }
+                            except Exception as e:
+                                logger.error(f"Failed to get WETH price for conversion: {e}")
+                            
+                            # If WETH conversion fails, log warning and return None
+                            logger.warning(f"Could not convert USD price to ETH for {token_address}: ${price_usd} USD")
+                            return None
                 
                 logger.warning(f"No Base price found for {token_address}")
                 return None
@@ -216,18 +256,39 @@ class PriceOracle:
                                     'quote_token': 'WETH'
                                 }
                         
-                        # Fallback: use any pair if no WETH pairs exist
-                        logger.warning(f"No WETH pairs found for {token_address}, using fallback")
+                        # Fallback: use any pair if no WETH pairs exist, but convert USD to native
+                        logger.warning(f"No WETH pairs found for {token_address}, using fallback with USD conversion")
                         best_pair = max(eth_pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                        price_native = best_pair.get('priceNative')
                         price_usd = best_pair.get('priceUsd')
-                        if price_native and price_usd:
-                            logger.warning(f"ETH fallback price for {token_address}: {price_native} {best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}, ${price_usd} USD")
-                            return {
-                                'price_native': float(price_native),
-                                'price_usd': float(price_usd),
-                                'quote_token': best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
-                            }
+                        quote_token = best_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')
+                        
+                        if price_usd:
+                            # Convert USD price to ETH price using WETH USD price
+                            # Get WETH USD price from DexScreener
+                            try:
+                                weth_response = requests.get("https://api.dexscreener.com/latest/dex/tokens/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", timeout=5)
+                                if weth_response.ok:
+                                    weth_data = weth_response.json()
+                                    weth_pairs = weth_data.get('pairs', [])
+                                    if weth_pairs:
+                                        # Get WETH/USD pair (usually USDC)
+                                        weth_usd_pair = next((p for p in weth_pairs if p.get('chainId') == 'ethereum' and p.get('quoteToken', {}).get('symbol') in ['USDC', 'USDT']), None)
+                                        if weth_usd_pair:
+                                            weth_price_usd = float(weth_usd_pair.get('priceUsd', 0))
+                                            if weth_price_usd > 0:
+                                                price_native = float(price_usd) / weth_price_usd
+                                                logger.warning(f"ETH fallback price for {token_address}: {price_native:.8f} ETH (converted from ${price_usd} USD via WETH ${weth_price_usd})")
+                                                return {
+                                                    'price_native': price_native,
+                                                    'price_usd': float(price_usd),
+                                                    'quote_token': f"{quote_token}->WETH"
+                                                }
+                            except Exception as e:
+                                logger.error(f"Failed to get WETH price for conversion: {e}")
+                            
+                            # If WETH conversion fails, log warning and return None
+                            logger.warning(f"Could not convert USD price to ETH for {token_address}: ${price_usd} USD")
+                            return None
                 
                 logger.warning(f"No Ethereum price found for {token_address}")
                 return None

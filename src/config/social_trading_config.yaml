@@ -154,6 +154,14 @@ logging:
   max_size_mb: 100
   backup_count: 5
 
+# Lotus Token Buyback
+lotus_buyback:
+  enabled: true
+  lotus_contract: "Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC"
+  holding_wallet: "AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd"
+  percentage: 10.0  # 10% of every SOL exit
+  min_amount_sol: 0.001  # Minimum SOL amount to trigger buyback
+
 # Monitoring & Alerts
 monitoring:
   health_check_interval: 300  # seconds

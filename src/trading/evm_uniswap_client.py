@@ -469,7 +469,7 @@ class EvmUniswapClient:
             base.update(overrides)
         return base
 
-    def send(self, tx: Dict[str, Any]) -> Dict[str, Any]:
+    def send(self, tx: Dict[str, Any], max_attempts: int = 3) -> Dict[str, Any]:
         def _bump_gas_price(txd: Dict[str, Any]) -> None:
             gp = int(txd.get('gasPrice') or self.w3.eth.gas_price)
             bumped = int(gp * 125 // 100)
@@ -489,20 +489,20 @@ class EvmUniswapClient:
                     # Refresh local nonce and rebuild
                     tx['nonce'] = self.w3.eth.get_transaction_count(self.account.address, 'pending')
                     _bump_gas_price(tx)
-                    if attempts >= 3:
+                    if attempts >= max_attempts:
                         raise
                     continue
                 if 'replacement transaction underpriced' in msg or 'fee too low' in msg:
                     # Keep same nonce, bump gas price
                     _bump_gas_price(tx)
-                    if attempts >= 3:
+                    if attempts >= max_attempts:
                         raise
                     continue
                 if 'Too Many Requests' in msg or '429' in msg:
                     # Backoff and retry
                     import time as _t
                     _t.sleep(1.0 * attempts)
-                    if attempts >= 3:
+                    if attempts >= max_attempts:
                         raise
                     continue
                 # Unknown error or wait_for_transaction_receipt timeout
@@ -512,7 +512,9 @@ class EvmUniswapClient:
         amount_wei = self.w3.to_wei(amount_eth, 'ether')
         base = self._legacy_gas_tx({'gas': gas_limit, 'value': amount_wei})
         tx = self.weth_contract.functions.deposit().build_transaction(base)
-        return self.send(tx)
+        # On Ethereum we want a single attempt; on other chains caller can use default
+        single_attempt = 1 if getattr(self, 'chain', '').lower() == 'ethereum' else 3
+        return self.send(tx, max_attempts=single_attempt)
 
     def erc20_allowance(self, token: str, owner: str, spender: str) -> int:
         erc20 = self.w3.eth.contract(address=Web3.to_checksum_address(token), abi=ERC20_ABI)
