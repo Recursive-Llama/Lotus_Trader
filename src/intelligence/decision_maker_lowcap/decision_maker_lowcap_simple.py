@@ -123,13 +123,27 @@ class DecisionMakerLowcapSimple:
                 'detail': f"Curator {curator_score:.2f} < {self.min_curator_score}" if not score_pass else f"Curator {curator_score:.2f} >= {self.min_curator_score}"
             })
 
-            # 4) Signal direction is buy
-            sig_direction = social_signal.get('sig_direction')
-            direction_pass = sig_direction == 'buy'
+            # 4) Intent analysis indicates buy signal
+            intent_analysis = social_signal.get('signal_pack', {}).get('intent_analysis')
+            buy_intent_types = {
+                'adding_to_position',
+                'research_positive', 
+                'new_discovery',
+                'comparison_highlighted',
+                'other_positive'
+            }
+            
+            intent_pass = False
+            intent_type = 'unknown'
+            if intent_analysis:
+                intent_data = intent_analysis.get('intent_analysis', {})
+                intent_type = intent_data.get('intent_type', 'unknown')
+                intent_pass = intent_type in buy_intent_types
+            
             criteria.append({
-                'name': 'signal_direction_buy',
-                'passed': direction_pass,
-                'detail': f"Signal direction is '{sig_direction}', need 'buy'" if not direction_pass else "Signal direction is buy"
+                'name': 'intent_analysis_buy',
+                'passed': intent_pass,
+                'detail': f"Intent type '{intent_type}' not in buy signals" if not intent_pass else f"Intent type '{intent_type}' indicates buy signal"
             })
 
             # 5) Portfolio capacity available
@@ -152,7 +166,7 @@ class DecisionMakerLowcapSimple:
                 for c in criteria:
                     self.logger.debug(f"check {c['name']}: {'pass' if c['passed'] else 'fail'} - {c['detail']}")
             else:
-                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (solana, not holding, curator {curator_score:.2f}, buy, capacity)")
+                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (solana, not holding, curator {curator_score:.2f}, intent {intent_type}, capacity)")
                 for c in criteria:
                     self.logger.debug(f"check {c['name']}: pass - {c['detail']}")
 

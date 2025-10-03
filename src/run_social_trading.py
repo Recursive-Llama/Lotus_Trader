@@ -191,9 +191,15 @@ class SocialTradingSystem:
             
             # Initialize trader (V2 - improved Base trading and modular design)
             from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
+            
+            # Prepare trader config with both trading and lotus_buyback sections
+            trader_config = self.config.get('trading', {}).copy()
+            if 'lotus_buyback' in self.config:
+                trader_config['lotus_buyback'] = self.config['lotus_buyback']
+            
             self.trader = TraderLowcapSimpleV2(
                 supabase_manager=self.supabase_manager,
-                config=self.config.get('trading', {})
+                config=trader_config
             )
             
             # Share trader instance with learning system to avoid conflicts

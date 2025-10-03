@@ -376,6 +376,22 @@ class PositionMonitor:
                 else:
                     dip_pct = 0.0
             
+            # Ensure trend exits for this batch exist only after first entry executes
+            try:
+                from intelligence.trader_lowcap.entry_exit_planner import EntryExitPlanner
+                existing_trend_exits = position.get('trend_exits', []) or []
+                has_batch_exits = any(x.get('batch_id') == batch_id for x in existing_trend_exits)
+                if not has_batch_exits and source_exit_price > 0:
+                    new_trend_exits = EntryExitPlanner.build_trend_exits_for_batch(
+                        exit_price=source_exit_price,
+                        batch_id=batch_id,
+                    )
+                    existing_trend_exits.extend(new_trend_exits)
+                    self.trader.repo.update_trend_exits(position_id, existing_trend_exits)
+                    logger.info(f"Created {len(new_trend_exits)} trend exits for batch {batch_id} after first entry execution")
+            except Exception as e:
+                logger.error(f"Error ensuring trend exits for batch {batch_id}: {e}")
+
             # Send trend entry notification
             await self.trader._send_trend_entry_notification(
                 position_id=position_id,
@@ -412,7 +428,8 @@ class PositionMonitor:
             # Process trend exits sequentially to avoid nonce conflicts
             for trend_exit in trend_exits:
                 if trend_exit.get('status') == 'pending':
-                    target_price = float(trend_exit.get('exit_price', 0))
+                    # Trend exits store target under 'price'
+                    target_price = float(trend_exit.get('price', 0))
                     trend_exit_number = trend_exit.get('trend_exit_number')
                     batch_id = trend_exit.get('batch_id')
                     

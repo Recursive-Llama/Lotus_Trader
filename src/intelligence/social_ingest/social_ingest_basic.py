@@ -53,6 +53,7 @@ class SocialIngestModule:
         self.ignored_tokens = {
             # Major tokens (not suitable for lowcap trading)
             'SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'STETH', 'BNB',
+            'BITCOIN', 'ETHEREUM', 'SOLANA',  # Full names for major tokens
             'HYPE', 'TAO', 'DAI', 'OHM',
             
             # Problematic/ambiguous tokens

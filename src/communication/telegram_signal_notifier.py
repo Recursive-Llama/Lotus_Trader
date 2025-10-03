@@ -112,8 +112,7 @@ class TelegramSignalNotifier:
                              tokens_sold: float,
                              sell_price: float,
                              tx_hash: str,
-                             profit_pct: Optional[float] = None,
-                             profit_usd: Optional[float] = None,
+                             tokens_sold_value_usd: Optional[float] = None,
                              total_profit_usd: Optional[float] = None,
                              source_tweet_url: Optional[str] = None,
                              remaining_tokens: Optional[float] = None,
@@ -154,7 +153,7 @@ class TelegramSignalNotifier:
             # Format message
             message = self._format_sell_message(
                 token_ticker, token_link, tokens_sold, sell_price, native_symbol,
-                tx_link, profit_pct, profit_usd, total_profit_usd, source_tweet_url,
+                tx_link, tokens_sold_value_usd, total_profit_usd, source_tweet_url,
                 remaining_tokens, position_value, total_pnl_pct, profit_native,
                 buyback_amount_sol, lotus_tokens, buyback_tx_hash
             )
@@ -342,8 +341,7 @@ class TelegramSignalNotifier:
                            sell_price: float,
                            native_symbol: str,
                            tx_link: str,
-                           profit_pct: Optional[float] = None,
-                           profit_usd: Optional[float] = None,
+                           tokens_sold_value_usd: Optional[float] = None,
                            total_profit_usd: Optional[float] = None,
                            source_tweet_url: Optional[str] = None,
                            remaining_tokens: Optional[float] = None,
@@ -369,15 +367,11 @@ class TelegramSignalNotifier:
         if position_value is not None:
             message += f"**Position Value:** ${position_value:.2f}\n"
         
-        # P&L information
-        if profit_native is not None:
-            emoji = "💰" if profit_native > 0 else "💸"
-            message += f"**Native P&L:** {emoji} {profit_native:+.6f} {native_symbol}\n"
+        # Dollar value of tokens sold
+        if tokens_sold_value_usd is not None:
+            message += f"**$ of Tokens Sold:** ${tokens_sold_value_usd:.2f}\n"
         
-        if profit_usd is not None:
-            emoji = "💰" if profit_usd > 0 else "💸"
-            message += f"**USD P&L:** {emoji} ${profit_usd:+.2f}\n"
-        
+        # Total position P&L information
         if total_profit_usd is not None:
             message += f"**Total Position P&L:** ${total_profit_usd:+.2f}\n"
         

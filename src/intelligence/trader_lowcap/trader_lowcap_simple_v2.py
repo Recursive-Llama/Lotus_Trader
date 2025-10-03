@@ -774,12 +774,13 @@ class TraderLowcapSimpleV2:
             self.logger.error(f"Error recalculating exits for position {position_id}: {e}")
 
     async def _spawn_trend_batch_after_standard_exit(self, position_id: str, standard_exit: Dict[str, Any]):
-        """Create trend_entries and trend_exits batch after a standard exit executes.
+        """Create trend_entries batch after a standard exit executes.
 
         - Uses config trend_strategy
         - Funds from standard_exit['native_amount']
         - Prices referenced off standard_exit['price']
-        - Writes arrays to position: trend_entries, trend_exits (append)
+        - Writes arrays to position: trend_entries (append)
+        - Trend exits are deferred and created only after first trend entry executes
         """
         try:
             position = self.repo.get_position(position_id)
@@ -808,21 +809,12 @@ class TraderLowcapSimpleV2:
                 source_exit_id=source_exit_id,
                 batch_id=batch_id,
             )
-            trend_exits = EntryExitPlanner.build_trend_exits_for_batch(
-                exit_price=exit_price,
-                batch_id=batch_id,
-            )
-
-            # Append to arrays
+            # Append to arrays (only entries now; exits will be created after first entry executes)
             existing_trend_entries = position.get('trend_entries', []) or []
-            existing_trend_exits = position.get('trend_exits', []) or []
             existing_trend_entries.extend(trend_entries)
-            existing_trend_exits.extend(trend_exits)
 
             self.repo.update_trend_entries(position_id, existing_trend_entries)
-            self.repo.update_trend_exits(position_id, existing_trend_exits)
-
-            self.logger.info(f"Spawned trend batch {batch_id} with {len(trend_entries)} entries and {len(trend_exits)} exits")
+            self.logger.info(f"Spawned trend batch {batch_id} with {len(trend_entries)} entries (exits deferred)")
         except Exception as e:
             self.logger.error(f"Error spawning trend batch: {e}")
 
@@ -971,9 +963,9 @@ class TraderLowcapSimpleV2:
                 
                 self.logger.info(f"Entry {entry_number} executed successfully: {result}")
             else:
-                self.logger.error(f"Entry {entry_number} execution failed")
-                # Mark as failed to prevent endless retries
-                self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
+                        self.logger.error(f"Entry {entry_number} execution failed")
+                        # Mark as failed to prevent endless retries
+                        self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
                 
         except Exception as e:
             self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
@@ -1091,7 +1083,6 @@ class TraderLowcapSimpleV2:
                         return True
                     else:
                         self.logger.error(f"Entry {entry_number} transaction not confirmed: {result}")
-                        self.repo.mark_entry_failed(position_id, entry_number, reason='transaction_not_confirmed')
                         return False
                 else:
                     # For Solana, assume immediate confirmation
@@ -1144,12 +1135,10 @@ class TraderLowcapSimpleV2:
                     return True
             else:
                 self.logger.error(f"Entry {entry_number} execution failed")
-                self.repo.mark_entry_failed(position_id, entry_number, reason='execution_failed')
                 return False
                 
         except Exception as e:
             self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
-            self.repo.mark_entry_failed(position_id, entry_number, reason='execution_exception')
             return False
 
     async def _wait_for_transaction_confirmation(self, tx_hash: str, chain: str, timeout: int = 60) -> bool:
@@ -1569,29 +1558,22 @@ class TraderLowcapSimpleV2:
             
             token_ticker = position.get('token_ticker', 'UNKNOWN')
             
-            # Calculate profit metrics
-            profit_pct = None
-            profit_usd = None
-            total_profit_usd = None
+            # Get total position P&L from database
+            total_profit_usd = position.get('total_pnl_usd')
+            total_pnl_pct = position.get('total_pnl_pct', 0)
             
-            # Try to get profit data from the position
-            if position.get('total_pnl_pct') is not None:
-                profit_pct = position.get('total_pnl_pct')
-            if position.get('total_pnl_usd') is not None:
-                total_profit_usd = position.get('total_pnl_usd')
-            
-            # For individual exit profit, we'd need to calculate based on entry price
-            # This is a simplified version - you might want to enhance this
-            avg_entry_price = position.get('avg_entry_price')
-            if avg_entry_price and avg_entry_price > 0:
-                exit_profit_pct = ((sell_price - avg_entry_price) / avg_entry_price) * 100
-                exit_profit_usd = (sell_price - avg_entry_price) * tokens_sold
-                profit_pct = exit_profit_pct
-                profit_usd = exit_profit_usd
+            # Calculate dollar value of tokens sold in this exit
+            # sell_price is always in native token (BNB, ETH, SOL) - need to convert to USD
+            native_usd_rate = await self._get_native_usd_rate(chain)
+            if native_usd_rate > 0:
+                sell_price_usd = sell_price * native_usd_rate
+                tokens_sold_value_usd = tokens_sold * sell_price_usd
+            else:
+                # Fallback: use sell_price as-is (might be wrong but better than error)
+                tokens_sold_value_usd = tokens_sold * sell_price
             
             # Get position context for enhanced notification
             remaining_tokens = position.get('total_quantity', 0) - tokens_sold
-            total_pnl_pct = position.get('total_pnl_pct', 0)
             position_value = None
             profit_native = None
             
@@ -1636,8 +1618,7 @@ class TraderLowcapSimpleV2:
                 tokens_sold=tokens_sold,
                 sell_price=sell_price,
                 tx_hash=tx_hash,
-                profit_pct=profit_pct,
-                profit_usd=profit_usd,
+                tokens_sold_value_usd=tokens_sold_value_usd,
                 total_profit_usd=total_profit_usd,
                 source_tweet_url=position.get('source_tweet_url'),
                 remaining_tokens=remaining_tokens,

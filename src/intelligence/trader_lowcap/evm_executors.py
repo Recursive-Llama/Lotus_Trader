@@ -816,22 +816,10 @@ class EthExecutor(BaseEvmExecutor):
             
             print(f"ETH: Using venue: {venue}")
             
-            # Try V2 first (cheapest), then SwapRouter02 (future-proof), then classic V3 (fallback)
+            # Smart routing: quote all routes, pick best, execute with fallback
             if venue.get('dex') == 'uniswap':
-                print(f"ETH: Trying Uniswap V2 swap first...")
-                result = self._try_uniswap_v2_swap_simple(token_address, amount_wei)
-                if result:
-                    return result
-                
-                # Try SwapRouter02 (modern, multihop capable)
-                print(f"ETH: V2 failed, trying SwapRouter02...")
-                result = self._try_swaprouter02_swap_simple(token_address, amount_wei)
-                if result:
-                    return result
-                
-                # Fallback to classic V3 Router (reliable for problematic tokens)
-                print(f"ETH: SwapRouter02 failed, trying classic V3 Router...")
-                result = self._try_uniswap_v3_swap_simple(token_address, amount_wei)
+                print(f"ETH: Using smart routing...")
+                result = self._smart_routing_swap(token_address, amount_wei)
                 if result:
                     return result
             
@@ -849,6 +837,130 @@ class EthExecutor(BaseEvmExecutor):
             print(f"❌ ETH: Buy execution error: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    def _smart_routing_swap(self, token_address: str, amount_wei: int) -> Optional[str]:
+        """Smart routing: quote all routes, pick best, execute with fallback"""
+        try:
+            print(f"ETH: Smart routing for {token_address}")
+            weth = self._get_wrapped_token_address()
+            
+            # Step 1: Quote all available routes
+            routes = []
+            
+            # V2 quote
+            v2_quote = self.client.v2_get_amounts_out(weth, token_address, amount_wei)
+            if v2_quote and len(v2_quote) >= 2 and v2_quote[1]:
+                routes.append({
+                    'type': 'V2',
+                    'router': self.client.v2_router,
+                    'fee': None,
+                    'amount_out': int(v2_quote[1]),
+                    'priority': 1  # Highest priority (cheapest)
+                })
+                print(f"ETH: V2 quote: {int(v2_quote[1])} tokens")
+            
+            # SwapRouter02 quotes
+            for fee in [3000, 10000, 500, 2500]:
+                quote = self.client.v3_quote_amount_out(weth, token_address, amount_wei, fee=fee)
+                if quote and quote > 0:
+                    routes.append({
+                        'type': 'SwapRouter02',
+                        'router': self.client.router,
+                        'fee': fee,
+                        'amount_out': quote,
+                        'priority': 2  # Second priority (future-proof)
+                    })
+                    print(f"ETH: SwapRouter02 fee {fee} quote: {quote} tokens")
+            
+            # Classic V3 quotes
+            for fee in [3000, 10000, 500, 2500]:
+                quote = self.client.v3_quote_amount_out(weth, token_address, amount_wei, fee=fee)
+                if quote and quote > 0:
+                    routes.append({
+                        'type': 'Classic V3',
+                        'router': self.client.v3_router,
+                        'fee': fee,
+                        'amount_out': quote,
+                        'priority': 3  # Third priority (fallback)
+                    })
+                    print(f"ETH: Classic V3 fee {fee} quote: {quote} tokens")
+            
+            if not routes:
+                print(f"❌ ETH: No viable routes found")
+                return None
+            
+            # Step 2: Sort by priority, then by amount_out (descending)
+            routes.sort(key=lambda x: (x['priority'], -x['amount_out']))
+            print(f"ETH: Found {len(routes)} viable routes, trying in order...")
+            
+            # Step 3: Try to execute routes in order
+            for i, route in enumerate(routes):
+                print(f"ETH: Attempt {i+1}: {route['type']} fee {route['fee']}")
+                
+                try:
+                    # Approve WETH for the router
+                    current_allowance = self.client.erc20_allowance(weth, self.client.account.address, route['router'].address)
+                    if current_allowance < amount_wei:
+                        print(f"ETH: Approving WETH for {route['type']}...")
+                        approve_res = self.client.approve_erc20(weth, route['router'].address, amount_wei)
+                        if not approve_res or approve_res.get('status') != 1:
+                            print(f"ETH: {route['type']} approval failed: {approve_res}")
+                            continue
+                        print(f"ETH: {route['type']} approved: {approve_res.get('tx_hash')}")
+                        import time
+                        time.sleep(3)  # Wait for approval
+                    
+                    # Calculate min_out with 1% slippage
+                    min_out = int(route['amount_out'] * 0.99)
+                    
+                    # Execute swap
+                    if route['type'] == 'V2':
+                        result = self.client.v2_swap_exact_tokens_for_tokens(
+                            token_in=weth,
+                            token_out=token_address,
+                            amount_in_wei=amount_wei,
+                            amount_out_min_wei=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    elif route['type'] == 'SwapRouter02':
+                        result = self.client.swap_exact_input_single(
+                            token_in=weth,
+                            token_out=token_address,
+                            amount_in_wei=amount_wei,
+                            fee=route['fee'],
+                            amount_out_min=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    elif route['type'] == 'Classic V3':
+                        result = self.client.v3_swap_exact_input_single(
+                            token_in=weth,
+                            token_out=token_address,
+                            amount_in_wei=amount_wei,
+                            fee=route['fee'],
+                            amount_out_min=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    
+                    if result and result.get('status') == 1:
+                        print(f"✅ ETH: {route['type']} swap successful: {result.get('tx_hash')}")
+                        print(f"ETH: Gas used: {result.get('gas_used', 'unknown')}")
+                        return result.get('tx_hash')
+                    else:
+                        print(f"❌ ETH: {route['type']} swap failed: {result}")
+                        
+                except Exception as e:
+                    print(f"❌ ETH: {route['type']} swap error: {e}")
+                    continue
+            
+            print(f"❌ ETH: All smart routing attempts failed")
+            return None
+            
+        except Exception as e:
+            print(f"❌ ETH: Smart routing error: {e}")
             return None
 
     def _try_swaprouter02_swap_simple(self, token_address: str, amount_wei: int) -> Optional[str]:
