@@ -34,6 +34,11 @@ class DexScreenerTester:
         # Test tokens from @0xdetweiler's tweets
         test_tokens = [
             {
+                'token_name': 'ASTER',
+                'network': '',
+                'additional_info': 'Testing ASTER token search with aggregated volume fix'
+            },
+            {
                 'token_name': 'HABITAT',
                 'network': 'solana',
                 'additional_info': 'ETH utility investors bridging to sol to bid $HABITAT'

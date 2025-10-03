@@ -500,6 +500,8 @@ class SocialIngestModule:
             # Step 4: Score each unique token (contract address)
             best_token = None
             best_score = -1
+            best_aggregated_volume = 0
+            best_aggregated_liquidity = 0
 
             for contract, pairs_for_token in token_groups.items():
                 # Aggregate all pairs for this token
@@ -521,9 +523,14 @@ class SocialIngestModule:
                 if score > best_score:
                     best_score = score
                     best_token = first_pair  # Return the first pair as representative
+                    best_aggregated_volume = total_volume
+                    best_aggregated_liquidity = total_liquidity
 
             if best_token:
-                self.logger.info(f"Selected {symbol_of(best_token)} with score {best_score:.3f}")
+                self.logger.info(f"Selected {symbol_of(best_token)} with score {best_score:.3f}, aggregated volume ${best_aggregated_volume:,.0f}")
+                # Add aggregated volume and liquidity to the returned pair for use in verification
+                best_token['_aggregated_volume'] = best_aggregated_volume
+                best_token['_aggregated_liquidity'] = best_aggregated_liquidity
             
             return best_token
 
@@ -621,6 +628,20 @@ class SocialIngestModule:
             raw_chain_id = pair_data.get('chainId', '')
             mapped_chain = self._map_dexscreener_chain(raw_chain_id)
             
+            # Use aggregated volume if available (from scoring process), otherwise use single pair volume
+            volume_24h = pair_data.get('_aggregated_volume')
+            if volume_24h is None:
+                volume_24h = float(pair_data.get('volume', {}).get('h24', 0))
+            else:
+                volume_24h = float(volume_24h)
+            
+            # Use aggregated liquidity if available, otherwise use single pair liquidity
+            liquidity = pair_data.get('_aggregated_liquidity')
+            if liquidity is None:
+                liquidity = float(pair_data.get('liquidity', {}).get('usd', 0))
+            else:
+                liquidity = float(liquidity)
+            
             # Extract token details
             return {
                 'ticker': base_token.get('symbol', ''),
@@ -628,9 +649,9 @@ class SocialIngestModule:
                 'contract': base_token.get('address', ''),
                 'chain': mapped_chain,
                 'price': float(pair_data.get('priceUsd', 0)),
-                'volume_24h': float(pair_data.get('volume', {}).get('h24', 0)),
+                'volume_24h': volume_24h,
                 'market_cap': float(pair_data.get('marketCap', 0)),
-                'liquidity': float(pair_data.get('liquidity', {}).get('usd', 0)),
+                'liquidity': liquidity,
                 'dex': pair_data.get('dexId', 'Unknown'),
                 'verified': True,
                 'dexscreener_pair_id': pair_data.get('pairAddress', ''),
