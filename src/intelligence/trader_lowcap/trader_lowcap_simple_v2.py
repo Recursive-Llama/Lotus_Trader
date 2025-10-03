@@ -19,6 +19,7 @@ from trading.wallet_manager import WalletManager
 from trading.jupiter_client import JupiterClient
 from trading.js_solana_client import JSSolanaClient
 from intelligence.trader_lowcap.solana_executor import SolanaExecutor
+from intelligence.trader_lowcap.trader_service import TraderService
 from communication.telegram_signal_notifier import TelegramSignalNotifier
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,22 @@ class TraderLowcapSimpleV2:
         self.eth_executor = EthExecutor(self.eth_client, self.repo) if self.eth_client else None
         self.sol_executor = SolanaExecutor(self.js_solana_client) if self.js_solana_client else None
         
+        # Initialize TraderService (ports/use-cases facade) with current collaborators.
+        # No behavior change: service is available for gradual delegation.
+        try:
+            self._service = TraderService(
+                repo=self.repo,
+                price_oracle=self.price_oracle,
+                wallet=self.wallet_manager,
+                base_executor=self.base_executor,
+                bsc_executor=self.bsc_executor,
+                eth_executor=self.eth_executor,
+                sol_executor=self.sol_executor,
+            )
+        except Exception as e:
+            self.logger.warning(f"TraderService initialization skipped: {e}")
+            self._service = None
+
         # Initialize Telegram signal notifier
         self.telegram_notifier = self._init_telegram_notifier()
 
@@ -137,6 +154,8 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'bsc'
                 native_label = 'BNB'
                 balance = await self.wallet_manager.get_balance('bsc')
+                # Store native balance for portfolio tracking
+                await self._store_native_balance('bsc', float(balance))
                 price_info = self.price_oracle.price_bsc(contract)
                 price = price_info['price_native'] if price_info else None
                 executor = self.bsc_executor
@@ -149,6 +168,8 @@ class TraderLowcapSimpleV2:
                 native_label = 'ETH'
                 # Base and ETH share wallet; we count balance as ETH equivalent
                 balance = await self.wallet_manager.get_balance('base')
+                # Store native balance for portfolio tracking
+                await self._store_native_balance('base', float(balance))
                 price_info = self.price_oracle.price_base(contract)
                 price = price_info['price_native'] if price_info else None
                 executor = self.base_executor
@@ -160,6 +181,8 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'ethereum'
                 native_label = 'ETH'
                 balance = await self.wallet_manager.get_balance('ethereum')
+                # Store native balance for portfolio tracking
+                await self._store_native_balance('ethereum', float(balance))
                 price_info = self.price_oracle.price_eth(contract)
                 price = price_info['price_native'] if price_info else None
                 executor = self.eth_executor
@@ -168,6 +191,8 @@ class TraderLowcapSimpleV2:
                 native_symbol = 'solana'
                 native_label = 'SOL'
                 balance = await self.wallet_manager.get_balance('solana')
+                # Store native balance for portfolio tracking
+                await self._store_native_balance('solana', float(balance))
                 # Price via PriceOracle (SOL/token) with Jupiter fallback
                 price = None
                 try:
@@ -477,12 +502,16 @@ class TraderLowcapSimpleV2:
             
             # Execute sell based on chain
             tx_hash = None
-            if chain == 'base' and self.base_executor:
-                tx_hash = self.base_executor.execute_sell(contract, actual_sell_amount, target_price)
-            elif chain == 'bsc' and self.bsc_executor:
-                tx_hash = self.bsc_executor.execute_sell(contract, actual_sell_amount, target_price)
-            elif chain == 'ethereum' and self.eth_executor:
-                tx_hash = self.eth_executor.execute_sell(contract, actual_sell_amount, target_price)
+            if chain in ('base','bsc','ethereum') and self._service:
+                tx_hash = self._service.execute_exit(
+                    position_id=position_id,
+                    chain=chain,
+                    contract=contract,
+                    token_ticker=ticker,
+                    exit_number=exit_number,
+                    tokens_to_sell=actual_sell_amount,
+                    target_price_native=target_price,
+                )
             elif chain == 'solana' and self.sol_executor:
                 tx_hash = await self.sol_executor.execute_sell(contract, actual_sell_amount, target_price)
             else:
@@ -539,7 +568,32 @@ class TraderLowcapSimpleV2:
                 await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
                 # Execute Lotus buyback for SOL exits
-                buyback_result = await self._execute_lotus_buyback(exit_value_native, chain)
+                buyback_result = None
+                if self._service:
+                    try:
+                        buyback_cfg = {}
+                        try:
+                            # Load from existing config shape
+                            buyback_cfg = (self.config or {}).get('lotus_buyback', {})
+                        except Exception:
+                            buyback_cfg = {}
+                        plan = self._service.plan_buyback(
+                            chain=chain,
+                            exit_value_native=exit_value_native,
+                            enabled=bool(buyback_cfg.get('enabled', False)),
+                            percentage=float(buyback_cfg.get('percentage', 10.0)),
+                            min_amount_native=float(buyback_cfg.get('min_amount_sol', 0.001)),
+                        )
+                        # If plan says proceed, keep legacy swap/transfer for now (no behavior change)
+                        if plan and plan.get('success') and not plan.get('skipped'):
+                            buyback_result = await self._execute_lotus_buyback(exit_value_native, chain)
+                        else:
+                            buyback_result = plan
+                    except Exception as e:
+                        self.logger.error(f"Buyback planning failed, using legacy path: {e}")
+                        buyback_result = await self._execute_lotus_buyback(exit_value_native, chain)
+                else:
+                    buyback_result = await self._execute_lotus_buyback(exit_value_native, chain)
                 
                 # Send Telegram sell signal notification
                 await self._send_sell_notification_for_exit(
@@ -560,7 +614,15 @@ class TraderLowcapSimpleV2:
                 self.logger.info(f"✅ Exit {exit_number} executed successfully: {tx_hash}")
                 # Spawn trend batch funded by this standard exit (best-effort)
                 try:
-                    await self._spawn_trend_batch_after_standard_exit(position_id, target_exit)
+                    if self._service:
+                        batch_id = self._service.spawn_trend_from_exit(
+                            position_id=position_id,
+                            exit_price=target_exit.get('price', 0.0),
+                            native_amount=target_exit.get('native_amount', 0.0) or target_exit.get('cost_native', 0.0),
+                            source_exit_number=str(exit_number),
+                        )
+                        if batch_id:
+                            self.logger.info(f"Spawned trend batch via service: {batch_id}")
                 except Exception as te:
                     self.logger.error(f"Failed spawning trend batch after exit: {te}")
                 return True
@@ -893,12 +955,17 @@ class TraderLowcapSimpleV2:
             contract = position.get('token_contract')
             amount = entry.get('amount_native', 0)
             
-            if chain == 'bsc' and self.bsc_executor:
-                result = self.bsc_executor.execute_buy(contract, amount)
-            elif chain == 'base' and self.base_executor:
-                result = self.base_executor.execute_buy(contract, amount)
-            elif chain == 'ethereum' and self.eth_executor:
-                result = self.eth_executor.execute_buy(contract, amount)
+            # Delegate entries for EVM via service; Solana uses native executor
+            if chain in ('bsc','base','ethereum') and self._service:
+                result = self._service.execute_entry(
+                    position_id=position_id,
+                    chain=chain,
+                    contract=contract,
+                    token_ticker=position.get('token_ticker', 'UNKNOWN'),
+                    entry_number=entry_number,
+                    amount_native=amount,
+                    price_native=entry.get('price', 0.0),
+                )
             elif chain == 'solana' and self.sol_executor:
                 result = await self.sol_executor.execute_buy(contract, amount)
             else:
@@ -2152,5 +2219,34 @@ class TraderLowcapSimpleV2:
         except Exception as e:
             self.logger.error(f"Error recalculating exits for position {position_id}: {e}")
             return False
+
+    async def _store_native_balance(self, chain: str, balance: float):
+        """Store/update native token balance in database for portfolio tracking"""
+        try:
+            # Get USD value if possible
+            balance_usd = None
+            if chain in ['ethereum', 'base']:
+                eth_rate = await self._get_native_usd_rate('ethereum')
+                balance_usd = float(balance) * eth_rate if eth_rate > 0 else None
+            elif chain == 'bsc':
+                bnb_rate = await self._get_native_usd_rate('bsc')
+                balance_usd = float(balance) * bnb_rate if bnb_rate > 0 else None
+            elif chain == 'solana':
+                sol_rate = await self._get_native_usd_rate('solana')
+                balance_usd = float(balance) * sol_rate if sol_rate > 0 else None
+            
+            # Upsert balance (insert or update)
+            self.repo.client.table('wallet_balances').upsert({
+                'chain': chain,
+                'balance': float(balance),
+                'balance_usd': balance_usd,
+                'wallet_address': self.wallet_manager.get_wallet_address(chain),
+                'last_updated': datetime.now(timezone.utc).isoformat()
+            }).execute()
+            
+            self.logger.debug(f"Updated {chain} balance: {balance:.6f}")
+            
+        except Exception as e:
+            self.logger.error(f"Error storing {chain} balance: {e}")
 
 
