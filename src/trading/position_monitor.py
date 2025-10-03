@@ -392,16 +392,20 @@ class PositionMonitor:
             except Exception as e:
                 logger.error(f"Error ensuring trend exits for batch {batch_id}: {e}")
 
-            # Send trend entry notification
-            await self.trader._send_trend_entry_notification(
-                position_id=position_id,
-                entry_number=trend_entry_number,
-                tx_hash=tx_hash,
-                amount_native=allocated_native,
-                price=current_price,
-                dip_pct=dip_pct,
-                batch_id=batch_id
-            )
+            # Send trend entry notification via service notifier if available
+            try:
+                if getattr(self.trader, "_service", None) and getattr(self.trader, "telegram_notifier", None):
+                    await self.trader._service.send_trend_entry_notification(
+                        position_id=position_id,
+                        entry_number=trend_entry_number,
+                        tx_hash=tx_hash,
+                        amount_native=allocated_native,
+                        price=current_price,
+                        dip_pct=dip_pct,
+                        batch_id=batch_id,
+                    )
+            except Exception:
+                pass
             
             # Update position totals
             await self.trader._update_tokens_bought(position_id, tokens_to_buy)
@@ -565,18 +569,22 @@ class PositionMonitor:
             avg_entry_price = total_cost / total_tokens if total_tokens > 0 else 0
             gain_pct = ((current_price - avg_entry_price) / avg_entry_price) * 100 if avg_entry_price > 0 else 0
             
-            # Send trend exit notification
-            await self.trader._send_trend_exit_notification(
-                position_id=position_id,
-                exit_number=trend_exit_number,
-                tx_hash=tx_hash,
-                tokens_sold=tokens_to_sell,
-                sell_price=current_price,
-                gain_pct=gain_pct,
-                batch_id=batch_id,
-                profit_pct=gain_pct,
-                profit_usd=native_amount * 0.0001  # Rough USD estimate
-            )
+            # Send trend exit notification via service notifier if available
+            try:
+                if getattr(self.trader, "_service", None) and getattr(self.trader, "telegram_notifier", None):
+                    await self.trader._service.send_trend_exit_notification(
+                        position_id=position_id,
+                        exit_number=trend_exit_number,
+                        tx_hash=tx_hash,
+                        tokens_sold=tokens_to_sell,
+                        sell_price=current_price,
+                        gain_pct=gain_pct,
+                        batch_id=batch_id,
+                        profit_pct=gain_pct,
+                        profit_usd=native_amount * 0.0001,
+                    )
+            except Exception:
+                pass
             
             # Update position P&L
             await self.trader._update_position_pnl(position_id)

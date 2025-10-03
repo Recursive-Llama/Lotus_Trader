@@ -20,6 +20,7 @@ import asyncio
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import Dict, Any, List
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -237,6 +238,58 @@ async def populate_native_token_prices(supabase: Client, trader):
     
     print("✅ Native token prices populated")
 
+async def fix_avnt_position(supabase: Client, trader):
+    """Fix AVNT position specifically - add sale transaction and update to 30 tokens"""
+    print("🚀 Fixing AVNT position...")
+    
+    # Find AVNT position
+    result = supabase.table('lowcap_positions').select('*').ilike('token_ticker', 'AVNT').eq('status', 'active').execute()
+    
+    if not result.data:
+        print("❌ No active AVNT position found")
+        return False
+    
+    position = result.data[0]
+    position_id = position['id']
+    print(f"✅ Found AVNT position: {position_id}")
+    
+    # Current data
+    current_exits = position.get('exits', []) or []
+    
+    # Add the sale transaction
+    sale_price = 0.00025  # ETH per token
+    tokens_sold = 32  # Approximate tokens sold
+    sale_amount = tokens_sold * sale_price
+    
+    # Create new exit entry
+    new_exit = {
+        'exit_number': len(current_exits) + 1,
+        'status': 'executed',
+        'price': sale_price,
+        'actual_tokens_sold': tokens_sold,
+        'amount_native': sale_amount,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'tx_hash': 'manual_sale_update',
+        'notes': 'Manual sale update - sold ~32 tokens at 0.00025 ETH'
+    }
+    
+    # Update exits array
+    updated_exits = current_exits + [new_exit]
+    position['exits'] = updated_exits
+    
+    print("💾 Updating AVNT position with sale transaction...")
+    
+    # Use trader's repository method like the working approach
+    try:
+        trader.repo.update_position(position_id, position)
+        print("✅ Successfully added sale transaction to AVNT position!")
+        
+        # Now run the normal fix process
+        return await fix_position(supabase, trader, position)
+    except Exception as e:
+        print(f"❌ Failed to update AVNT position: {e}")
+        return False
+
 async def main():
     """Main function to fix all existing positions"""
     print("🚀 Starting comprehensive fix for existing positions...")
@@ -264,8 +317,16 @@ async def main():
     # Populate native token prices first
     await populate_native_token_prices(supabase, trader)
     
+    # Fix AVNT position first
+    print("\n🎯 Fixing AVNT position specifically...")
+    avnt_success = await fix_avnt_position(supabase, trader)
+    if avnt_success:
+        print("✅ AVNT position updated successfully!")
+    else:
+        print("❌ Failed to update AVNT position")
+    
     # Get all active positions
-    print("📊 Fetching active positions...")
+    print("\n📊 Fetching all active positions...")
     try:
         result = supabase.table('lowcap_positions').select('*').eq('status', 'active').execute()
         positions = result.data
