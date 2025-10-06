@@ -144,6 +144,72 @@ class StructuredTradingLogger:
         return False
     
     # =====================
+    # PRECONDITION LOGGING
+    # =====================
+
+    def log_entry_preconditions(self,
+                                position_id: Optional[str],
+                                token: str,
+                                chain: str,
+                                contract: Optional[str],
+                                entry_number: int,
+                                checks: Dict[str, bool],
+                                details: Dict[str, Any]):
+        """Log preconditions for an entry attempt"""
+        correlation = CorrelationContext(
+            position_id=position_id,
+            chain=chain,
+            contract=contract,
+            token=token,
+            action_type="entry",
+            entry_number=entry_number
+        )
+
+        passed = [k for k, v in checks.items() if v]
+        failed = [k for k, v in checks.items() if not v]
+
+        log_entry = self._create_log_entry(
+            event="ENTRY_PRECONDITIONS",
+            level="INFO",
+            correlation=correlation,
+            action={"checks": checks, "passed": passed, "failed": failed},
+            precondition_details=details
+        )
+
+        self._log_structured(log_entry)
+
+    def log_exit_preconditions(self,
+                               position_id: str,
+                               token: str,
+                               chain: str,
+                               contract: Optional[str],
+                               exit_number: int,
+                               checks: Dict[str, bool],
+                               details: Dict[str, Any]):
+        """Log preconditions for an exit attempt"""
+        correlation = CorrelationContext(
+            position_id=position_id,
+            chain=chain,
+            contract=contract,
+            token=token,
+            action_type="exit",
+            exit_number=exit_number
+        )
+
+        passed = [k for k, v in checks.items() if v]
+        failed = [k for k, v in checks.items() if not v]
+
+        log_entry = self._create_log_entry(
+            event="EXIT_PRECONDITIONS",
+            level="INFO",
+            correlation=correlation,
+            action={"checks": checks, "passed": passed, "failed": failed},
+            precondition_details=details
+        )
+
+        self._log_structured(log_entry)
+
+    # =====================
     # DECISION LOGGING
     # =====================
     
@@ -693,6 +759,43 @@ class StructuredTradingLogger:
             }
         )
         
+        self._log_structured(log_entry)
+
+    # =====================
+    # Aggregated failures
+    # =====================
+
+    def log_aggregated_failure(self,
+                               action_type: str,
+                               position_id: Optional[str],
+                               token: Optional[str],
+                               chain: Optional[str],
+                               reason: str,
+                               first_ts: str,
+                               last_ts: str,
+                               attempts: int,
+                               context: Optional[Dict[str, Any]] = None):
+        """Emit an aggregated failure event used to collapse noisy errors"""
+        correlation = CorrelationContext(
+            position_id=position_id,
+            chain=chain,
+            token=token,
+            action_type=action_type
+        )
+
+        log_entry = self._create_log_entry(
+            event=f"{action_type.upper()}_FAILED_AGGREGATED",
+            level="ERROR",
+            correlation=correlation,
+            error={
+                "reason": reason,
+                "first_attempt": first_ts,
+                "last_attempt": last_ts,
+                "total_attempts": attempts,
+                **(context or {})
+            }
+        )
+
         self._log_structured(log_entry)
 
 # Global instance
