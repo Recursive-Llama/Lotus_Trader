@@ -633,6 +633,16 @@ class TraderService:
             )
 
             if (decision.get('content', {}) or {}).get('action') != 'approve':
+                # Structured rejection
+                structured_logger.log_decision_rejected(
+                    decision_id=decision_id,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='action_not_approve',
+                    constraints_failed=['action_approve_required'],
+                    details={'action': decision.get('content', {}).get('action')}
+                )
                 trading_logger.log_decision_rejection(
                     token=ticker or 'UNKNOWN',
                     reason='action_not_approve',
@@ -643,6 +653,15 @@ class TraderService:
             # idempotency
             existing_for_book = self.repo.get_position_by_book_id(decision.get('id'))
             if existing_for_book:
+                structured_logger.log_decision_rejected(
+                    decision_id=decision_id,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='position_already_exists',
+                    constraints_failed=['idempotency_conflict'],
+                    details={'existing_position_id': existing_for_book.get('id')}
+                )
                 trading_logger.log_decision_rejection(
                     token=ticker or 'UNKNOWN',
                     reason='position_already_exists',
@@ -706,6 +725,15 @@ class TraderService:
                 trading_logger.log_executor_status('solana', executor, f"sol_executor={executor is not None}")
                 venue = None
             else:
+                structured_logger.log_decision_rejected(
+                    decision_id=decision_id,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='unsupported_chain',
+                    constraints_failed=['chain_not_supported'],
+                    details={'chain': chain}
+                )
                 trading_logger.log_decision_rejection(
                     token=ticker or 'UNKNOWN',
                     reason='unsupported_chain',
@@ -714,6 +742,15 @@ class TraderService:
                 return None
 
             if not balance or float(balance) <= 0:
+                structured_logger.log_decision_rejected(
+                    decision_id=decision_id,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='insufficient_balance',
+                    constraints_failed=['liquidity_requirement'],
+                    details={'balance': balance, 'required': '> 0'}
+                )
                 trading_logger.log_trade_failure(
                     chain=chain,
                     token=ticker or 'UNKNOWN',
@@ -723,6 +760,15 @@ class TraderService:
                 return None
             alloc_native = (allocation_pct * float(balance)) / 100.0
             if alloc_native <= 0 or not price:
+                structured_logger.log_decision_rejected(
+                    decision_id=decision_id,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='invalid_allocation_or_price',
+                    constraints_failed=['allocation_positive', 'price_available'],
+                    details={'alloc_native': alloc_native, 'price': price}
+                )
                 trading_logger.log_trade_failure(
                     chain=chain,
                     token=ticker or 'UNKNOWN',
@@ -763,6 +809,16 @@ class TraderService:
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
             }
             if not self.repo.create_position(position):
+                # DB failure logging (structured + legacy)
+                structured_logger.log_entry_failed(
+                    position_id=position_id,
+                    entry_number=1,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='database_update_failed',
+                    error_details={'stage': 'create_position', 'position_id': position_id}
+                )
                 trading_logger.log_trade_failure(
                     chain=chain,
                     token=ticker or 'UNKNOWN',
@@ -785,6 +841,26 @@ class TraderService:
                 e['unit'] = 'NATIVE'
                 e['native_symbol'] = native_label
             self.repo.update_entries(position_id, entries)
+
+            # Precondition log before first buy
+            structured_logger.log_entry_preconditions(
+                position_id=position_id,
+                token=ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                entry_number=1,
+                checks={
+                    'balance_ok': bool(balance) and float(balance) > 0,
+                    'price_ok': bool(price),
+                    'executor_ready': executor is not None,
+                    'venue_ok': bool(venue) if chain in ('bsc','base') else True,
+                },
+                details={
+                    'balance': float(balance) if balance else 0.0,
+                    'price': float(price) if price else None,
+                    'venue': venue
+                }
+            )
 
             # first buy
             e_amt = alloc_native / 3.0
@@ -817,7 +893,7 @@ class TraderService:
                     token=ticker or 'UNKNOWN',
                     chain=chain,
                     contract=contract,
-                    reason='transaction_execution_failed',
+                    reason='executor_noop',
                     error_details={'executor': executor is not None, 'amount': e_amt}
                 )
                 trading_logger.log_trade_failure(
@@ -907,6 +983,9 @@ class TraderService:
                 allocation_pct=allocation_pct,
                 source_tweet_url=source_tweet_url,
             )
+
+            # Periodic performance summary emit
+            structured_logger.log_performance_summary()
 
             return {
                 'position_id': position_id,
