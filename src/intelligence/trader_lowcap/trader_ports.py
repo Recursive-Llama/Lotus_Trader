@@ -12,7 +12,7 @@ Note: Keep this file small and dependency-free to avoid circular imports.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Optional, Dict, Any, Callable, List
+from typing import Protocol, Optional, Dict, Any
 
 
 # =====================
@@ -126,61 +126,4 @@ class PositionRepository(Protocol):
 
     def commit_exit_executed(self, position_id: str, exit_number: int, cost_native: float, cost_usd: float, tokens_sold: float) -> bool:
         ...
-
-
-# =====================
-# Events (In-process)
-# =====================
-
-@dataclass(frozen=True)
-class EntryExecuted:
-    position_id: str
-    entry_number: int
-    tx_hash: str
-    cost_native: float
-    tokens_bought: float
-
-
-@dataclass(frozen=True)
-class ExitExecuted:
-    position_id: str
-    exit_number: int
-    tx_hash: str
-    native_amount: float
-    tokens_sold: float
-
-
-@dataclass(frozen=True)
-class TrendBatchCreated:
-    position_id: str
-    batch_id: str
-    source_exit_number: str
-    funded_native_amount: float
-
-
-@dataclass(frozen=True)
-class BuybackExecuted:
-    position_id: Optional[str]
-    chain: str
-    buyback_native: float
-    tx_hash: Optional[str]
-
-
-class EventBus:
-    """Very small synchronous in-process dispatcher."""
-
-    def __init__(self) -> None:
-        self._handlers: Dict[type, List[Callable[[Any], None]]] = {}
-
-    def subscribe(self, event_type: type, handler: Callable[[Any], None]) -> None:
-        self._handlers.setdefault(event_type, []).append(handler)
-
-    def publish(self, event: Any) -> None:
-        for handler in self._handlers.get(type(event), []) or []:
-            try:
-                handler(event)
-            except Exception:
-                # Keep dispatcher resilient; handlers must guard themselves
-                pass
-
 

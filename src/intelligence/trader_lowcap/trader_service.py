@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionRepository, EventBus, PriceQuote
-from .trader_usecases import ExecuteExit, ExecuteExitRequest, ExecuteEntry, ExecuteEntryRequest, ExecuteBuyback, ExecuteBuybackRequest
+from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionRepository, PriceQuote
 from .entry_exit_planner import EntryExitPlanner
 from . import trader_views
 from .trading_logger import trading_logger
@@ -110,7 +109,6 @@ class TraderService:
                  eth_executor=None,
                  sol_executor=None,
                  js_solana_client=None) -> None:
-        self.events = EventBus()
         self.price_oracle = price_oracle
         self.price_provider = _PriceProviderAdapter(repo, price_oracle)
         self.wallet = wallet
@@ -129,48 +127,35 @@ class TraderService:
         self._js_solana_client = js_solana_client
         self._notifier = None
 
-        # Use cases (instantiate once)
-        self._execute_exit_uc = ExecuteExit(
-            price_provider=self.price_provider,
-            executor=self.executor,
-            wallet=self.wallet,
-            repo=self.repo,
-            events=self.events,
-        )
-        self._execute_entry_uc = ExecuteEntry(
-            price_provider=self.price_provider,
-            executor=self.executor,
-            wallet=self.wallet,
-            repo=self.repo,
-            events=self.events,
-        )
-        self._execute_buyback_uc = ExecuteBuyback(
-            price_provider=self.price_provider,
-        )
+        # No separate use-case layer; methods below inline simple orchestration
 
     def execute_exit(self, *, position_id: str, chain: str, contract: str, token_ticker: str, exit_number: int, tokens_to_sell: float, target_price_native: float) -> Optional[str]:
-        req = ExecuteExitRequest(
-            position_id=position_id,
-            chain=chain,
-            contract=contract,
-            token_ticker=token_ticker,
-            exit_number=exit_number,
-            tokens_to_sell=tokens_to_sell,
-            target_price_native=target_price_native,
-        )
-        return self._execute_exit_uc(req)
+        # Inline: delegate to appropriate executor (sync path for EVM; SOL handled by caller)
+        try:
+            if chain == 'base' and self.base_executor:
+                return self.base_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            if chain == 'bsc' and self.bsc_executor:
+                return self.bsc_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            if chain == 'ethereum' and self.eth_executor:
+                return self.eth_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            # For Solana, exit path is async on executor; caller should call sol executor directly
+            return None
+        except Exception:
+            return None
 
     def execute_entry(self, *, position_id: str, chain: str, contract: str, token_ticker: str, entry_number: int, amount_native: float, price_native: float) -> Optional[str]:
-        req = ExecuteEntryRequest(
-            position_id=position_id,
-            chain=chain,
-            contract=contract,
-            token_ticker=token_ticker,
-            entry_number=entry_number,
-            amount_native=amount_native,
-            price_native=price_native,
-        )
-        return self._execute_entry_uc(req)
+        # Inline: delegate to appropriate executor (sync path for EVM; SOL handled by caller)
+        try:
+            if chain == 'base' and self.base_executor:
+                return self.base_executor.execute_buy(contract, amount_native)
+            if chain == 'bsc' and self.bsc_executor:
+                return self.bsc_executor.execute_buy(contract, amount_native)
+            if chain == 'ethereum' and self.eth_executor:
+                return self.eth_executor.execute_buy(contract, amount_native)
+            # For Solana, entry path is async on executor; caller should call sol executor directly
+            return None
+        except Exception:
+            return None
 
     def spawn_trend_from_exit(self, *, position_id: str, exit_price: float, native_amount: float, source_exit_number: str) -> Optional[str]:
         """Replicate legacy trend batch creation using domain planner and repo updates."""
@@ -197,14 +182,27 @@ class TraderService:
             return None
 
     def plan_buyback(self, *, chain: str, exit_value_native: float, enabled: bool, percentage: float, min_amount_native: float) -> dict:
-        req = ExecuteBuybackRequest(
-            chain=chain,
-            exit_value_native=exit_value_native,
-            enabled=enabled,
-            percentage=percentage,
-            min_amount_native=min_amount_native,
-        )
-        return self._execute_buyback_uc(req)
+        # Inline of previous ExecuteBuyback use-case
+        try:
+            if (chain or '').lower() != 'solana':
+                return {'success': True, 'skipped': True, 'reason': 'Not a SOL exit'}
+            if not enabled:
+                return {'success': True, 'skipped': True, 'reason': 'Buyback disabled'}
+            buyback_amount = float(exit_value_native) * (float(percentage) / 100.0)
+            if buyback_amount < float(min_amount_native):
+                return {
+                    'success': True,
+                    'skipped': True,
+                    'reason': f'Below minimum threshold ({min_amount_native})',
+                    'buyback_amount_native': buyback_amount,
+                }
+            return {
+                'success': True,
+                'skipped': False,
+                'buyback_amount_native': buyback_amount,
+            }
+        except Exception:
+            return {'success': False, 'error': 'buyback_plan_failed'}
 
     def perform_buyback(self, *, lotus_contract: str, holding_wallet: str, buyback_amount_native: float, slippage_pct: float = 5.0) -> dict:
         """Execute Jupiter swap SOL->Lotus and transfer to holding wallet.
