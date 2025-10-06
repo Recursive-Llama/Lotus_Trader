@@ -135,15 +135,83 @@ class TraderService:
     def execute_exit(self, *, position_id: str, chain: str, contract: str, token_ticker: str, exit_number: int, tokens_to_sell: float, target_price_native: float) -> Optional[str]:
         # Inline: delegate to appropriate executor (sync path for EVM; SOL handled by caller)
         try:
+            # Preconditions log
+            executor_ready = (
+                (chain == 'base' and self.base_executor is not None) or
+                (chain == 'bsc' and self.bsc_executor is not None) or
+                (chain == 'ethereum' and self.eth_executor is not None)
+            )
+            structured_logger.log_exit_preconditions(
+                position_id=position_id,
+                token=token_ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                exit_number=exit_number,
+                checks={
+                    'executor_ready': executor_ready,
+                    'price_ok': target_price_native is not None and float(target_price_native) > 0,
+                    # quantity check is done upstream; we record intent here
+                    'quantity_check_passed': True,
+                },
+                details={
+                    'tokens_to_sell': tokens_to_sell,
+                    'target_price': target_price_native,
+                }
+            )
+
+            v = None
+            tx = None
             if chain == 'base' and self.base_executor:
-                return self.base_executor.execute_sell(contract, tokens_to_sell, target_price_native)
-            if chain == 'bsc' and self.bsc_executor:
-                return self.bsc_executor.execute_sell(contract, tokens_to_sell, target_price_native)
-            if chain == 'ethereum' and self.eth_executor:
-                return self.eth_executor.execute_sell(contract, tokens_to_sell, target_price_native)
-            # For Solana, exit path is async on executor; caller should call sol executor directly
-            return None
-        except Exception:
+                v = self.resolve_base_venue(contract)
+                tx = self.base_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            elif chain == 'bsc' and self.bsc_executor:
+                v = self.resolve_bsc_venue(contract)
+                tx = self.bsc_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            elif chain == 'ethereum' and self.eth_executor:
+                tx = self.eth_executor.execute_sell(contract, tokens_to_sell, target_price_native)
+            else:
+                tx = None
+
+            if tx:
+                # Minimal structured success (state deltas are handled elsewhere)
+                structured_logger.log_exit_success(
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    token=token_ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    tx_hash=tx,
+                    tokens_sold=tokens_to_sell,
+                    native_amount=tokens_to_sell * float(target_price_native or 0),
+                    actual_price=float(target_price_native or 0),
+                    venue=v['dex'] if isinstance(v, dict) and 'dex' in v else ('unknown' if chain in ('bsc','base') else 'n/a'),
+                    state_before=StateDelta(),
+                    state_after=StateDelta(),
+                    performance=PerformanceMetrics()
+                )
+                structured_logger.log_performance_summary()
+                return tx
+            else:
+                structured_logger.log_exit_failed(
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    token=token_ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='executor_noop',
+                    error_details={'venue': v, 'tokens_to_sell': tokens_to_sell, 'target_price': target_price_native}
+                )
+                return None
+        except Exception as e:
+            structured_logger.log_exit_failed(
+                position_id=position_id,
+                exit_number=exit_number,
+                token=token_ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                reason='exception',
+                error_details={'error': str(e), 'type': type(e).__name__}
+            )
             return None
 
     def execute_entry(self, *, position_id: str, chain: str, contract: str, token_ticker: str, entry_number: int, amount_native: float, price_native: float) -> Optional[str]:
@@ -180,6 +248,16 @@ class TraderService:
             
             # Replace all existing trend entries (don't extend) to avoid stale entries
             self.repo.update_trend_entries(position_id, trend_entries)
+            # Structured log for batch creation
+            structured_logger.log_trend_batch_created(
+                position_id=position_id,
+                batch_id=batch_id,
+                source_exit_number=int(source_exit_number) if str(source_exit_number).isdigit() else 0,
+                funded_amount=native_amount,
+                chain=self.repo.get_position(position_id).get('token_chain', '').lower() if self.repo.get_position(position_id) else 'unknown',
+                token=self.repo.get_position(position_id).get('token_ticker', 'UNKNOWN') if self.repo.get_position(position_id) else 'UNKNOWN'
+            )
+            structured_logger.log_performance_summary()
             return batch_id
         except Exception:
             return None
