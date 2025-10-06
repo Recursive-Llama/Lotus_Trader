@@ -856,6 +856,9 @@ class TraderService:
             success = self.repo.update_position(position_id, position)
             if success:
                 trading_logger.info(f"Updated total_tokens_bought for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_bought:.8f})")
+                
+                # Post-write verification
+                await self._verify_entry_aggregates(position_id, tokens_bought)
             return success
             
         except Exception as e:
@@ -953,6 +956,9 @@ class TraderService:
             success = self.repo.update_position(position_id, position)
             if success:
                 trading_logger.info(f"Updated total_tokens_sold for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_sold:.8f})")
+                
+                # Post-write verification
+                await self._verify_exit_aggregates(position_id, tokens_sold)
             return success
             
         except Exception as e:
@@ -980,5 +986,77 @@ class TraderService:
         except Exception as e:
             trading_logger.error(f"Error updating total_extracted_native for position {position_id}: {e}")
             return False
+
+    # ------------------------------
+    # Post-write verification methods
+    # ------------------------------
+    async def _verify_entry_aggregates(self, position_id: str, tokens_bought: float) -> None:
+        """Verify entry aggregates are consistent after update"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return
+            
+            # Check that totals are positive
+            total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
+            total_investment = position.get('total_investment_native', 0.0) or 0.0
+            avg_entry_price = position.get('avg_entry_price', 0.0) or 0.0
+            
+            if total_tokens_bought <= 0:
+                trading_logger.warning(f"VERIFY: {position_id} has zero total_tokens_bought after entry")
+            if total_investment <= 0:
+                trading_logger.warning(f"VERIFY: {position_id} has zero total_investment after entry")
+            if avg_entry_price <= 0 and total_tokens_bought > 0:
+                trading_logger.warning(f"VERIFY: {position_id} has zero avg_entry_price but {total_tokens_bought} tokens")
+                # Auto-recalc avg_entry_price
+                position['avg_entry_price'] = total_investment / total_tokens_bought
+                self.repo.update_position(position_id, position)
+                trading_logger.info(f"VERIFY: Auto-corrected avg_entry_price to {position['avg_entry_price']:.8f}")
+            
+            # Check that exits exist if we have an avg_entry_price
+            if avg_entry_price > 0:
+                exits = position.get('exits', [])
+                if not exits:
+                    trading_logger.warning(f"VERIFY: {position_id} has avg_entry_price {avg_entry_price} but no exits")
+                    # Auto-recalc exits
+                    await self.recalculate_exits_after_entry(position_id)
+                    trading_logger.info(f"VERIFY: Auto-recalculated exits for {position_id}")
+            
+            # Audit log
+            trading_logger.info(f"AUDIT: Entry {position_id} | tokens_bought: {tokens_bought:.8f} | total_tokens: {total_tokens_bought:.8f} | investment: {total_investment:.8f} | avg_price: {avg_entry_price:.8f}")
+            
+        except Exception as e:
+            trading_logger.error(f"Error in entry verification for {position_id}: {e}")
+
+    async def _verify_exit_aggregates(self, position_id: str, tokens_sold: float) -> None:
+        """Verify exit aggregates are consistent after update"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return
+            
+            # Check that sold/extracted increased and quantity decreased
+            total_tokens_sold = position.get('total_tokens_sold', 0.0) or 0.0
+            total_extracted = position.get('total_extracted_native', 0.0) or 0.0
+            total_quantity = position.get('total_quantity', 0.0) or 0.0
+            total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
+            
+            # Basic consistency checks
+            if total_tokens_sold > total_tokens_bought:
+                trading_logger.warning(f"VERIFY: {position_id} sold {total_tokens_sold:.8f} > bought {total_tokens_bought:.8f}")
+            
+            expected_quantity = total_tokens_bought - total_tokens_sold
+            if abs(total_quantity - expected_quantity) > 0.0001:  # Small tolerance for rounding
+                trading_logger.warning(f"VERIFY: {position_id} quantity mismatch: expected {expected_quantity:.8f}, got {total_quantity:.8f}")
+                # Auto-correct quantity
+                position['total_quantity'] = expected_quantity
+                self.repo.update_position(position_id, position)
+                trading_logger.info(f"VERIFY: Auto-corrected quantity to {expected_quantity:.8f}")
+            
+            # Audit log
+            trading_logger.info(f"AUDIT: Exit {position_id} | tokens_sold: {tokens_sold:.8f} | total_sold: {total_tokens_sold:.8f} | extracted: {total_extracted:.8f} | quantity: {total_quantity:.8f}")
+            
+        except Exception as e:
+            trading_logger.error(f"Error in exit verification for {position_id}: {e}")
 
 
