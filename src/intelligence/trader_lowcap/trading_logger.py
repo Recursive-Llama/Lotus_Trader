@@ -41,30 +41,7 @@ class TradingLogger:
             'Decision Making - All decision approvals, rejections, and reasoning'
         )
         
-        # Network-specific loggers
-        self.solana = self._create_logger(
-            'solana',
-            'trading_solana.log',
-            'Solana Trading - All Solana-specific operations'
-        )
-        
-        self.ethereum = self._create_logger(
-            'ethereum',
-            'trading_ethereum.log',
-            'Ethereum Trading - All Ethereum-specific operations'
-        )
-        
-        self.base = self._create_logger(
-            'base',
-            'trading_base.log',
-            'Base Trading - All Base-specific operations'
-        )
-        
-        self.bsc = self._create_logger(
-            'bsc',
-            'trading_bsc.log',
-            'BSC Trading - All BSC-specific operations'
-        )
+        # Network-specific file handlers removed; everything goes to centralized structured logger now
         
         # Price and balance logger
         self.prices = self._create_logger(
@@ -209,9 +186,8 @@ class TradingLogger:
     
     # Chain-specific detailed logging
     def log_chain_operation(self, chain: str, operation: str, token: str, details: Dict[str, Any]):
-        """Log chain-specific operations"""
-        chain_logger = getattr(self, chain.lower(), self.trader)
-        chain_logger.info(f"{operation.upper()} | {token} | {details}")
+        """Log chain-specific operations (centralized)"""
+        self.trader.info(f"{operation.upper()} | {chain.upper()} | {token} | {details}")
     
     def log_venue_resolution(self, chain: str, token: str, venue: Optional[Dict[str, Any]]):
         """Log venue resolution for trading"""
