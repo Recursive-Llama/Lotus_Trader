@@ -26,6 +26,7 @@ from intelligence.trader_lowcap.trader_domain import (
     convert_native_to_usd,
     compute_total_pnl_pct,
 )
+from intelligence.trader_lowcap.trading_logger import trading_logger
 from communication.telegram_signal_notifier import TelegramSignalNotifier
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,12 @@ class TraderLowcapSimpleV2:
         self.eth_executor = EthExecutor(self.eth_client, self.repo) if self.eth_client else None
         self.sol_executor = SolanaExecutor(self.js_solana_client) if self.js_solana_client else None
         
+        # Log executor status
+        trading_logger.log_executor_status('solana', self.sol_executor, f"js_client={self.js_solana_client is not None}")
+        trading_logger.log_executor_status('ethereum', self.eth_executor, f"eth_client={self.eth_client is not None}")
+        trading_logger.log_executor_status('base', self.base_executor, f"base_client={self.base_client is not None}")
+        trading_logger.log_executor_status('bsc', self.bsc_executor, f"bsc_client={self.bsc_client is not None}")
+        
         # Initialize TraderService (ports/use-cases facade) with current collaborators.
         # No behavior change: service is available for gradual delegation.
         try:
@@ -99,7 +106,17 @@ class TraderLowcapSimpleV2:
                 sol_executor=self.sol_executor,
                 js_solana_client=self.js_solana_client,
             )
+            trading_logger.log_initialization(
+                component="TraderService",
+                status="SUCCESS",
+                details=f"sol_executor={self.sol_executor is not None}, js_client={self.js_solana_client is not None}"
+            )
         except Exception as e:
+            trading_logger.log_initialization(
+                component="TraderService",
+                status="FAILED",
+                details=str(e)
+            )
             self.logger.warning(f"TraderService initialization skipped: {e}")
             self._service = None
 
@@ -150,7 +167,7 @@ class TraderLowcapSimpleV2:
             if self._service:
                 return await self._service.execute_decision(decision)
             self.logger.error("Trader service unavailable; cannot execute decision")
-            return None
+                return None
 
             token = (decision.get('signal_pack') or {}).get('token') or {}
             chain = (token.get('chain') or '').lower()
@@ -292,7 +309,8 @@ class TraderLowcapSimpleV2:
                 'total_pnl_native': 0.0,     # Track total P&L in native currency
                 'curator_sources': decision.get('content', {}).get('curator_id'),
                 'source_tweet_url': source_tweet_url,  # Store for sell notifications
-                'first_entry_timestamp': datetime.now(timezone.utc).isoformat()
+                'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
+                'exit_rules': self._build_exit_rules_from_config()  # Add exit rules for standard exits
             }
             if not self.repo.create_position(position):
                 self.logger.error("Trader V2: Failed to create position")
@@ -350,7 +368,8 @@ class TraderLowcapSimpleV2:
                 if self._service:
                     await self._service.recalculate_exits_after_entry(position_id)
                 else:
-                    await self._recalculate_exits_after_entry(position_id)
+                    # Fallback: recalculate exits using existing method
+                    self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
                 
                 # Detect tax tokens after successful buy
                 if self._service:
@@ -361,7 +380,7 @@ class TraderLowcapSimpleV2:
                     await self._service.set_quantity_from_trade(position_id, tokens_bought)
                     await self._service.reconcile_wallet_quantity(position_id, position.get('total_quantity', 0))
                 else:
-                    await self._set_quantity_from_trade(position_id, tokens_bought)
+                await self._set_quantity_from_trade(position_id, tokens_bought)
                 
                 # Update last activity timestamp
                 position = self.repo.get_position(position_id)
@@ -372,15 +391,15 @@ class TraderLowcapSimpleV2:
                 # Send Telegram buy signal notification via service (if configured)
                 if self._service and self.telegram_notifier:
                     await self._service.send_buy_signal(
-                        token_ticker=ticker,
-                        token_contract=contract,
-                        chain=chain,
-                        amount_native=e_amt,
-                        price=price,
-                        tx_hash=tx_hash,
-                        allocation_pct=allocation_pct,
+                    token_ticker=ticker,
+                    token_contract=contract,
+                    chain=chain,
+                    amount_native=e_amt,
+                    price=price,
+                    tx_hash=tx_hash,
+                    allocation_pct=allocation_pct,
                         source_tweet_url=source_tweet_url,
-                    )
+                )
 
             # Store exit rules from config
             exit_rules = self._build_exit_rules_from_config()
@@ -513,7 +532,17 @@ class TraderLowcapSimpleV2:
                 exit_value_native = actual_sell_amount * target_price
                 exit_value_usd = 0
                 
-                # Get current price info for USD calculation
+                # Get current price info from database (not API)
+                current_price = await self._get_current_price_from_db(contract, chain)
+                if current_price and current_price > 0:
+                    # Get USD rate for cost calculation
+                    native_usd_rate = await self._get_native_usd_rate(chain)
+                    if native_usd_rate > 0:
+                        exit_value_usd = exit_value_native * native_usd_rate
+                    else:
+                        exit_value_usd = 0.0
+                else:
+                    # Fallback to API if database price not available
                 if chain == 'bsc':
                     price_info = self.price_oracle.price_bsc(contract)
                 elif chain == 'base':
@@ -528,6 +557,8 @@ class TraderLowcapSimpleV2:
                 if price_info and 'price_usd' in price_info:
                     token_price_usd = price_info['price_usd']
                     exit_value_usd = actual_sell_amount * token_price_usd
+                    else:
+                        exit_value_usd = 0.0
                 
                 # Update exit with transaction details and cost tracking
                 target_exit['status'] = 'executed'
@@ -544,7 +575,7 @@ class TraderLowcapSimpleV2:
                 await self._update_tokens_sold(position_id, actual_sell_amount)
                 await self._update_total_extracted_native(position_id, exit_value_native)
                 await self._update_position_pnl(position_id)
-                await self._recalculate_exits_after_entry(position_id)
+                # Note: Exits don't need recalculation - they're already calculated based on entry price
                 
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 if self._service:
@@ -552,17 +583,19 @@ class TraderLowcapSimpleV2:
                     # schedule reconciliation
                     await self._service.reconcile_wallet_quantity(position_id, position.get('total_quantity', 0))
                 else:
-                    await self._set_quantity_from_trade(position_id, -actual_sell_amount)
+                await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
                 # Execute Lotus buyback for SOL exits
                 buyback_result = None
-                if self._service:
+                if self._service and chain.lower() == 'solana':
                     try:
-                        buyback_cfg = {}
-                        try:
                             buyback_cfg = (self.config or {}).get('lotus_buyback', {})
-                        except Exception:
-                            buyback_cfg = {}
+                        
+                        # Validate exit value
+                        if exit_value_native <= 0:
+                            self.logger.warning(f"Lotus buyback skipped: exit_value_native is {exit_value_native}")
+                            buyback_result = {'success': True, 'skipped': True, 'reason': 'Invalid exit value'}
+                        else:
                         plan = self._service.plan_buyback(
                             chain=chain,
                             exit_value_native=exit_value_native,
@@ -570,35 +603,42 @@ class TraderLowcapSimpleV2:
                             percentage=float(buyback_cfg.get('percentage', 10.0)),
                             min_amount_native=float(buyback_cfg.get('min_amount_sol', 0.001)),
                         )
-                        if plan and plan.get('success') and not plan.get('skipped') and chain == 'solana':
-                            lotus_contract = buyback_cfg.get('lotus_contract')
-                            holding_wallet = buyback_cfg.get('holding_wallet')
-                            if lotus_contract and holding_wallet:
-                                buyback_result = self._service.perform_buyback(
-                                    lotus_contract=lotus_contract,
-                                    holding_wallet=holding_wallet,
-                                    buyback_amount_native=exit_value_native * (float(buyback_cfg.get('percentage', 10.0))/100.0),
-                                    slippage_pct=5.0,
-                                )
-                            else:
-                                buyback_result = {'success': False, 'error': 'Missing buyback config'}
+                            
+                        if plan and plan.get('success') and not plan.get('skipped'):
+                                lotus_contract = buyback_cfg.get('lotus_contract')
+                                holding_wallet = buyback_cfg.get('holding_wallet')
+                                slippage_pct = float(buyback_cfg.get('slippage_pct', 5.0))
+                                
+                                if lotus_contract and holding_wallet:
+                                    buyback_amount = plan.get('buyback_amount_native', 0)
+                                    self.logger.info(f"Executing Lotus buyback: {buyback_amount:.6f} SOL from {exit_value_native:.6f} SOL exit")
+                                    
+                                    buyback_result = self._service.perform_buyback(
+                                        lotus_contract=lotus_contract,
+                                        holding_wallet=holding_wallet,
+                                        buyback_amount_native=buyback_amount,
+                                        slippage_pct=slippage_pct,
+                                    )
+                                else:
+                                    buyback_result = {'success': False, 'error': 'Missing lotus_contract or holding_wallet in config'}
                         else:
                             buyback_result = plan
-                    except Exception:
-                        buyback_result = {'success': False, 'error': 'buyback_service_failed'}
+                    except Exception as e:
+                        self.logger.error(f"Lotus buyback failed: {e}")
+                        buyback_result = {'success': False, 'error': f'buyback_service_failed: {str(e)}'}
                 
                 # Send Telegram sell signal notification via service (preferred)
                 if self._service and self.telegram_notifier:
                     await self._service.send_sell_signal(
-                        position_id=position_id,
-                        exit_number=exit_number,
-                        tokens_sold=actual_sell_amount,
-                        sell_price=target_price,
-                        tx_hash=tx_hash,
-                        chain=chain,
-                        contract=contract,
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    tokens_sold=actual_sell_amount,
+                    sell_price=target_price,
+                    tx_hash=tx_hash,
+                    chain=chain,
+                    contract=contract,
                         buyback_result=buyback_result,
-                    )
+                )
                 else:
                     pass
                 
@@ -606,6 +646,15 @@ class TraderLowcapSimpleV2:
                 # Save the entire updated position, not just the exits
                 self.repo.update_position(position_id, position)
                 
+                trading_logger.log_exit_execution(
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    token=ticker,
+                    chain=chain,
+                    tokens_sold=actual_sell_amount,
+                    price=target_price,
+                    tx_hash=tx_hash
+                )
                 self.logger.info(f"✅ Exit {exit_number} executed successfully: {tx_hash}")
                 # Spawn trend batch funded by this standard exit (best-effort)
                 try:
@@ -617,11 +666,25 @@ class TraderLowcapSimpleV2:
                             source_exit_number=str(exit_number),
                         )
                         if batch_id:
+                            trading_logger.log_trend_batch_creation(
+                                batch_id=batch_id,
+                                source_exit=str(exit_number),
+                                amount=target_exit.get('native_amount', 0.0) or target_exit.get('cost_native', 0.0),
+                                chain=chain
+                            )
                             self.logger.info(f"Spawned trend batch via service: {batch_id}")
                 except Exception as te:
                     self.logger.error(f"Failed spawning trend batch after exit: {te}")
                 return True
             else:
+                trading_logger.log_exit_failure(
+                    position_id=position_id,
+                    exit_number=exit_number,
+                    token=ticker,
+                    chain=chain,
+                    reason='no_transaction_hash',
+                    details='Executor returned None'
+                )
                 self.logger.error(f"❌ Exit {exit_number} failed - no transaction hash")
                 return False
                 
@@ -879,7 +942,19 @@ class TraderLowcapSimpleV2:
                 cost_usd = 0
                 tokens_bought = 0
                 
-                # Get price info for USD calculation
+                # Get price info from database (not API)
+                price = await self._get_current_price_from_db(contract, chain)
+                if price and price > 0:
+                    tokens_bought = amount / price
+                    
+                    # Get USD rate for cost calculation
+                    native_usd_rate = await self._get_native_usd_rate(chain)
+                    if native_usd_rate > 0:
+                        cost_usd = amount * native_usd_rate
+                    else:
+                        cost_usd = 0.0
+                else:
+                    # Fallback to API if database price not available
                 if chain == 'bsc':
                     price_info = self.price_oracle.price_bsc(contract)
                 elif chain == 'base':
@@ -896,6 +971,10 @@ class TraderLowcapSimpleV2:
                     token_price_usd = price_info['price_usd']
                     tokens_bought = amount / price
                     cost_usd = tokens_bought * token_price_usd
+                    else:
+                        price = 0
+                        tokens_bought = 0
+                        cost_usd = 0
                 
                 # Mark entry as executed with cost tracking
                 self.repo.mark_entry_executed(
@@ -911,7 +990,11 @@ class TraderLowcapSimpleV2:
                 await self._update_tokens_bought(position_id, tokens_bought)
                 await self._update_total_investment_native(position_id, amount)
                 await self._update_position_pnl(position_id)
-                await self._recalculate_exits_after_entry(position_id)
+                if self._service:
+                    await self._service.recalculate_exits_after_entry(position_id)
+                else:
+                    # Fallback: recalculate exits using existing method
+                    self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
                 
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -922,15 +1005,32 @@ class TraderLowcapSimpleV2:
                         token_ticker=position.get('token_ticker', 'Unknown'),
                         token_contract=position.get('token_contract', ''),
                         chain=chain,
-                        amount_native=amount,
+                    amount_native=amount,
                         price=entry.get('price', 0),
                         tx_hash=result,
                         allocation_pct=None,
                         source_tweet_url=position.get('source_tweet_url'),
                     )
                 
+                trading_logger.log_entry_execution(
+                    position_id=position_id,
+                    entry_number=entry_number,
+                    token=position.get('token_ticker', 'UNKNOWN'),
+                    chain=chain,
+                    amount=amount,
+                    price=entry.get('price', 0),
+                    tx_hash=result
+                )
                 self.logger.info(f"Entry {entry_number} executed successfully: {result}")
             else:
+                trading_logger.log_entry_failure(
+                    position_id=position_id,
+                    entry_number=entry_number,
+                    token=position.get('token_ticker', 'UNKNOWN'),
+                    chain=chain,
+                    reason='execution_failed',
+                    details='No transaction hash returned'
+                )
                         self.logger.error(f"Entry {entry_number} execution failed")
                         # Mark as failed to prevent endless retries
                         self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
@@ -1033,7 +1133,11 @@ class TraderLowcapSimpleV2:
                         await self._update_tokens_bought(position_id, tokens_bought)
                         await self._update_total_investment_native(position_id, amount)
                         await self._update_position_pnl(position_id)
-                        await self._recalculate_exits_after_entry(position_id)
+                        if self._service:
+                            await self._service.recalculate_exits_after_entry(position_id)
+                        else:
+                            # Fallback: recalculate exits using existing method
+                            self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
                         
                         # Set total_quantity immediately from trade execution and schedule reconciliation
                         await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -1044,12 +1148,12 @@ class TraderLowcapSimpleV2:
                                 token_ticker=position.get('token_ticker', 'Unknown'),
                                 token_contract=position.get('token_contract', ''),
                                 chain=chain,
-                                amount_native=amount,
+                            amount_native=amount,
                                 price=entry.get('price', 0),
                                 tx_hash=result,
                                 allocation_pct=None,
                                 source_tweet_url=position.get('source_tweet_url'),
-                            )
+                        )
                         
                         self.logger.info(f"Entry {entry_number} executed and confirmed: {result}")
                         return True
@@ -1089,7 +1193,11 @@ class TraderLowcapSimpleV2:
                     await self._update_tokens_bought(position_id, tokens_bought)
                     await self._update_total_investment_native(position_id, amount)
                     await self._update_position_pnl(position_id)
-                    await self._recalculate_exits_after_entry(position_id)
+                    if self._service:
+                        await self._service.recalculate_exits_after_entry(position_id)
+                    else:
+                        # Fallback: recalculate exits using existing method
+                        self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
                     
                     # Set total_quantity immediately from trade execution and schedule reconciliation
                     await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -1100,12 +1208,12 @@ class TraderLowcapSimpleV2:
                             token_ticker=position.get('token_ticker', 'Unknown'),
                             token_contract=position.get('token_contract', ''),
                             chain=chain,
-                            amount_native=amount,
+                        amount_native=amount,
                             price=entry.get('price', 0),
                             tx_hash=result,
                             allocation_pct=None,
                             source_tweet_url=position.get('source_tweet_url'),
-                        )
+                    )
                     
                     self.logger.info(f"Entry {entry_number} executed: {result}")
                     return True
@@ -1233,30 +1341,30 @@ class TraderLowcapSimpleV2:
         if not (self._service and self.telegram_notifier):
             return
         # Source URL extraction remains here
-        source_tweet_url = None
-        signal_pack = decision.get('signal_pack', {})
-        if signal_pack:
-            source_tweet_url = (
-                signal_pack.get('source_tweet_url') or
-                signal_pack.get('tweet_url') or
-                signal_pack.get('url') or
-                signal_pack.get('message', {}).get('url')
-            )
-        if not source_tweet_url:
-            module_intelligence = decision.get('module_intelligence', {})
-            social_signal = module_intelligence.get('social_signal', {})
-            message = social_signal.get('message', {})
-            source_tweet_url = message.get('url')
+            source_tweet_url = None
+            signal_pack = decision.get('signal_pack', {})
+            if signal_pack:
+                source_tweet_url = (
+                    signal_pack.get('source_tweet_url') or
+                    signal_pack.get('tweet_url') or
+                    signal_pack.get('url') or
+                    signal_pack.get('message', {}).get('url')
+                )
+            if not source_tweet_url:
+                module_intelligence = decision.get('module_intelligence', {})
+                social_signal = module_intelligence.get('social_signal', {})
+                message = social_signal.get('message', {})
+                source_tweet_url = message.get('url')
         await self._service.send_buy_signal(
-            token_ticker=token_ticker,
-            token_contract=token_contract,
-            chain=chain,
-            amount_native=amount_native,
-            price=price,
-            tx_hash=tx_hash,
-            allocation_pct=allocation_pct,
+                token_ticker=token_ticker,
+                token_contract=token_contract,
+                chain=chain,
+                amount_native=amount_native,
+                price=price,
+                tx_hash=tx_hash,
+                allocation_pct=allocation_pct,
             source_tweet_url=source_tweet_url,
-        )
+            )
 
     async def _send_additional_entry_notification(self,
                                                 position_id: str,
@@ -1327,9 +1435,9 @@ class TraderLowcapSimpleV2:
         await self._service.send_sell_signal(
             position_id=position_id,
             exit_number=0,
-            tokens_sold=tokens_sold,
-            sell_price=sell_price,
-            tx_hash=tx_hash,
+                tokens_sold=tokens_sold,
+                sell_price=sell_price,
+                tx_hash=tx_hash,
             chain=chain,
             contract=token_contract,
             buyback_result=None,
@@ -1681,81 +1789,6 @@ class TraderLowcapSimpleV2:
             return 0.0
 
 
-    async def _execute_lotus_buyback(self, exit_value_native: float, chain: str) -> dict:
-        """Execute Lotus token buyback for SOL exits"""
-        try:
-            # Only execute for SOL exits
-            if chain.lower() != 'solana':
-                return {'success': True, 'skipped': True, 'reason': 'Not a SOL exit'}
-            
-            # Get buyback config
-            buyback_config = self.config.get('lotus_buyback', {})
-            if not buyback_config.get('enabled', False):
-                return {'success': True, 'skipped': True, 'reason': 'Buyback disabled'}
-            
-            # Calculate buyback amount
-            percentage = buyback_config.get('percentage', 10.0)
-            min_amount = buyback_config.get('min_amount_sol', 0.001)
-            buyback_amount = float(exit_value_native) * (percentage / 100.0)
-            
-            # Check minimum threshold
-            if buyback_amount < min_amount:
-                self.logger.info(f"Lotus buyback skipped: {buyback_amount:.6f} SOL < {min_amount} SOL minimum")
-                return {'success': True, 'skipped': True, 'reason': f'Below minimum threshold ({min_amount} SOL)'}
-            
-            # Get Lotus contract and holding wallet
-            lotus_contract = buyback_config.get('lotus_contract')
-            holding_wallet = buyback_config.get('holding_wallet')
-            
-            if not lotus_contract or not holding_wallet:
-                self.logger.error("Lotus buyback config missing contract or holding wallet")
-                return {'success': False, 'error': 'Missing config'}
-            
-            self.logger.info(f"Executing Lotus buyback: {buyback_amount:.6f} SOL -> {lotus_contract}")
-            
-            # Execute the buyback using existing Solana trading infrastructure
-            # This will use the same Raydium/Jupiter integration as regular trades
-            result = await self._execute_solana_swap(
-                input_amount=buyback_amount,
-                input_token='SOL',
-                output_token=lotus_contract,
-                slippage_pct=5.0  # 5% slippage for buyback
-            )
-            
-            if result and result.get('success', False):
-                # Send Lotus tokens to holding wallet
-                lotus_amount = result.get('output_amount', 0)
-                if lotus_amount > 0:
-                    transfer_result = await self._send_tokens_to_wallet(
-                        token_contract=lotus_contract,
-                        amount=lotus_amount,
-                        destination_wallet=holding_wallet,
-                        chain='solana'
-                    )
-                    
-                    if transfer_result:
-                        self.logger.info(f"Lotus buyback successful: {lotus_amount:.2f} Lotus sent to {holding_wallet}")
-                        return {
-                            'success': True,
-                            'skipped': False,
-                            'buyback_amount_sol': buyback_amount,
-                            'lotus_tokens': lotus_amount,
-                            'transfer_tx_hash': result.get('tx_hash', ''),
-                            'holding_wallet': holding_wallet
-                        }
-                    else:
-                        self.logger.error("Failed to send Lotus tokens to holding wallet")
-                        return {'success': False, 'error': 'Transfer failed'}
-                else:
-                    self.logger.error("No Lotus tokens received from swap")
-                    return {'success': False, 'error': 'No tokens received'}
-            else:
-                self.logger.error(f"Lotus buyback swap failed: {result}")
-                return {'success': False, 'error': result.get('error', 'Swap failed')}
-                
-        except Exception as e:
-            self.logger.error(f"Error executing Lotus buyback: {e}")
-            return {'success': False, 'error': str(e)}
 
     async def _execute_solana_swap(self, input_amount: float, input_token: str, output_token: str, slippage_pct: float) -> dict:
         """Execute a Solana token swap using existing Jupiter infrastructure"""

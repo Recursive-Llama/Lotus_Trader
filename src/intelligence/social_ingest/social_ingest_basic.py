@@ -67,6 +67,7 @@ class SocialIngestModule:
             'XPL',   # Specific token to avoid
             'WEED',  # Specific token to avoid
             'BLV',   # Specific token to avoid
+            'LIGHTER',  # Specific token to avoid
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']

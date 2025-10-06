@@ -407,10 +407,13 @@ class PositionMonitor:
             except Exception:
                 pass
             
-            # Update position totals
-            await self.trader._update_tokens_bought(position_id, tokens_to_buy)
-            await self.trader._update_total_investment_native(position_id, allocated_native)
-            await self.trader._update_position_pnl(position_id)
+            # Update position totals via service
+            if getattr(self.trader, "_service", None):
+                await self.trader._service._update_tokens_bought(position_id, tokens_to_buy)
+                await self.trader._service._update_total_investment_native(position_id, allocated_native)
+                await self.trader._service._update_position_pnl(position_id)
+            else:
+                logger.warning(f"No service available to update position totals for {position_id}")
             
             logger.info(f"✅ Trend entry {trend_entry_number} completed successfully")
             return True
@@ -586,8 +589,17 @@ class PositionMonitor:
             except Exception:
                 pass
             
-            # Update position P&L
-            await self.trader._update_position_pnl(position_id)
+            # Update position aggregates via service
+            if getattr(self.trader, "_service", None):
+                # Update tokens sold and extracted native
+                await self.trader._service._update_tokens_sold(position_id, tokens_to_sell)
+                await self.trader._service._update_total_extracted_native(position_id, native_amount)
+                # Update quantity (decrease by tokens sold)
+                await self.trader._service.set_quantity_from_trade(position_id, -tokens_to_sell)
+                # Update P&L
+                await self.trader._service._update_position_pnl(position_id)
+            else:
+                logger.warning(f"No service available to update position aggregates for {position_id}")
             
             logger.info(f"✅ Trend exit {trend_exit_number} completed successfully")
             return True

@@ -13,6 +13,7 @@ from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionReposito
 from .trader_usecases import ExecuteExit, ExecuteExitRequest, ExecuteEntry, ExecuteEntryRequest, ExecuteBuyback, ExecuteBuybackRequest
 from .entry_exit_planner import EntryExitPlanner
 from . import trader_views
+from .trading_logger import trading_logger
 
 
 class _PriceProviderAdapter(PriceProvider):
@@ -124,6 +125,7 @@ class TraderService:
         self.base_executor = base_executor
         self.bsc_executor = bsc_executor
         self.eth_executor = eth_executor
+        self.sol_executor = sol_executor
         self._js_solana_client = js_solana_client
         self._notifier = None
 
@@ -175,17 +177,21 @@ class TraderService:
         try:
             if exit_price <= 0 or native_amount <= 0:
                 return None
-            batch_id = f"trend-{position_id}"
+            
+            # Create unique batch ID per exit to avoid collisions
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            batch_id = f"trend-{position_id}-exit{source_exit_number}-{timestamp}"
+            
             trend_entries = EntryExitPlanner.build_trend_entries_from_standard_exit(
                 exit_price=exit_price,
                 exit_native_amount=native_amount,
                 source_exit_id=source_exit_number,
                 batch_id=batch_id,
             )
-            position = self.repo.get_position(position_id) or {}
-            existing = position.get('trend_entries', []) or []
-            existing.extend(trend_entries)
-            self.repo.update_trend_entries(position_id, existing)
+            
+            # Replace all existing trend entries (don't extend) to avoid stale entries
+            self.repo.update_trend_entries(position_id, trend_entries)
             return batch_id
         except Exception:
             return None
@@ -209,9 +215,18 @@ class TraderService:
             if not self._js_solana_client:
                 return {'success': False, 'error': 'JSSolanaClient not initialized'}
 
+            # Validate inputs
+            if buyback_amount_native <= 0:
+                return {'success': False, 'error': 'Invalid buyback amount'}
+            
+            if not lotus_contract or not holding_wallet:
+                return {'success': False, 'error': 'Missing contract or wallet address'}
+
             # Convert SOL to lamports (9 decimals)
             lamports = int(float(buyback_amount_native) * 1_000_000_000)
             slippage_bps = int(slippage_pct * 100)
+
+            trading_logger.info(f"Executing Lotus buyback: {buyback_amount_native:.6f} SOL -> {lotus_contract}")
 
             # Execute Jupiter swap
             result = self._js_solana_client.execute_jupiter_swap_sync(
@@ -222,8 +237,6 @@ class TraderService:
             ) if hasattr(self._js_solana_client, 'execute_jupiter_swap_sync') else None
 
             if result is None:
-                # Fallback to async helper if only async is available
-                # Callers can still use legacy async method as fallback
                 return {'success': False, 'error': 'Sync Jupiter swap not available'}
 
             if result.get('success', False):
@@ -519,17 +532,40 @@ class TraderService:
     # ------------------------------
     async def execute_decision(self, decision: dict) -> Optional[dict]:
         try:
-            if (decision.get('content', {}) or {}).get('action') != 'approve':
-                return None
             token = (decision.get('signal_pack') or {}).get('token') or {}
             chain = (token.get('chain') or '').lower()
             ticker = token.get('ticker')
             contract = token.get('contract')
             allocation_pct = float((decision.get('content', {}) or {}).get('allocation_pct') or 0)
+            
+            # Log decision attempt
+            trading_logger.log_trade_attempt(
+                chain=chain,
+                token=ticker or 'UNKNOWN',
+                action='execute_decision',
+                details={
+                    'decision_id': decision.get('id'),
+                    'allocation_pct': allocation_pct,
+                    'contract': contract
+                }
+            )
+
+            if (decision.get('content', {}) or {}).get('action') != 'approve':
+                trading_logger.log_decision_rejection(
+                    token=ticker or 'UNKNOWN',
+                    reason='action_not_approve',
+                    details={'action': decision.get('content', {}).get('action')}
+                )
+                return None
 
             # idempotency
             existing_for_book = self.repo.get_position_by_book_id(decision.get('id'))
             if existing_for_book:
+                trading_logger.log_decision_rejection(
+                    token=ticker or 'UNKNOWN',
+                    reason='position_already_exists',
+                    details={'existing_position_id': existing_for_book.get('id')}
+                )
                 return None
 
             # chain setup
@@ -540,38 +576,77 @@ class TraderService:
             if chain == 'bsc':
                 native_label = 'BNB'
                 balance = await self.wallet.get_balance('bsc')
+                trading_logger.log_balance_check('bsc', balance)
+                
                 info = self.price_oracle.price_bsc(contract)
                 price = info['price_native'] if info else None
+                trading_logger.log_price_retrieval('bsc', ticker or 'UNKNOWN', price, 'price_oracle')
+                
                 executor = self.bsc_executor
+                trading_logger.log_executor_status('bsc', executor, f"bsc_executor={executor is not None}")
                 venue = self.resolve_bsc_venue(contract)
+                trading_logger.log_venue_resolution('bsc', ticker or 'UNKNOWN', venue)
             elif chain == 'base':
                 native_label = 'ETH'
                 balance = await self.wallet.get_balance('base')
+                trading_logger.log_balance_check('base', balance)
+                
                 info = self.price_oracle.price_base(contract)
                 price = info['price_native'] if info else None
+                trading_logger.log_price_retrieval('base', ticker or 'UNKNOWN', price, 'price_oracle')
+                
                 executor = self.base_executor
+                trading_logger.log_executor_status('base', executor, f"base_executor={executor is not None}")
                 venue = self.resolve_base_venue(contract)
+                trading_logger.log_venue_resolution('base', ticker or 'UNKNOWN', venue)
             elif chain == 'ethereum':
                 native_label = 'ETH'
                 balance = await self.wallet.get_balance('ethereum')
+                trading_logger.log_balance_check('ethereum', balance)
+                
                 info = self.price_oracle.price_eth(contract)
                 price = info['price_native'] if info else None
+                trading_logger.log_price_retrieval('ethereum', ticker or 'UNKNOWN', price, 'price_oracle')
+                
                 executor = self.eth_executor
+                trading_logger.log_executor_status('ethereum', executor, f"eth_executor={executor is not None}")
                 venue = None
             elif chain == 'solana':
                 native_label = 'SOL'
                 balance = await self.wallet.get_balance('solana')
+                trading_logger.log_balance_check('solana', balance)
+                
                 info = self.price_oracle.price_solana(contract)
                 price = (info or {}).get('price_native') if info else None
+                trading_logger.log_price_retrieval('solana', ticker or 'UNKNOWN', price, 'price_oracle')
+                
                 executor = self.sol_executor
+                trading_logger.log_executor_status('solana', executor, f"sol_executor={executor is not None}")
                 venue = None
             else:
+                trading_logger.log_decision_rejection(
+                    token=ticker or 'UNKNOWN',
+                    reason='unsupported_chain',
+                    details={'chain': chain}
+                )
                 return None
 
             if not balance or float(balance) <= 0:
+                trading_logger.log_trade_failure(
+                    chain=chain,
+                    token=ticker or 'UNKNOWN',
+                    reason='insufficient_balance',
+                    details={'balance': balance, 'required': '> 0'}
+                )
                 return None
             alloc_native = (allocation_pct * float(balance)) / 100.0
             if alloc_native <= 0 or not price:
+                trading_logger.log_trade_failure(
+                    chain=chain,
+                    token=ticker or 'UNKNOWN',
+                    reason='invalid_allocation_or_price',
+                    details={'alloc_native': alloc_native, 'price': price}
+                )
                 return None
 
             from datetime import datetime, timezone
@@ -606,7 +681,20 @@ class TraderService:
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
             }
             if not self.repo.create_position(position):
+                trading_logger.log_trade_failure(
+                    chain=chain,
+                    token=ticker or 'UNKNOWN',
+                    reason='position_creation_failed',
+                    details={'position_id': position_id}
+                )
                 return None
+            
+            trading_logger.log_position_creation(
+                position_id=position_id,
+                token=ticker or 'UNKNOWN',
+                chain=chain,
+                allocation=allocation_pct
+            )
 
             # entries
             from .entry_exit_planner import EntryExitPlanner
@@ -627,7 +715,20 @@ class TraderService:
             elif chain == 'solana' and executor:
                 tx_hash = await executor.execute_buy(contract, e_amt)
             if not tx_hash:
+                trading_logger.log_trade_failure(
+                    chain=chain,
+                    token=ticker or 'UNKNOWN',
+                    reason='transaction_execution_failed',
+                    details={'executor': executor is not None, 'amount': e_amt}
+                )
                 return None
+            
+            trading_logger.log_trade_success(
+                chain=chain,
+                token=ticker or 'UNKNOWN',
+                tx_hash=tx_hash,
+                details={'amount': e_amt, 'price': price}
+            )
 
             # cost + tokens
             cost_native = e_amt
@@ -644,6 +745,12 @@ class TraderService:
 
             # totals and exits
             await self.set_quantity_from_trade(position_id, tokens_bought)
+            
+            # Update position aggregates (missing calls that were causing the bug)
+            await self._update_tokens_bought(position_id, tokens_bought)
+            await self._update_total_investment_native(position_id, cost_native)
+            await self._update_position_pnl(position_id)
+            
             # exit rules
             # (caller can update rules later; here we just recalc exits using avg price)
             await self.recalculate_exits_after_entry(position_id)
@@ -667,7 +774,10 @@ class TraderService:
                 'allocation_native': alloc_native,
                 'status': 'active',
             }
-        except Exception:
+        except Exception as e:
+            trading_logger.errors.error(f"EXECUTE_DECISION_EXCEPTION | {ticker or 'UNKNOWN'} | {chain} | {str(e)}")
+            import traceback
+            trading_logger.errors.error(f"TRACEBACK: {traceback.format_exc()}")
             return None
 
     # ------------------------------
@@ -725,6 +835,150 @@ class TraderService:
             ok = self.repo.update_position(position_id, position)
             return bool(ok)
         except Exception:
+            return False
+
+    # ------------------------------
+    # Position aggregate update methods (missing from original implementation)
+    # ------------------------------
+    async def _update_tokens_bought(self, position_id: str, tokens_bought: float) -> bool:
+        """Update total_tokens_bought when an entry is executed"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return False
+            
+            # Add tokens bought to total (handle None values)
+            current_total = position.get('total_tokens_bought', 0.0) or 0.0
+            new_total = current_total + tokens_bought
+            position['total_tokens_bought'] = new_total
+            
+            # Update position in database
+            success = self.repo.update_position(position_id, position)
+            if success:
+                trading_logger.info(f"Updated total_tokens_bought for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_bought:.8f})")
+            return success
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating total_tokens_bought for position {position_id}: {e}")
+            return False
+
+    async def _update_total_investment_native(self, position_id: str, amount_native: float) -> bool:
+        """Update total_investment_native when an entry is executed"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return False
+            
+            # Add native amount invested to total (handle None values)
+            current_total = position.get('total_investment_native', 0.0) or 0.0
+            new_total = current_total + amount_native
+            position['total_investment_native'] = new_total
+            
+            # Calculate avg_entry_price from totals
+            total_tokens = position.get('total_tokens_bought', 0.0) or 0.0
+            if total_tokens > 0:
+                position['avg_entry_price'] = new_total / total_tokens
+            else:
+                position['avg_entry_price'] = 0.0
+            
+            # Update position in database
+            success = self.repo.update_position(position_id, position)
+            if success:
+                trading_logger.info(f"Updated total_investment_native for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{amount_native:.8f})")
+                trading_logger.info(f"Calculated avg_entry_price: {position['avg_entry_price']:.8f}")
+            return success
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating total_investment_native for position {position_id}: {e}")
+            return False
+
+    async def _update_position_pnl(self, position_id: str) -> bool:
+        """Update position P&L using current market prices"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return False
+            
+            # Get current price from database
+            token_contract = position.get('token_contract')
+            token_chain = position.get('token_chain', '').lower()
+            if not token_contract or not token_chain:
+                return False
+                
+            current_price = await self.get_current_price_native_from_db(token_contract, token_chain)
+            if current_price is None:
+                trading_logger.warning(f"Could not get current price for {token_contract} on {token_chain}")
+                return False
+            
+            # Calculate P&L
+            total_quantity = float(position.get('total_quantity', 0.0) or 0.0)
+            total_investment = float(position.get('total_investment_native', 0.0) or 0.0)
+            total_extracted = float(position.get('total_extracted_native', 0.0) or 0.0)
+            
+            current_position_value = total_quantity * current_price
+            total_pnl_native = (total_extracted + current_position_value) - total_investment
+            
+            # Get SOL/USD rate for USD P&L
+            sol_usd_rate = await self.get_native_usd_rate_async('solana') if token_chain == 'solana' else 1.0
+            total_pnl_usd = total_pnl_native * sol_usd_rate
+            total_pnl_pct = (total_pnl_native / total_investment * 100.0) if total_investment > 0 else 0.0
+            
+            # Update position
+            position['total_pnl_native'] = total_pnl_native
+            position['total_pnl_usd'] = total_pnl_usd
+            position['total_pnl_pct'] = total_pnl_pct
+            
+            success = self.repo.update_position(position_id, position)
+            if success:
+                trading_logger.info(f"Updated P&L for {position_id}: {total_pnl_pct:.2f}% (${total_pnl_usd:.2f})")
+            return success
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating P&L for position {position_id}: {e}")
+            return False
+
+    async def _update_tokens_sold(self, position_id: str, tokens_sold: float) -> bool:
+        """Update total_tokens_sold when an exit is executed"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return False
+            
+            # Add tokens sold to total (handle None values)
+            current_total = position.get('total_tokens_sold', 0.0) or 0.0
+            new_total = current_total + tokens_sold
+            position['total_tokens_sold'] = new_total
+            
+            # Update position in database
+            success = self.repo.update_position(position_id, position)
+            if success:
+                trading_logger.info(f"Updated total_tokens_sold for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_sold:.8f})")
+            return success
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating total_tokens_sold for position {position_id}: {e}")
+            return False
+
+    async def _update_total_extracted_native(self, position_id: str, amount_native: float) -> bool:
+        """Update total_extracted_native when an exit is executed"""
+        try:
+            position = self.repo.get_position(position_id)
+            if not position:
+                return False
+            
+            # Add native amount extracted to total (handle None values)
+            current_total = position.get('total_extracted_native', 0.0) or 0.0
+            new_total = current_total + amount_native
+            position['total_extracted_native'] = new_total
+            
+            # Update position in database
+            success = self.repo.update_position(position_id, position)
+            if success:
+                trading_logger.info(f"Updated total_extracted_native for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{amount_native:.8f})")
+            return success
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating total_extracted_native for position {position_id}: {e}")
             return False
 
 

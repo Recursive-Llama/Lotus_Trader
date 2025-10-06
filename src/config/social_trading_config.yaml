@@ -105,12 +105,12 @@ position_management:
 
   # Trend Strategy (spawned from each standard exit)
   trend_strategy:
-    entry_capital_pct: 30  # % of standard exit proceeds allocated to dip buys
+    entry_capital_pct: 15  # % of standard exit proceeds allocated to dip buys
     entries:
       - dip_pct: -22    # 78.6% of exit price
-        allocation_pct: 15
+        allocation_pct: 50
       - dip_pct: -39    # 61.8% of exit price
-        allocation_pct: 15
+        allocation_pct: 50
     exits:  # Sell 70% total across these three
       - gain_pct: 0      # 100% of exit price (break-even)
         exit_pct: 23.33
@@ -161,6 +161,7 @@ lotus_buyback:
   holding_wallet: "AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd"
   percentage: 10.0  # 10% of every SOL exit
   min_amount_sol: 0.001  # Minimum SOL amount to trigger buyback
+  slippage_pct: 2.0  # Slippage tolerance for Jupiter swaps
 
 # Monitoring & Alerts
 monitoring:

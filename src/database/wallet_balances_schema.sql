@@ -11,3 +11,4 @@ CREATE TABLE wallet_balances (
 
 -- Index for performance
 CREATE INDEX idx_wallet_balances_chain ON wallet_balances(chain);
+
