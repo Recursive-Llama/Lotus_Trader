@@ -13,6 +13,9 @@ from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionReposito
 from .entry_exit_planner import EntryExitPlanner
 from . import trader_views
 from .trading_logger import trading_logger
+from .structured_logger import structured_logger, CorrelationContext, StateDelta, PerformanceMetrics, BusinessLogic
+import time
+import uuid
 
 
 class _PriceProviderAdapter(PriceProvider):
@@ -185,23 +188,75 @@ class TraderService:
         # Inline of previous ExecuteBuyback use-case
         try:
             if (chain or '').lower() != 'solana':
+                structured_logger.log_buyback_planned(
+                    position_id=None,
+                    chain=chain,
+                    exit_value_native=exit_value_native,
+                    buyback_amount_native=0.0,
+                    percentage=percentage,
+                    min_amount=min_amount_native,
+                    skipped=True,
+                    reason='Not a SOL exit'
+                )
                 return {'success': True, 'skipped': True, 'reason': 'Not a SOL exit'}
             if not enabled:
+                structured_logger.log_buyback_planned(
+                    position_id=None,
+                    chain=chain,
+                    exit_value_native=exit_value_native,
+                    buyback_amount_native=0.0,
+                    percentage=percentage,
+                    min_amount=min_amount_native,
+                    skipped=True,
+                    reason='Buyback disabled'
+                )
                 return {'success': True, 'skipped': True, 'reason': 'Buyback disabled'}
             buyback_amount = float(exit_value_native) * (float(percentage) / 100.0)
             if buyback_amount < float(min_amount_native):
+                structured_logger.log_buyback_planned(
+                    position_id=None,
+                    chain=chain,
+                    exit_value_native=exit_value_native,
+                    buyback_amount_native=buyback_amount,
+                    percentage=percentage,
+                    min_amount=min_amount_native,
+                    skipped=True,
+                    reason=f'Below minimum threshold ({min_amount_native})'
+                )
                 return {
                     'success': True,
                     'skipped': True,
                     'reason': f'Below minimum threshold ({min_amount_native})',
                     'buyback_amount_native': buyback_amount,
                 }
+            
+            structured_logger.log_buyback_planned(
+                position_id=None,
+                chain=chain,
+                exit_value_native=exit_value_native,
+                buyback_amount_native=buyback_amount,
+                percentage=percentage,
+                min_amount=min_amount_native,
+                skipped=False,
+                reason=None
+            )
+            
             return {
                 'success': True,
                 'skipped': False,
                 'buyback_amount_native': buyback_amount,
             }
-        except Exception:
+        except Exception as e:
+            structured_logger.log_buyback_planned(
+                position_id=None,
+                chain=chain,
+                exit_value_native=exit_value_native,
+                buyback_amount_native=0.0,
+                percentage=percentage,
+                min_amount=min_amount_native,
+                skipped=True,
+                reason=f'Exception: {str(e)}'
+            )
             return {'success': False, 'error': 'buyback_plan_failed'}
 
     def perform_buyback(self, *, lotus_contract: str, holding_wallet: str, buyback_amount_native: float, slippage_pct: float = 5.0) -> dict:
@@ -529,6 +584,9 @@ class TraderService:
     # Execute decision (position bootstrap)
     # ------------------------------
     async def execute_decision(self, decision: dict) -> Optional[dict]:
+        start_time = time.time()
+        decision_id = decision.get('id', str(uuid.uuid4()))
+        
         try:
             token = (decision.get('signal_pack') or {}).get('token') or {}
             chain = (token.get('chain') or '').lower()
@@ -536,7 +594,33 @@ class TraderService:
             contract = token.get('contract')
             allocation_pct = float((decision.get('content', {}) or {}).get('allocation_pct') or 0)
             
-            # Log decision attempt
+            # Log decision attempt with structured logging
+            correlation = CorrelationContext(
+                decision_id=decision_id,
+                chain=chain,
+                contract=contract,
+                token=ticker,
+                action_type="decision"
+            )
+            
+            business = BusinessLogic(
+                allocation_pct=allocation_pct,
+                curator_score=float((decision.get('content', {}) or {}).get('curator_score', 0)),
+                reasoning="Processing trading decision"
+            )
+            
+            structured_logger.log_decision_approved(
+                decision_id=decision_id,
+                token=ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                allocation_pct=allocation_pct,
+                curator_score=float((decision.get('content', {}) or {}).get('curator_score', 0)),
+                constraints_passed=["decision_processing"],
+                reasoning="Processing trading decision"
+            )
+            
+            # Log decision attempt (legacy)
             trading_logger.log_trade_attempt(
                 chain=chain,
                 token=ticker or 'UNKNOWN',
@@ -705,6 +789,19 @@ class TraderService:
             # first buy
             e_amt = alloc_native / 3.0
             tx_hash = None
+            
+            # Log entry attempt
+            structured_logger.log_entry_attempted(
+                position_id=position_id,
+                entry_number=1,
+                token=ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                amount_native=e_amt,
+                target_price=price,
+                decision_id=decision_id
+            )
+            
             if chain in ('bsc','base') and executor:
                 v = self.resolve_bsc_venue(contract) if chain=='bsc' else self.resolve_base_venue(contract)
                 tx_hash = executor.execute_buy(contract, e_amt, venue=v)
@@ -712,7 +809,17 @@ class TraderService:
                 tx_hash = executor.execute_buy(contract, e_amt)
             elif chain == 'solana' and executor:
                 tx_hash = await executor.execute_buy(contract, e_amt)
+            
             if not tx_hash:
+                structured_logger.log_entry_failed(
+                    position_id=position_id,
+                    entry_number=1,
+                    token=ticker or 'UNKNOWN',
+                    chain=chain,
+                    contract=contract,
+                    reason='transaction_execution_failed',
+                    error_details={'executor': executor is not None, 'amount': e_amt}
+                )
                 trading_logger.log_trade_failure(
                     chain=chain,
                     token=ticker or 'UNKNOWN',
@@ -720,6 +827,42 @@ class TraderService:
                     details={'executor': executor is not None, 'amount': e_amt}
                 )
                 return None
+            
+            # Log successful entry
+            tokens_bought = e_amt / price
+            duration_ms = int((time.time() - start_time) * 1000)
+            performance = PerformanceMetrics(
+                duration_ms=duration_ms,
+                executor=f"{chain}_executor",
+                venue=v if chain in ('bsc','base') else None
+            )
+            
+            # Get state after position creation but before updates
+            state_before = StateDelta(
+                total_tokens_bought=0.0,
+                total_quantity_before=0.0,
+                total_investment_native=0.0,
+                avg_entry_price=0.0,
+                pnl_native=0.0,
+                pnl_usd=0.0,
+                pnl_pct=0.0
+            )
+            
+            structured_logger.log_entry_success(
+                position_id=position_id,
+                entry_number=1,
+                token=ticker or 'UNKNOWN',
+                chain=chain,
+                contract=contract,
+                tx_hash=tx_hash,
+                amount_native=e_amt,
+                tokens_bought=tokens_bought,
+                actual_price=price,
+                venue=v if chain in ('bsc','base') else "unknown",
+                state_before=state_before,
+                state_after=state_before,  # Will be updated after aggregates
+                performance=performance
+            )
             
             trading_logger.log_trade_success(
                 chain=chain,
