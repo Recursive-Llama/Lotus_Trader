@@ -176,7 +176,7 @@ class TraderLowcapSimpleV2:
             allocation_pct = float(decision.get('content', {}).get('allocation_pct') or 0)
 
             # Idempotency: skip if this decision was already processed (book_id)
-            existing_for_book = self.repo.get_position_by_book_id(decision.get('id'))
+            existing_for_book = self._service.repo.get_position_by_book_id(decision.get('id')) if self._service else None
             if existing_for_book:
                 self.logger.warning(f"Trader V2: Skipping decision {decision.get('id')} - book_id already exists: {existing_for_book.get('id')}")
                 return None
@@ -312,7 +312,7 @@ class TraderLowcapSimpleV2:
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
                 'exit_rules': self._build_exit_rules_from_config()  # Add exit rules for standard exits
             }
-            if not self.repo.create_position(position):
+            if not (self._service.repo.create_position(position) if self._service else False):
                 self.logger.error("Trader V2: Failed to create position")
                 return None
 
@@ -326,7 +326,8 @@ class TraderLowcapSimpleV2:
             for entry in entries:
                 entry['unit'] = 'NATIVE'
                 entry['native_symbol'] = native_label
-            self.repo.update_entries(position_id, entries)
+            if self._service:
+                self._service.repo.update_entries(position_id, entries)
 
             # Execute first entry on-chain
             tx_hash = None
@@ -352,7 +353,8 @@ class TraderLowcapSimpleV2:
                 tokens_bought = e_amt / price
                 
                 # Use enhanced mark_entry_executed method for consistent tracking
-                self.repo.mark_entry_executed(
+                if self._service:
+                    self._service.repo.mark_entry_executed(
                     position_id=position_id,
                     entry_number=1,
                     tx_hash=tx_hash,
@@ -403,15 +405,16 @@ class TraderLowcapSimpleV2:
 
             # Store exit rules from config
             exit_rules = self._build_exit_rules_from_config()
-            self.repo.update_exit_rules(position_id, exit_rules)
+            if self._service:
+                self._service.repo.update_exit_rules(position_id, exit_rules)
             
             # Store trend exit rules from config
             trend_exit_rules = self._build_trend_exit_rules_from_config()
-            self.repo.update_trend_exit_rules(position_id, trend_exit_rules)
+                self._service.repo.update_trend_exit_rules(position_id, trend_exit_rules)
 
             # Exits (staged) - calculate exit prices based on current avg_entry_price
             exits = EntryExitPlanner.build_exits(exit_rules, price, price)  # Use exit_rules and current price as avg_entry_price
-            self.repo.update_exits(position_id, exits)
+                self._service.repo.update_exits(position_id, exits)
 
             if not tx_hash:
                 self.logger.error("Trader V2: No tx_hash returned; marking execution as failed")
@@ -443,7 +446,7 @@ class TraderLowcapSimpleV2:
         """
         try:
             # Get position from database
-            position = self.repo.get_position(position_id)
+            position = self._service.repo.get_position(position_id) if self._service else None
             if not position:
                 self.logger.error(f"Position {position_id} not found")
                 return False
@@ -705,63 +708,9 @@ class TraderLowcapSimpleV2:
 
     async def _update_position_pnl(self, position_id: str):
         """Update position P&L using database prices (uses pure domain helpers)."""
-        try:
-            # Get current position
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found for P&L update")
+        if not self._service:
                 return
-            
-            # Get position details
-            total_quantity = position.get('total_quantity', 0) or 0
-            total_investment_native = position.get('total_investment_native', 0) or 0
-            total_extracted_native = position.get('total_extracted_native', 0) or 0
-            chain = position.get('token_chain', '').lower()
-            contract = position.get('token_contract')
-            
-            if total_quantity <= 0 or not contract:
-                # No tokens or no contract, P&L is extracted minus investment
-                total_pnl_native = compute_total_pnl_native(total_extracted_native, 0.0, total_investment_native)
-                position['total_pnl_native'] = total_pnl_native
-                position['total_pnl_usd'] = 0.0  # Will be calculated below
-                position['total_pnl_pct'] = 0.0
-                self.repo.update_position(position_id, position)
-                self.logger.info(f"Updated P&L for {position_id}: {total_pnl_native:.8f} native (no tokens)")
-                return
-            
-            # Get current token price from database (not API)
-            current_token_price_native = await self._get_current_price_from_db(contract, chain)
-            if current_token_price_native is None or current_token_price_native <= 0:
-                self.logger.error(f"Could not get current native price for {contract} on {chain} from database")
-                return
-            
-            # Calculate native P&L: (total_extracted_native + current_position_value) - total_investment_native
-            current_position_value_native = compute_position_value_native(total_quantity, current_token_price_native)
-            total_pnl_native = compute_total_pnl_native(total_extracted_native, current_position_value_native, total_investment_native)
-            
-            # Get native currency USD rate for conversion
-            native_usd_rate = await (self._service.get_native_usd_rate_async(chain) if self._service else self._get_native_usd_rate(chain))
-            if native_usd_rate <= 0:
-                self.logger.warning(f"Could not get native USD rate for {chain}, using 0 for USD P&L")
-                total_pnl_usd = 0.0
-            else:
-                total_pnl_usd = convert_native_to_usd(total_pnl_native, native_usd_rate)
-            
-            # Calculate P&L percentage (based on native investment)
-            total_pnl_pct = compute_total_pnl_pct(total_pnl_native, total_investment_native)
-            
-            # Update position
-            position['total_pnl_native'] = total_pnl_native
-            position['total_pnl_usd'] = total_pnl_usd
-            position['total_pnl_pct'] = total_pnl_pct
-            position['last_activity_timestamp'] = datetime.now(timezone.utc).isoformat()
-            
-            # Save to database
-            self.repo.update_position(position_id, position)
-            self.logger.info(f"Updated P&L for {position_id}: {total_pnl_native:.8f} native, ${total_pnl_usd:.2f} USD ({total_pnl_pct:.2f}%)")
-            
-        except Exception as e:
-            self.logger.error(f"Error updating P&L for {position_id}: {e}")
+        return await self._service._update_position_pnl(position_id)
 
     async def _get_all_active_positions(self) -> List[Dict[str, Any]]:
         """Get all active positions from database"""
@@ -1631,123 +1580,27 @@ class TraderLowcapSimpleV2:
     
     async def _update_tokens_bought(self, position_id: str, tokens_bought: float) -> bool:
         """Update total_tokens_bought when an entry is executed"""
-        try:
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found for token tracking update")
+        if not self._service:
                 return False
-            
-            # Add tokens bought to total (handle None values)
-            current_total = position.get('total_tokens_bought', 0.0) or 0.0
-            new_total = current_total + tokens_bought
-            position['total_tokens_bought'] = new_total
-            
-            # Update position in database
-            success = self.repo.update_position(position_id, position)
-            if success:
-                self.logger.info(f"Updated total_tokens_bought for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_bought:.8f})")
-            else:
-                self.logger.error(f"Failed to update total_tokens_bought for position {position_id}")
-            
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"Error updating total_tokens_bought for position {position_id}: {e}")
-            return False
+        return await self._service._update_tokens_bought(position_id, tokens_bought)
     
     async def _update_tokens_sold(self, position_id: str, tokens_sold: float) -> bool:
         """Update total_tokens_sold when an exit is executed"""
-        try:
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found for token tracking update")
+        if not self._service:
                 return False
-            
-            # Add tokens sold to total (handle None values)
-            current_total = position.get('total_tokens_sold', 0.0) or 0.0
-            new_total = current_total + tokens_sold
-            position['total_tokens_sold'] = new_total
-            
-            # Update position in database
-            success = self.repo.update_position(position_id, position)
-            if success:
-                self.logger.info(f"Updated total_tokens_sold for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_sold:.8f})")
-            else:
-                self.logger.error(f"Failed to update total_tokens_sold for position {position_id}")
-            
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"Error updating total_tokens_sold for position {position_id}: {e}")
-            return False
+        return await self._service._update_tokens_sold(position_id, tokens_sold)
     
     async def _update_total_investment_native(self, position_id: str, amount_native: float) -> bool:
         """Update total_investment_native when an entry is executed"""
-        try:
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found for investment tracking update")
+        if not self._service:
                 return False
-            
-            # Add native amount invested to total (handle None values)
-            current_total = position.get('total_investment_native', 0.0) or 0.0
-            new_total = current_total + amount_native
-            position['total_investment_native'] = new_total
-            
-            # Calculate avg_entry_price from totals
-            total_tokens = position.get('total_tokens_bought', 0.0) or 0.0
-            if total_tokens > 0:
-                position['avg_entry_price'] = new_total / total_tokens
-            else:
-                position['avg_entry_price'] = 0.0
-            
-            # Update position in database
-            success = self.repo.update_position(position_id, position)
-            if success:
-                self.logger.info(f"Updated total_investment_native for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{amount_native:.8f})")
-                self.logger.info(f"Calculated avg_entry_price: {position['avg_entry_price']:.8f}")
-            else:
-                self.logger.error(f"Failed to update total_investment_native for position {position_id}")
-            
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"Error updating total_investment_native for position {position_id}: {e}")
-            return False
+        return await self._service._update_total_investment_native(position_id, amount_native)
     
     async def _update_total_extracted_native(self, position_id: str, amount_native: float) -> bool:
         """Update total_extracted_native when an exit is executed"""
-        try:
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found for extraction tracking update")
+        if not self._service:
                 return False
-            
-            # Add native amount extracted to total (handle None values)
-            current_total = position.get('total_extracted_native', 0.0) or 0.0
-            new_total = current_total + amount_native
-            position['total_extracted_native'] = new_total
-            
-            # Calculate avg_exit_price from totals
-            total_sold = position.get('total_tokens_sold', 0.0) or 0.0
-            if total_sold > 0:
-                position['avg_exit_price'] = new_total / total_sold
-            else:
-                position['avg_exit_price'] = 0.0
-            
-            # Update position in database
-            success = self.repo.update_position(position_id, position)
-            if success:
-                self.logger.info(f"Updated total_extracted_native for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{amount_native:.8f})")
-                self.logger.info(f"Calculated avg_exit_price: {position['avg_exit_price']:.8f}")
-            else:
-                self.logger.error(f"Failed to update total_extracted_native for position {position_id}")
-            
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"Error updating total_extracted_native for position {position_id}: {e}")
-            return False
+        return await self._service._update_total_extracted_native(position_id, amount_native)
     
     async def _get_native_usd_rate(self, chain: str) -> float:
         """Get native currency USD rate for P&L conversion"""
