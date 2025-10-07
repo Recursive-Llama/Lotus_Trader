@@ -132,6 +132,10 @@ class TelegramScanner:
                 logger.debug(f"No channel_id for curator {curator_id}")
                 return
             
+            # Convert to int if it's a numeric string (for group IDs)
+            if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
+                channel_id = int(channel_id)
+            
             # Get group entity
             try:
                 group = await self.client.get_entity(channel_id)
@@ -241,6 +245,10 @@ class TelegramScanner:
             for curator_id, curator in self.telegram_curators.items():
                 channel_id = curator.get('channel_id', '')
                 if channel_id:
+                    # Convert to int if it's a numeric string (for group IDs)
+                    if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
+                        channel_id = int(channel_id)
+                    
                     try:
                         group = await self.client.get_entity(channel_id)
                         logger.info(f"✅ Access to {channel_id}: {group.title}")

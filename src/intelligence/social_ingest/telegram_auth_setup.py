@@ -159,7 +159,8 @@ async def main():
     
     # Test group access
     group_handles = [
-        "ducksinnerpond",
+        -1002691312655,  # ducksinnerpond (now private)
+        -1002252103258,  # slaying charts with jones rida
         "cryptolyxecalls", 
         "crypto_popseye_calls",
         "zincalpha"

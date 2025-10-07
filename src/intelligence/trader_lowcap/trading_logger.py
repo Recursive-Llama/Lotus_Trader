@@ -203,6 +203,23 @@ class TradingLogger:
     def log_gas_estimation(self, chain: str, operation: str, gas_limit: int, gas_price: float, total_cost: float):
         """Log gas estimation"""
         self.trader.info(f"GAS_ESTIMATED | {chain.upper()} | {operation} | {gas_limit} | {gas_price} | {total_cost}")
+    
+    # Standard logging methods for compatibility
+    def error(self, message: str):
+        """Log error message"""
+        self.errors.error(message)
+    
+    def warning(self, message: str):
+        """Log warning message"""
+        self.trader.warning(message)
+    
+    def info(self, message: str):
+        """Log info message"""
+        self.trader.info(message)
+    
+    def debug(self, message: str):
+        """Log debug message"""
+        self.trader.debug(message)
 
 # Global instance
 trading_logger = TradingLogger()

@@ -7,7 +7,7 @@ ports defined in trader_ports and invokes use cases from trader_usecases.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionRepository, PriceQuote
 from .entry_exit_planner import EntryExitPlanner
@@ -885,6 +885,8 @@ class TraderService:
                 'curator_sources': (decision.get('content', {}) or {}).get('curator_id'),
                 'source_tweet_url': source_tweet_url,
                 'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
+                'exit_rules': self._build_exit_rules_from_config(),
+                'trend_exit_rules': self._build_trend_exit_rules_from_config(),
             }
             if not self.repo.create_position(position):
                 # DB failure logging (structured + legacy)
@@ -1106,7 +1108,10 @@ class TraderService:
             if not chain or not contract:
                 return
             wallet_balance = await self.wallet.get_balance(chain, contract)
-            wallet_balance_float = float(wallet_balance) if wallet_balance else 0.0
+            if wallet_balance is None:
+                # Don't reconcile if we can't get wallet balance - could be network error
+                return
+            wallet_balance_float = float(wallet_balance)
             discrepancy_pct = 0.0
             if expected_quantity > 0:
                 discrepancy_pct = abs(wallet_balance_float - expected_quantity) / expected_quantity * 100.0
@@ -1238,6 +1243,40 @@ class TraderService:
             trading_logger.error(f"Error updating P&L for position {position_id}: {e}")
             return False
 
+    async def _update_position_pnl_in_memory(self, position: Dict[str, Any]) -> None:
+        """Update position P&L in memory without database write"""
+        try:
+            # Get current market price
+            token_contract = position.get('token_contract')
+            token_chain = position.get('token_chain', '').lower()
+            if not token_contract or not token_chain:
+                return
+                
+            current_price = await self.get_current_price_native_from_db(token_contract, token_chain)
+            if current_price is None:
+                return
+            
+            # Calculate P&L
+            total_quantity = float(position.get('total_quantity', 0.0) or 0.0)
+            total_investment = float(position.get('total_investment_native', 0.0) or 0.0)
+            total_extracted = float(position.get('total_extracted_native', 0.0) or 0.0)
+            
+            current_position_value = total_quantity * current_price
+            total_pnl_native = (total_extracted + current_position_value) - total_investment
+            
+            # Get SOL/USD rate for USD P&L
+            sol_usd_rate = await self.get_native_usd_rate_async('solana') if token_chain == 'solana' else 1.0
+            total_pnl_usd = total_pnl_native * sol_usd_rate
+            total_pnl_pct = (total_pnl_native / total_investment * 100.0) if total_investment > 0 else 0.0
+            
+            # Update position in memory
+            position['total_pnl_native'] = total_pnl_native
+            position['total_pnl_usd'] = total_pnl_usd
+            position['total_pnl_pct'] = total_pnl_pct
+            
+        except Exception as e:
+            trading_logger.error(f"Error updating P&L in memory: {e}")
+
     async def _update_tokens_sold(self, position_id: str, tokens_sold: float) -> bool:
         """Update total_tokens_sold when an exit is executed"""
         try:
@@ -1356,5 +1395,71 @@ class TraderService:
             
         except Exception as e:
             trading_logger.error(f"Error in exit verification for {position_id}: {e}")
+
+    def _build_exit_rules_from_config(self) -> Dict[str, Any]:
+        """Build exit rules from config file"""
+        import yaml
+        import os
+        
+        # Load config
+        config_path = os.path.join(os.path.dirname(__file__), '../../config/social_trading_config.yaml')
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        exit_strategy = config['position_management']['exit_strategy']
+        
+        stages = []
+        for exit_key, exit_config in exit_strategy.items():
+            if exit_key != 'final':  # Handle final exit separately
+                stages.append({
+                    'gain_pct': exit_config['gain_pct'],
+                    'exit_pct': exit_config['exit_pct'],
+                    'executed': False
+                })
+        
+        # Add final exit
+        final_config = exit_strategy['final']
+        stages.append({
+            'gain_pct': final_config['gain_pct'],
+            'exit_pct': final_config['exit_pct'],
+            'executed': False
+        })
+        
+        return {
+            'strategy': 'staged',
+            'stages': stages
+        }
+
+    def _build_trend_exit_rules_from_config(self) -> Dict[str, Any]:
+        """Build trend exit rules from config file (separate from regular exits)"""
+        import yaml
+        import os
+
+        # Load config
+        config_path = os.path.join(os.path.dirname(__file__), '../../config/social_trading_config.yaml')
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        trend_cfg = (config.get('position_management') or {}).get('trend_exit_strategy')
+        if not trend_cfg:
+            return {'strategy': 'staged', 'stages': []}
+
+        stages: list[Dict[str, Any]] = []
+        for key, rule in trend_cfg.items():
+            if key != 'final':
+                stages.append({
+                    'gain_pct': rule['gain_pct'],
+                    'exit_pct': rule['exit_pct'],
+                    'executed': False
+                })
+        if 'final' in trend_cfg:
+            final_rule = trend_cfg['final']
+            stages.append({
+                'gain_pct': final_rule['gain_pct'],
+                'exit_pct': final_rule['exit_pct'],
+                'executed': False
+            })
+
+        return {'strategy': 'staged', 'stages': stages}
 
 

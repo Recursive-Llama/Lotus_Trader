@@ -163,271 +163,10 @@ class TraderLowcapSimpleV2:
         try:
             if decision.get('content', {}).get('action') != 'approve':
                 return None
-
             if self._service:
                 return await self._service.execute_decision(decision)
             self.logger.error("Trader service unavailable; cannot execute decision")
-                return None
-
-            token = (decision.get('signal_pack') or {}).get('token') or {}
-            chain = (token.get('chain') or '').lower()
-            ticker = token.get('ticker')
-            contract = token.get('contract')
-            allocation_pct = float(decision.get('content', {}).get('allocation_pct') or 0)
-
-            # Idempotency: skip if this decision was already processed (book_id)
-            existing_for_book = self._service.repo.get_position_by_book_id(decision.get('id')) if self._service else None
-            if existing_for_book:
-                self.logger.warning(f"Trader V2: Skipping decision {decision.get('id')} - book_id already exists: {existing_for_book.get('id')}")
-                return None
-
-            # Select chain path
-            if chain == 'bsc':
-                if not self.bsc_client:
-                    self.logger.error("Trader V2: BSC client not available")
-                    return None
-                native_symbol = 'bsc'
-                native_label = 'BNB'
-                balance = await self.wallet_manager.get_balance('bsc')
-                # Store native balance for portfolio tracking
-                await self._store_native_balance('bsc', float(balance))
-                price_info = self.price_oracle.price_bsc(contract)
-                price = price_info['price_native'] if price_info else None
-                executor = self.bsc_executor
-                venue = self._service.resolve_bsc_venue(contract) if self._service else None
-            elif chain == 'base':
-                if not self.base_client:
-                    self.logger.error("Trader V2: Base client not available")
-                    return None
-                native_symbol = 'base'
-                native_label = 'ETH'
-                # Base and ETH share wallet; we count balance as ETH equivalent
-                balance = await self.wallet_manager.get_balance('base')
-                # Store native balance for portfolio tracking
-                await self._store_native_balance('base', float(balance))
-                price_info = self.price_oracle.price_base(contract)
-                price = price_info['price_native'] if price_info else None
-                executor = self.base_executor
-                venue = self._service.resolve_base_venue(contract) if self._service else None
-            elif chain == 'ethereum':
-                if not self.eth_client:
-                    self.logger.error("Trader V2: ETH client not available")
-                    return None
-                native_symbol = 'ethereum'
-                native_label = 'ETH'
-                balance = await self.wallet_manager.get_balance('ethereum')
-                # Store native balance for portfolio tracking
-                await self._store_native_balance('ethereum', float(balance))
-                price_info = self.price_oracle.price_eth(contract)
-                price = price_info['price_native'] if price_info else None
-                executor = self.eth_executor
-                venue = None
-            elif chain == 'solana':
-                native_symbol = 'solana'
-                native_label = 'SOL'
-                balance = await self.wallet_manager.get_balance('solana')
-                # Store native balance for portfolio tracking
-                await self._store_native_balance('solana', float(balance))
-                # Price via PriceOracle (SOL/token) with Jupiter fallback
-                price = None
-                try:
-                    # Try PriceOracle first for native SOL pricing
-                    price_info = self.price_oracle.price_solana(contract)
-                    if price_info and price_info.get('price_native'):
-                        price = price_info['price_native']
-                        self.logger.info(f"Solana price from PriceOracle: {price} SOL per token")
-                    else:
-                        raise Exception('PriceOracle failed, trying Jupiter fallback')
-                except Exception:
-                    try:
-                        # Fallback to Jupiter quote-based pricing
-                        quote = await self.jupiter_client.get_quote(
-                            input_mint="So11111111111111111111111111111111111111112",
-                            output_mint=contract,
-                            amount=100_000_000  # 0.1 SOL
-                        )
-                        if quote and 'outAmount' in quote:
-                            token_amount = int(quote['outAmount'])
-                            # Fetch token decimals via a minimal RPC (reuse V1 heuristic 5 if unknown)
-                            # For V2, assume 6 if not available; this only affects pre-price display
-                            token_decimals = 6
-                            price = 0.1 / (token_amount / (10 ** token_decimals))
-                            self.logger.info(f"Solana price from Jupiter fallback: {price} SOL per token")
-                    except Exception:
-                        price = None
-                executor = self.sol_executor
-                venue = None
-            else:
-                self.logger.info(f"Trader V2: unsupported chain {chain} in V2")
-                return None
-
-            if not balance or float(balance) <= 0:
-                self.logger.error(f"Trader V2: No {native_label} balance")
-                return None
-            alloc_native = (allocation_pct * float(balance)) / 100.0
-            if alloc_native <= 0:
-                self.logger.error("Trader V2: Allocation native is zero")
-                return None
-            if not price:
-                self.logger.warning("Trader V2: Could not pre-price token; aborting to ensure entries")
-                return None
-
-            position_id = f"{ticker}_{chain}_{int(datetime.now(timezone.utc).timestamp())}"
-
-            # Create position
-            # Extract source tweet URL for position storage
-            source_tweet_url = None
-            signal_pack = decision.get('signal_pack', {})
-            if signal_pack:
-                source_tweet_url = (
-                    signal_pack.get('source_tweet_url') or
-                    signal_pack.get('tweet_url') or
-                    signal_pack.get('url') or
-                    signal_pack.get('message', {}).get('url')
-                )
-            
-            # Also try to get from module_intelligence if available
-            if not source_tweet_url:
-                module_intelligence = decision.get('module_intelligence', {})
-                social_signal = module_intelligence.get('social_signal', {})
-                message = social_signal.get('message', {})
-                source_tweet_url = message.get('url')
-            
-            position = {
-                'id': position_id,
-                'token_chain': chain,
-                'token_contract': contract,
-                'token_ticker': ticker,
-                'book_id': decision.get('id'),
-                'status': 'active',
-                'total_allocation_pct': allocation_pct,
-                'total_quantity': 0.0,
-                'total_tokens_bought': 0.0,  # Track total tokens bought
-                'total_tokens_sold': 0.0,    # Track total tokens sold
-                'total_investment_native': 0.0,  # Track total native currency invested
-                'total_extracted_native': 0.0,   # Track total native currency extracted
-                'total_pnl_native': 0.0,     # Track total P&L in native currency
-                'curator_sources': decision.get('content', {}).get('curator_id'),
-                'source_tweet_url': source_tweet_url,  # Store for sell notifications
-                'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
-                'exit_rules': self._build_exit_rules_from_config()  # Add exit rules for standard exits
-            }
-            if not (self._service.repo.create_position(position) if self._service else False):
-                self.logger.error("Trader V2: Failed to create position")
-                return None
-
-            # Update P&L for all positions after creating new position
-            await self._update_all_positions_pnl()
-
-            # Entries (3-way split by amount)
-            e_amt = alloc_native / 3.0
-            entries = EntryExitPlanner.build_entries(price, alloc_native)
-            # Mark pricing unit explicitly to avoid ambiguity in storage/inspection
-            for entry in entries:
-                entry['unit'] = 'NATIVE'
-                entry['native_symbol'] = native_label
-            if self._service:
-                self._service.repo.update_entries(position_id, entries)
-
-            # Execute first entry on-chain
-            tx_hash = None
-            if chain == 'bsc' and executor:
-                resolved_venue = self._service.resolve_bsc_venue(contract) if self._service else venue
-                tx_hash = executor.execute_buy(contract, e_amt, venue=resolved_venue)
-            elif chain == 'base' and executor:
-                resolved_venue = self._service.resolve_base_venue(contract) if self._service else venue
-                tx_hash = executor.execute_buy(contract, e_amt, venue=resolved_venue)
-            elif chain == 'ethereum' and executor:
-                tx_hash = executor.execute_buy(contract, e_amt)
-            elif chain == 'solana' and executor:
-                tx_hash = await executor.execute_buy(contract, e_amt)
-            if tx_hash:
-                # Calculate cost tracking
-                cost_native = e_amt
-                cost_usd = 0
-                if price_info and 'price_usd' in price_info:
-                    # Calculate USD cost based on token price
-                    token_price_usd = price_info['price_usd']
-                    cost_usd = (e_amt / price) * token_price_usd
-                
-                tokens_bought = e_amt / price
-                
-                # Use enhanced mark_entry_executed method for consistent tracking
-                if self._service:
-                    self._service.repo.mark_entry_executed(
-                    position_id=position_id,
-                    entry_number=1,
-                    tx_hash=tx_hash,
-                    cost_native=cost_native,
-                    cost_usd=cost_usd,
-                    tokens_bought=tokens_bought
-                )
-                
-                # Update totals and calculated fields
-                await self._update_tokens_bought(position_id, tokens_bought)
-                await self._update_total_investment_native(position_id, e_amt)
-                await self._update_position_pnl(position_id)
-                if self._service:
-                    await self._service.recalculate_exits_after_entry(position_id)
-                else:
-                    # Fallback: recalculate exits using existing method
-                    self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
-                
-                # Detect tax tokens after successful buy
-                if self._service:
-                    await self._service.detect_and_update_tax_token(contract, e_amt, price, chain)
-                
-                # Set total_quantity immediately from trade execution and schedule reconciliation
-                if self._service:
-                    await self._service.set_quantity_from_trade(position_id, tokens_bought)
-                    await self._service.reconcile_wallet_quantity(position_id, position.get('total_quantity', 0))
-                else:
-                await self._set_quantity_from_trade(position_id, tokens_bought)
-                
-                # Update last activity timestamp
-                position = self.repo.get_position(position_id)
-                if position:
-                    position['last_activity_timestamp'] = datetime.now(timezone.utc).isoformat()
-                    self.repo.update_position(position_id, position)
-                
-                # Send Telegram buy signal notification via service (if configured)
-                if self._service and self.telegram_notifier:
-                    await self._service.send_buy_signal(
-                    token_ticker=ticker,
-                    token_contract=contract,
-                    chain=chain,
-                    amount_native=e_amt,
-                    price=price,
-                    tx_hash=tx_hash,
-                    allocation_pct=allocation_pct,
-                        source_tweet_url=source_tweet_url,
-                )
-
-            # Store exit rules from config
-            exit_rules = self._build_exit_rules_from_config()
-            if self._service:
-                self._service.repo.update_exit_rules(position_id, exit_rules)
-            
-            # Store trend exit rules from config
-            trend_exit_rules = self._build_trend_exit_rules_from_config()
-                self._service.repo.update_trend_exit_rules(position_id, trend_exit_rules)
-
-            # Exits (staged) - calculate exit prices based on current avg_entry_price
-            exits = EntryExitPlanner.build_exits(exit_rules, price, price)  # Use exit_rules and current price as avg_entry_price
-                self._service.repo.update_exits(position_id, exits)
-
-            if not tx_hash:
-                self.logger.error("Trader V2: No tx_hash returned; marking execution as failed")
-                return None
-            return {
-                'position_id': position_id,
-                'token_ticker': ticker,
-                'allocation_pct': allocation_pct,
-                'allocation_native': alloc_native,
-                # Note: current_price is not stored in database - it comes from price oracle
-                'status': 'active'
-            }
-
+            return None
         except Exception as e:
             self.logger.error(f"Trader V2: execute_decision error: {e}")
             return None
@@ -475,7 +214,7 @@ class TraderLowcapSimpleV2:
             
             # Calculate tokens to sell from exit_pct and total_quantity
             exit_pct = target_exit.get('exit_pct', 0)
-            total_quantity = position.get('total_quantity', 0)
+            total_quantity = float(position.get('total_quantity', 0) or 0)
             requested_tokens = total_quantity * (exit_pct / 100)
             
             if requested_tokens <= 0:
@@ -487,12 +226,12 @@ class TraderLowcapSimpleV2:
             try:
                 wallet_balance = await self.wallet_manager.get_balance(chain, contract)
                 wallet_balance_float = float(wallet_balance) if wallet_balance else 0
-                if abs(wallet_balance_float - position.get('total_quantity', 0)) > 0.000001:
+                if abs(wallet_balance_float - float(position.get('total_quantity', 0) or 0)) > 0.000001:
                     position['total_quantity'] = wallet_balance_float
                     await self._recalculate_position_totals(position)
                     self.repo.update_position(position_id, position)
             except Exception:
-                wallet_balance_float = position.get('total_quantity', 0)
+                wallet_balance_float = float(position.get('total_quantity', 0) or 0)
             
             # Step 2: Calculate actual sell amount (min of requested vs available)
             actual_sell_amount = min(requested_tokens, wallet_balance_float)
@@ -545,23 +284,11 @@ class TraderLowcapSimpleV2:
                     else:
                         exit_value_usd = 0.0
                 else:
-                    # Fallback to API if database price not available
-                if chain == 'bsc':
-                    price_info = self.price_oracle.price_bsc(contract)
-                elif chain == 'base':
-                    price_info = self.price_oracle.price_base(contract)
-                elif chain == 'ethereum':
-                    price_info = self.price_oracle.price_eth(contract)
-                elif chain == 'solana':
-                    price_info = self.price_oracle.price_solana(contract)
-                else:
-                    price_info = None
+                    # No DB price available: abort execution (no API fallback)
+                    self.logger.error("DB price unavailable for exit; aborting without fallback")
+                    return None
                 
-                if price_info and 'price_usd' in price_info:
-                    token_price_usd = price_info['price_usd']
-                    exit_value_usd = actual_sell_amount * token_price_usd
-                    else:
-                        exit_value_usd = 0.0
+                # exit_value_usd already calculated above using DB price and native USD rate
                 
                 # Update exit with transaction details and cost tracking
                 target_exit['status'] = 'executed'
@@ -574,10 +301,8 @@ class TraderLowcapSimpleV2:
                 target_exit['tokens_sold'] = actual_sell_amount
                 target_exit['native_amount'] = exit_value_native
                 
-                # Update totals and calculated fields
-                await self._update_tokens_sold(position_id, actual_sell_amount)
-                await self._update_total_extracted_native(position_id, exit_value_native)
-                await self._update_position_pnl(position_id)
+                # Update totals and calculated fields in a single database write to avoid race conditions
+                await self._update_exit_aggregates_atomic(position_id, actual_sell_amount, exit_value_native, target_exit)
                 # Note: Exits don't need recalculation - they're already calculated based on entry price
                 
                 # Set total_quantity immediately from trade execution and schedule reconciliation
@@ -586,36 +311,32 @@ class TraderLowcapSimpleV2:
                     # schedule reconciliation
                     await self._service.reconcile_wallet_quantity(position_id, position.get('total_quantity', 0))
                 else:
-                await self._set_quantity_from_trade(position_id, -actual_sell_amount)
+                    await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
                 # Execute Lotus buyback for SOL exits
                 buyback_result = None
                 if self._service and chain.lower() == 'solana':
                     try:
-                            buyback_cfg = (self.config or {}).get('lotus_buyback', {})
-                        
+                        buyback_cfg = (self.config or {}).get('lotus_buyback', {})
                         # Validate exit value
                         if exit_value_native <= 0:
                             self.logger.warning(f"Lotus buyback skipped: exit_value_native is {exit_value_native}")
                             buyback_result = {'success': True, 'skipped': True, 'reason': 'Invalid exit value'}
                         else:
-                        plan = self._service.plan_buyback(
-                            chain=chain,
-                            exit_value_native=exit_value_native,
-                            enabled=bool(buyback_cfg.get('enabled', False)),
-                            percentage=float(buyback_cfg.get('percentage', 10.0)),
-                            min_amount_native=float(buyback_cfg.get('min_amount_sol', 0.001)),
-                        )
-                            
-                        if plan and plan.get('success') and not plan.get('skipped'):
+                            plan = self._service.plan_buyback(
+                                chain=chain,
+                                exit_value_native=exit_value_native,
+                                enabled=bool(buyback_cfg.get('enabled', False)),
+                                percentage=float(buyback_cfg.get('percentage', 10.0)),
+                                min_amount_native=float(buyback_cfg.get('min_amount_sol', 0.001)),
+                            )
+                            if plan and plan.get('success') and not plan.get('skipped'):
                                 lotus_contract = buyback_cfg.get('lotus_contract')
                                 holding_wallet = buyback_cfg.get('holding_wallet')
                                 slippage_pct = float(buyback_cfg.get('slippage_pct', 5.0))
-                                
                                 if lotus_contract and holding_wallet:
                                     buyback_amount = plan.get('buyback_amount_native', 0)
                                     self.logger.info(f"Executing Lotus buyback: {buyback_amount:.6f} SOL from {exit_value_native:.6f} SOL exit")
-                                    
                                     buyback_result = self._service.perform_buyback(
                                         lotus_contract=lotus_contract,
                                         holding_wallet=holding_wallet,
@@ -624,8 +345,8 @@ class TraderLowcapSimpleV2:
                                     )
                                 else:
                                     buyback_result = {'success': False, 'error': 'Missing lotus_contract or holding_wallet in config'}
-                        else:
-                            buyback_result = plan
+                            else:
+                                buyback_result = plan
                     except Exception as e:
                         self.logger.error(f"Lotus buyback failed: {e}")
                         buyback_result = {'success': False, 'error': f'buyback_service_failed: {str(e)}'}
@@ -633,21 +354,19 @@ class TraderLowcapSimpleV2:
                 # Send Telegram sell signal notification via service (preferred)
                 if self._service and self.telegram_notifier:
                     await self._service.send_sell_signal(
-                    position_id=position_id,
-                    exit_number=exit_number,
-                    tokens_sold=actual_sell_amount,
-                    sell_price=target_price,
-                    tx_hash=tx_hash,
-                    chain=chain,
-                    contract=contract,
+                        position_id=position_id,
+                        exit_number=exit_number,
+                        tokens_sold=actual_sell_amount,
+                        sell_price=target_price,
+                        tx_hash=tx_hash,
+                        chain=chain,
+                        contract=contract,
                         buyback_result=buyback_result,
-                )
+                    )
                 else:
                     pass
                 
-                # Update position in database LAST - after all other operations succeed
-                # Save the entire updated position, not just the exits
-                self.repo.update_position(position_id, position)
+                # Position already updated atomically above with both exit object and aggregates
                 
                 trading_logger.log_exit_execution(
                     position_id=position_id,
@@ -770,8 +489,8 @@ class TraderLowcapSimpleV2:
                 return
             
             # Calculate weighted average entry price
-            total_cost = sum(e['price'] * e['tokens_bought'] for e in executed_entries)
-            total_tokens = sum(e['tokens_bought'] for e in executed_entries)
+            total_cost = sum(e.get('cost_native', 0) for e in executed_entries)
+            total_tokens = sum(e.get('tokens_bought', 0) for e in executed_entries)
             
             if total_tokens > 0:
                 avg_entry_price = total_cost / total_tokens
@@ -798,37 +517,24 @@ class TraderLowcapSimpleV2:
 
             for entry in entries:
                 if entry.get('status') == 'executed':
-                    cost_eth = entry.get('cost_eth', 0)
+                    cost_native = entry.get('cost_native', 0)
                     cost_usd = entry.get('cost_usd', 0)
 
-                    total_cost_native += cost_eth
+                    total_cost_native += cost_native
                     total_cost_usd += cost_usd
 
-            # Get actual wallet balance for total_quantity
-            try:
-                chain = position.get('token_chain', 'ethereum')
-                contract = position.get('token_contract')
-                if contract:
-                    wallet_balance = await self.wallet_manager.get_balance(chain, contract)
-                    total_tokens = float(wallet_balance) if wallet_balance else 0
-                else:
-                    total_tokens = 0
-            except Exception as e:
-                self.logger.error(f"Error getting wallet balance for recalculation: {e}")
-                # Fallback to calculating from entries
-                total_tokens = sum(entry.get('tokens_bought', 0) for entry in entries if entry.get('status') == 'executed')
+            # Calculate total tokens bought from entries (not current wallet balance)
+            total_tokens_bought = sum(entry.get('tokens_bought', 0) for entry in entries if entry.get('status') == 'executed')
 
-            # Note: total_quantity is now updated from wallet balance via _update_total_quantity_from_wallet()
-
-            # Calculate average entry price
-            if total_tokens > 0:
-                position['avg_entry_price'] = total_cost_native / total_tokens
+            # Calculate average entry price based on original tokens bought
+            if total_tokens_bought > 0:
+                position['avg_entry_price'] = total_cost_native / total_tokens_bought
             else:
                 position['avg_entry_price'] = 0
 
             # Do not reset P&L here; it will be updated by _update_position_pnl
 
-            self.logger.info(f"Recalculated position totals: {total_tokens} tokens, {total_cost_native:.6f} native")
+            self.logger.info(f"Recalculated position totals: {total_tokens_bought} tokens bought, {total_cost_native:.6f} native")
 
         except Exception as e:
             self.logger.error(f"Error recalculating position totals: {e}")
@@ -903,27 +609,9 @@ class TraderLowcapSimpleV2:
                     else:
                         cost_usd = 0.0
                 else:
-                    # Fallback to API if database price not available
-                if chain == 'bsc':
-                    price_info = self.price_oracle.price_bsc(contract)
-                elif chain == 'base':
-                    price_info = self.price_oracle.price_base(contract)
-                elif chain == 'ethereum':
-                    price_info = self.price_oracle.price_eth(contract)
-                elif chain == 'solana':
-                    price_info = self.price_oracle.price_solana(contract)
-                else:
-                    price_info = None
-                
-                if price_info and 'price_native' in price_info and 'price_usd' in price_info:
-                    price = price_info['price_native']
-                    token_price_usd = price_info['price_usd']
-                    tokens_bought = amount / price
-                    cost_usd = tokens_bought * token_price_usd
-                    else:
-                        price = 0
-                        tokens_bought = 0
-                        cost_usd = 0
+                    # No DB price available: abort execution (no API fallback)
+                    self.logger.error("DB price unavailable for entry; aborting without fallback")
+                    return None
                 
                 # Mark entry as executed with cost tracking
                 self.repo.mark_entry_executed(
@@ -944,6 +632,11 @@ class TraderLowcapSimpleV2:
                 else:
                     # Fallback: recalculate exits using existing method
                     self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
+                # Update P&L for all positions (one-shot, no global loop)
+                try:
+                    await self._update_all_positions_pnl()
+                except Exception as e:
+                    self.logger.error(f"Error updating P&L for all positions after entry: {e}")
                 
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -954,7 +647,7 @@ class TraderLowcapSimpleV2:
                         token_ticker=position.get('token_ticker', 'Unknown'),
                         token_contract=position.get('token_contract', ''),
                         chain=chain,
-                    amount_native=amount,
+                        amount_native=amount,
                         price=entry.get('price', 0),
                         tx_hash=result,
                         allocation_pct=None,
@@ -980,9 +673,9 @@ class TraderLowcapSimpleV2:
                     reason='execution_failed',
                     details='No transaction hash returned'
                 )
-                        self.logger.error(f"Entry {entry_number} execution failed")
-                        # Mark as failed to prevent endless retries
-                        self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
+                self.logger.error(f"Entry {entry_number} execution failed")
+                # Mark as failed to prevent endless retries
+                self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
                 
         except Exception as e:
             self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
@@ -1050,23 +743,21 @@ class TraderLowcapSimpleV2:
                         cost_usd = 0
                         tokens_bought = 0
                         
-                        # Get price info for USD calculation
-                        if chain == 'bsc':
-                            price_info = self.price_oracle.price_bsc(contract)
-                        elif chain == 'base':
-                            price_info = self.price_oracle.price_base(contract)
-                        elif chain == 'ethereum':
-                            price_info = self.price_oracle.price_eth(contract)
-                        elif chain == 'solana':
-                            price_info = self.price_oracle.price_solana(contract)
-                        else:
-                            price_info = None
-                        
-                        if price_info and 'price_native' in price_info and 'price_usd' in price_info:
-                            price = price_info['price_native']
-                            token_price_usd = price_info['price_usd']
+                        # Get price from database (not API)
+                        price = await self._get_current_price_from_db(contract, chain)
+                        if price and price > 0:
                             tokens_bought = amount / price
-                            cost_usd = tokens_bought * token_price_usd
+                            
+                            # Get USD rate for cost calculation
+                            native_usd_rate = await self._get_native_usd_rate(chain)
+                            if native_usd_rate > 0:
+                                cost_usd = amount * native_usd_rate
+                            else:
+                                cost_usd = 0.0
+                        else:
+                            # No DB price available: use fallback values
+                            tokens_bought = 0
+                            cost_usd = 0
                         
                         # Mark entry as executed with cost tracking
                         self.repo.mark_entry_executed(
@@ -1087,6 +778,11 @@ class TraderLowcapSimpleV2:
                         else:
                             # Fallback: recalculate exits using existing method
                             self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
+                        # Update P&L for all positions (one-shot, no global loop)
+                        try:
+                            await self._update_all_positions_pnl()
+                        except Exception as e:
+                            self.logger.error(f"Error updating P&L for all positions after entry: {e}")
                         
                         # Set total_quantity immediately from trade execution and schedule reconciliation
                         await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -1116,17 +812,21 @@ class TraderLowcapSimpleV2:
                     cost_usd = 0
                     tokens_bought = 0
                     
-                    # Get price info for USD calculation
-                    if chain == 'solana':
-                        price_info = self.price_oracle.price_solana(contract)
-                    else:
-                        price_info = None
-                    
-                    if price_info and 'price_native' in price_info and 'price_usd' in price_info:
-                        price = price_info['price_native']
-                        token_price_usd = price_info['price_usd']
+                    # Get price from database (not API)
+                    price = await self._get_current_price_from_db(contract, chain)
+                    if price and price > 0:
                         tokens_bought = amount / price
-                        cost_usd = tokens_bought * token_price_usd
+                        
+                        # Get USD rate for cost calculation
+                        native_usd_rate = await self._get_native_usd_rate(chain)
+                        if native_usd_rate > 0:
+                            cost_usd = amount * native_usd_rate
+                        else:
+                            cost_usd = 0.0
+                    else:
+                        # No DB price available: use fallback values
+                        tokens_bought = 0
+                        cost_usd = 0
                     
                     # Mark entry as executed with cost tracking
                     self.repo.mark_entry_executed(
@@ -1147,6 +847,11 @@ class TraderLowcapSimpleV2:
                     else:
                         # Fallback: recalculate exits using existing method
                         self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
+                    # Update P&L for all positions (one-shot, no global loop)
+                    try:
+                        await self._update_all_positions_pnl()
+                    except Exception as e:
+                        self.logger.error(f"Error updating P&L for all positions after entry: {e}")
                     
                     # Set total_quantity immediately from trade execution and schedule reconciliation
                     await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -1601,6 +1306,46 @@ class TraderLowcapSimpleV2:
         if not self._service:
                 return False
         return await self._service._update_total_extracted_native(position_id, amount_native)
+
+    async def _update_exit_aggregates_atomic(self, position_id: str, tokens_sold: float, native_amount: float, target_exit: Dict[str, Any]) -> bool:
+        """Update all exit aggregates and exit object in a single atomic database write to avoid race conditions"""
+        try:
+            if not self._service:
+                return False
+            
+            # Get position once
+            position = self._service.repo.get_position(position_id)
+            if not position:
+                self.logger.error(f"Position {position_id} not found for atomic exit update")
+                return False
+            
+            # Update exit object in the position
+            exits = position.get('exits', [])
+            for exit_data in exits:
+                if exit_data.get('exit_number') == target_exit.get('exit_number'):
+                    # Update the exit object with all the transaction details
+                    exit_data.update(target_exit)
+                    break
+            
+            # Update all aggregate fields in memory
+            current_tokens_sold = position.get('total_tokens_sold', 0.0) or 0.0
+            current_extracted = position.get('total_extracted_native', 0.0) or 0.0
+            
+            position['total_tokens_sold'] = current_tokens_sold + tokens_sold
+            position['total_extracted_native'] = current_extracted + native_amount
+            
+            # Update P&L in memory
+            await self._service._update_position_pnl_in_memory(position)
+            
+            # Single database write with both exit object and aggregates
+            success = self._service.repo.update_position(position_id, position)
+            if success:
+                self.logger.info(f"Updated exit aggregates atomically for {position_id}: +{tokens_sold:.8f} tokens sold, +{native_amount:.8f} native extracted")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error in atomic exit aggregate update for {position_id}: {e}")
+            return False
     
     async def _get_native_usd_rate(self, chain: str) -> float:
         """Get native currency USD rate for P&L conversion"""
@@ -1701,6 +1446,11 @@ class TraderLowcapSimpleV2:
             if result.get('success'):
                 self.logger.info(f"✅ Lotus tokens sent: {amount:.6f} to {destination_wallet}")
                 self.logger.info(f"   Transaction: {result.get('signature')}")
+                # One-shot P&L refresh for all positions after a successful exit
+                try:
+                    await self._update_all_positions_pnl()
+                except Exception as e:
+                    self.logger.error(f"Error updating P&L for all positions after exit: {e}")
                 return True
             else:
                 self.logger.error(f"❌ Failed to send Lotus tokens: {result.get('error')}")

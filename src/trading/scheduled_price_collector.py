@@ -8,7 +8,7 @@ Collects price data every minute for active position tokens and stores in databa
 import asyncio
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import requests
 
 logger = logging.getLogger(__name__)
@@ -69,11 +69,17 @@ class ScheduledPriceCollector:
     
     async def _collection_loop(self, interval_minutes: int):
         """Main collection loop"""
+        last_heartbeat = datetime.now(timezone.utc)
         while self.collecting:
             # Elevated to WARNING for initial visibility that the loop is alive
             logger.warning("Price collection tick")
             try:
                 await self._collect_prices_for_active_positions()
+                # Lightweight heartbeat approximately every 5 minutes
+                now = datetime.now(timezone.utc)
+                if (now - last_heartbeat) >= timedelta(minutes=5):
+                    await self._log_heartbeat()
+                    last_heartbeat = now
                 await asyncio.sleep(interval_minutes * 60)  # Convert to seconds
             except asyncio.CancelledError:
                 break
@@ -424,6 +430,31 @@ class ScheduledPriceCollector:
             logger.error(f"Error calculating changes: {e}")
             price_data['volume_change_1m'] = 0
             price_data['liquidity_change_1m'] = 0
+
+    async def _log_heartbeat(self):
+        """Log a lightweight heartbeat with recent insert counts per chain."""
+        try:
+            client = self.supabase_manager.client
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+            counts: Dict[str, int] = {}
+            for chain in ['solana', 'ethereum', 'base', 'bsc']:
+                try:
+                    # Try to use exact count if supported
+                    result = client.table('lowcap_price_data_1m').select('token_contract', count='exact').eq('chain', chain).gte('timestamp', cutoff).execute()
+                    count_val = getattr(result, 'count', None)
+                    if count_val is None:
+                        count_val = len(result.data or [])
+                    counts[chain] = int(count_val)
+                except Exception:
+                    # Best effort: fallback without breaking heartbeat
+                    try:
+                        data = client.table('lowcap_price_data_1m').select('token_contract').eq('chain', chain).gte('timestamp', cutoff).limit(1000).execute().data or []
+                        counts[chain] = len(data)
+                    except Exception:
+                        counts[chain] = -1
+            logger.warning(f"Price collector heartbeat: last_5m rows -> {counts}")
+        except Exception as e:
+            logger.warning(f"Price collector heartbeat error: {e}")
 
 
 # Example usage and testing

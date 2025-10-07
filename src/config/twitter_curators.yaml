@@ -63,7 +63,7 @@ curators:
         priority: "high"
       telegram:
         handle: "@ducksinnerpond"
-        channel_id: "ducksinnerpond"
+        channel_id: -1002691312655
         active: true
         priority: "high"
     tags: ["alpha", "calls", "multi_platform"]
@@ -124,6 +124,21 @@ curators:
         priority: "high"
     tags: ["ai", "crypto", "alpha", "technical"]
     notes: "AI-focused crypto analysis and alpha calls"
+
+  - id: "jonesrida"
+    name: "slaying charts with jones rida"
+    platforms:
+      twitter:
+        handle: "@jonesrida"
+        active: true
+        priority: "high"
+      telegram:
+        handle: null
+        channel_id: -1002252103258
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Added via request; verified TG channel id -1002252103258"
 
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
