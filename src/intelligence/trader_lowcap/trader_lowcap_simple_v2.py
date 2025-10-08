@@ -256,8 +256,41 @@ class TraderLowcapSimpleV2:
                     tokens_to_sell=actual_sell_amount,
                     target_price_native=target_price,
                 )
+                
+                # Execute USDC conversion for Base/BSC exits after successful execution
+                if tx_hash and chain.lower() in ['base', 'bsc']:
+                    try:
+                        usdc_cfg = (self.config or {}).get('usdc_conversion', {})
+                        if usdc_cfg.get('enabled', False):
+                            # Calculate 10% of native amount received
+                            conversion_amount = exit_value_native * (float(usdc_cfg.get('percentage', 10.0)) / 100.0)
+                            # Chain-specific minimums from config
+                            min_amounts = usdc_cfg.get('min_amount_native', {})
+                            min_amount = min_amounts.get(chain.lower(), 0.001)  # Default fallback
+                            
+                            if conversion_amount >= min_amount:
+                                self.logger.info(f"Executing USDC conversion: {conversion_amount:.6f} {chain.upper()} from {exit_value_native:.6f} {chain.upper()} exit")
+                                usdc_result = await self._convert_to_usdc_after_exit(
+                                    chain=chain,
+                                    native_amount=conversion_amount,
+                                    slippage_pct=float(usdc_cfg.get('slippage_pct', 2.0))
+                                )
+                                if usdc_result.get('success'):
+                                    self.logger.info(f"USDC conversion successful: {usdc_result.get('usdc_received', 0):.2f} USDC received")
+                                else:
+                                    self.logger.error(f"USDC conversion failed: {usdc_result.get('error', 'Unknown error')}")
+                            else:
+                                self.logger.info(f"USDC conversion skipped: {conversion_amount:.6f} {chain.upper()} below minimum {min_amount:.6f}")
+                    except Exception as e:
+                        self.logger.error(f"Error in USDC conversion: {e}")
             elif chain == 'solana' and self.sol_executor:
-                tx_hash = await self.sol_executor.execute_sell(contract, actual_sell_amount, target_price)
+                sell_result = await self.sol_executor.execute_sell(contract, actual_sell_amount, target_price)
+                if sell_result:
+                    tx_hash = sell_result.get('tx_hash')
+                    actual_sol_received = sell_result.get('actual_sol_received', 0)
+                else:
+                    tx_hash = None
+                    actual_sol_received = 0
             else:
                 self.logger.error(f"No executor available for chain {chain}")
                 return False
@@ -270,8 +303,13 @@ class TraderLowcapSimpleV2:
                         self.logger.error(f"Exit {exit_number} transaction not confirmed: {tx_hash}")
                         return False
                 
-                # Calculate exit value for cost tracking
-                exit_value_native = actual_sell_amount * target_price
+                # Calculate exit value for cost tracking - use actual SOL received from transaction
+                if chain == 'solana' and 'actual_sol_received' in locals():
+                    theoretical_value = actual_sell_amount * target_price
+                    exit_value_native = actual_sol_received  # Use actual SOL received from Jupiter
+                    self.logger.info(f"Solana exit: theoretical={theoretical_value:.6f} SOL, actual={actual_sol_received:.6f} SOL")
+                else:
+                    exit_value_native = actual_sell_amount * target_price  # Theoretical for other chains
                 exit_value_usd = 0
                 
                 # Get current price info from database (not API)
@@ -305,6 +343,9 @@ class TraderLowcapSimpleV2:
                 await self._update_exit_aggregates_atomic(position_id, actual_sell_amount, exit_value_native, target_exit)
                 # Note: Exits don't need recalculation - they're already calculated based on entry price
                 
+                # Update P&L for all positions after successful exit
+                await self._update_all_positions_pnl()
+                
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 if self._service:
                     await self._service.set_quantity_from_trade(position_id, -actual_sell_amount)
@@ -313,19 +354,23 @@ class TraderLowcapSimpleV2:
                 else:
                     await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
-                # Execute Lotus buyback for SOL exits
+                # Update wallet balance for this chain after successful exit
+                await self._update_wallet_balance_after_trade(chain)
+                
+                # Execute Lotus buyback for SOL exits - now we have the actual cost_native value
                 buyback_result = None
                 if self._service and chain.lower() == 'solana':
                     try:
                         buyback_cfg = (self.config or {}).get('lotus_buyback', {})
-                        # Validate exit value
-                        if exit_value_native <= 0:
-                            self.logger.warning(f"Lotus buyback skipped: exit_value_native is {exit_value_native}")
-                            buyback_result = {'success': True, 'skipped': True, 'reason': 'Invalid exit value'}
+                        # Use actual SOL received for buyback calculation
+                        actual_sol_received = target_exit.get('cost_native', 0)
+                        if actual_sol_received <= 0:
+                            self.logger.warning(f"Lotus buyback skipped: no SOL received (cost_native is {actual_sol_received})")
+                            buyback_result = {'success': True, 'skipped': True, 'reason': 'No SOL received'}
                         else:
                             plan = self._service.plan_buyback(
                                 chain=chain,
-                                exit_value_native=exit_value_native,
+                                exit_value_native=actual_sol_received,
                                 enabled=bool(buyback_cfg.get('enabled', False)),
                                 percentage=float(buyback_cfg.get('percentage', 10.0)),
                                 min_amount_native=float(buyback_cfg.get('min_amount_sol', 0.001)),
@@ -337,12 +382,16 @@ class TraderLowcapSimpleV2:
                                 if lotus_contract and holding_wallet:
                                     buyback_amount = plan.get('buyback_amount_native', 0)
                                     self.logger.info(f"Executing Lotus buyback: {buyback_amount:.6f} SOL from {exit_value_native:.6f} SOL exit")
-                                    buyback_result = self._service.perform_buyback(
+                                    buyback_result = await self._service.perform_buyback(
                                         lotus_contract=lotus_contract,
                                         holding_wallet=holding_wallet,
                                         buyback_amount_native=buyback_amount,
                                         slippage_pct=slippage_pct,
                                     )
+                                    if buyback_result.get('success'):
+                                        self.logger.info(f"Lotus buyback successful: {buyback_result.get('lotus_tokens', 0):.6f} Lotus tokens")
+                                    else:
+                                        self.logger.error(f"Lotus buyback failed: {buyback_result.get('error', 'Unknown error')}")
                                 else:
                                     buyback_result = {'success': False, 'error': 'Missing lotus_contract or holding_wallet in config'}
                             else:
@@ -632,14 +681,14 @@ class TraderLowcapSimpleV2:
                 else:
                     # Fallback: recalculate exits using existing method
                     self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
-                # Update P&L for all positions (one-shot, no global loop)
-                try:
-                    await self._update_all_positions_pnl()
-                except Exception as e:
-                    self.logger.error(f"Error updating P&L for all positions after entry: {e}")
+                # Update P&L for all positions after successful entry
+                await self._update_all_positions_pnl()
                 
                 # Set total_quantity immediately from trade execution and schedule reconciliation
                 await self._set_quantity_from_trade(position_id, tokens_bought)
+                
+                # Update wallet balance for this chain after successful entry
+                await self._update_wallet_balance_after_trade(chain)
                 
                 # Send notification for additional entries via service notifier if configured
                 if self._service and self.telegram_notifier:
@@ -778,11 +827,8 @@ class TraderLowcapSimpleV2:
                         else:
                             # Fallback: recalculate exits using existing method
                             self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
-                        # Update P&L for all positions (one-shot, no global loop)
-                        try:
-                            await self._update_all_positions_pnl()
-                        except Exception as e:
-                            self.logger.error(f"Error updating P&L for all positions after entry: {e}")
+                        # Update P&L for all positions after successful entry
+                        await self._update_all_positions_pnl()
                         
                         # Set total_quantity immediately from trade execution and schedule reconciliation
                         await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -847,11 +893,8 @@ class TraderLowcapSimpleV2:
                     else:
                         # Fallback: recalculate exits using existing method
                         self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
-                    # Update P&L for all positions (one-shot, no global loop)
-                    try:
-                        await self._update_all_positions_pnl()
-                    except Exception as e:
-                        self.logger.error(f"Error updating P&L for all positions after entry: {e}")
+                    # Update P&L for all positions after successful entry
+                    await self._update_all_positions_pnl()
                     
                     # Set total_quantity immediately from trade execution and schedule reconciliation
                     await self._set_quantity_from_trade(position_id, tokens_bought)
@@ -1446,11 +1489,8 @@ class TraderLowcapSimpleV2:
             if result.get('success'):
                 self.logger.info(f"✅ Lotus tokens sent: {amount:.6f} to {destination_wallet}")
                 self.logger.info(f"   Transaction: {result.get('signature')}")
-                # One-shot P&L refresh for all positions after a successful exit
-                try:
-                    await self._update_all_positions_pnl()
-                except Exception as e:
-                    self.logger.error(f"Error updating P&L for all positions after exit: {e}")
+                # Update P&L for all positions after successful buyback
+                await self._update_all_positions_pnl()
                 return True
             else:
                 self.logger.error(f"❌ Failed to send Lotus tokens: {result.get('error')}")
@@ -1518,5 +1558,59 @@ class TraderLowcapSimpleV2:
             
         except Exception as e:
             self.logger.error(f"Error storing {chain} balance: {e}")
+
+    async def _update_wallet_balance_after_trade(self, chain: str):
+        """Update wallet balance in database after a trade execution"""
+        try:
+            # Get current native token balance for this chain
+            current_balance = await self.wallet_manager.get_balance(chain)
+            if current_balance is not None:
+                await self._store_native_balance(chain, float(current_balance))
+                self.logger.info(f"Updated {chain} wallet balance after trade: {float(current_balance):.6f}")
+            else:
+                self.logger.warning(f"Could not get current balance for {chain} after trade")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating wallet balance for {chain} after trade: {e}")
+
+    async def _convert_to_usdc_after_exit(self, chain: str, native_amount: float, slippage_pct: float = 2.0) -> Dict[str, Any]:
+        """Convert native token to USDC after exit (like Lotus buyback)"""
+        try:
+            if chain == 'bsc' and self.bsc_executor:
+                result = await self.bsc_executor.swap_native_to_usdc(native_amount, slippage_pct)
+            elif chain == 'base' and self.base_executor:
+                result = await self.base_executor.swap_native_to_usdc(native_amount, slippage_pct)
+            else:
+                return {'success': False, 'error': f'No executor available for {chain}'}
+            
+            if result.get('success'):
+                usdc_received = result.get('usdc_received', 0)
+                self.logger.info(f"USDC conversion successful: {native_amount:.6f} {chain.upper()} → {usdc_received:.2f} USDC")
+            else:
+                self.logger.error(f"USDC conversion failed: {result.get('error', 'Unknown error')}")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error in USDC conversion for {chain}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _set_quantity_from_trade(self, position_id: str, tokens_delta: float) -> bool:
+        """Set total_quantity from trade execution"""
+        try:
+            if self._service:
+                return await self._service.set_quantity_from_trade(position_id, tokens_delta)
+            else:
+                # Fallback implementation
+                position = self.repo.get_position(position_id)
+                if not position:
+                    return False
+                old_quantity = float(position.get('total_quantity', 0.0) or 0.0)
+                new_quantity = old_quantity + float(tokens_delta)
+                position['total_quantity'] = new_quantity
+                return self.repo.update_position(position_id, position)
+        except Exception as e:
+            self.logger.error(f"Error setting quantity from trade for {position_id}: {e}")
+            return False
 
 

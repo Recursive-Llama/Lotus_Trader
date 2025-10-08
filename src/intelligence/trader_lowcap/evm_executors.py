@@ -309,6 +309,105 @@ class BscExecutor(BaseEvmExecutor):
             print(f"Error in BSC execute_sell: {e}")
             return None
 
+    async def swap_native_to_usdc(self, bnb_amount: float, slippage_pct: float = 2.0) -> Dict[str, Any]:
+        """Convert BNB to USDC (like Lotus buyback)"""
+        try:
+            # USDC contract on BSC
+            usdc_contract = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
+            
+            # Wrap BNB to WBNB first
+            if not self._wrap_native_token(bnb_amount):
+                return {'success': False, 'error': 'Failed to wrap BNB to WBNB'}
+            
+            amount_wei = int(bnb_amount * 1e18)
+            
+            # Approve WBNB for router
+            approve_res = self.client.approve_erc20(
+                self.client.weth_address, 
+                self.client.router_contract.address, 
+                amount_wei
+            )
+            if not approve_res or approve_res.get('status') != 1:
+                return {'success': False, 'error': f'WBNB approval failed: {approve_res}'}
+            
+            import time
+            time.sleep(3)  # Wait for approval
+            
+            # Try V3 swap (WBNB -> USDC)
+            for fee in [10000, 3000, 500, 2500]:
+                try:
+                    res_v3 = self.client.swap_exact_input_single(
+                        self.client.weth_address, 
+                        usdc_contract, 
+                        amount_wei,
+                        fee=fee, 
+                        amount_out_min=0
+                    )
+                    if res_v3 and res_v3.get('status') == 1:
+                        # Get USDC balance after swap
+                        usdc_balance = self.client.erc20_balance(usdc_contract, self.client.account.address)
+                        usdc_received = float(usdc_balance) / 1e18  # USDC has 18 decimals on BSC
+                        
+                        return {
+                            'success': True,
+                            'tx_hash': res_v3.get('tx_hash'),
+                            'usdc_received': usdc_received,
+                            'bnb_amount': bnb_amount
+                        }
+                except Exception as e:
+                    print(f"V3 USDC swap error (fee={fee}): {e}")
+                    continue
+            
+            # Fallback to V2
+            if hasattr(self.client, 'v2_router') and self.client.v2_router:
+                try:
+                    # Approve WBNB for V2 router
+                    approve_res_v2 = self.client.approve_erc20(
+                        self.client.weth_address, 
+                        self.client.v2_router.address, 
+                        amount_wei
+                    )
+                    if approve_res_v2 and approve_res_v2.get('status') == 1:
+                        time.sleep(3)
+                        
+                        # Get quote for minOut
+                        amounts = self.client.v2_get_amounts_out(
+                            self.client.weth_address, 
+                            usdc_contract, 
+                            amount_wei
+                        )
+                        min_out = 0
+                        if amounts and len(amounts) >= 2 and amounts[1]:
+                            min_out = int(int(amounts[1]) * (100 - slippage_pct) / 100)
+                        
+                        swap_v2 = self.client.v2_swap_exact_tokens_for_tokens(
+                            self.client.weth_address,
+                            usdc_contract,
+                            amount_wei,
+                            amount_out_min_wei=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                        
+                        if swap_v2 and swap_v2.get('status') == 1:
+                            # Get USDC balance after swap
+                            usdc_balance = self.client.erc20_balance(usdc_contract, self.client.account.address)
+                            usdc_received = float(usdc_balance) / 1e18
+                            
+                            return {
+                                'success': True,
+                                'tx_hash': swap_v2.get('tx_hash'),
+                                'usdc_received': usdc_received,
+                                'bnb_amount': bnb_amount
+                            }
+                except Exception as e:
+                    print(f"V2 USDC swap error: {e}")
+            
+            return {'success': False, 'error': 'All swap methods failed'}
+            
+        except Exception as e:
+            return {'success': False, 'error': f'USDC conversion error: {e}'}
+
 
 class BaseExecutor(BaseEvmExecutor):
     """Base network-specific executor with Aerodrome and V3 support"""
@@ -695,6 +794,105 @@ class BaseExecutor(BaseEvmExecutor):
         except Exception as e:
             print(f"Error in execute_sell: {e}")
             return None
+
+    async def swap_native_to_usdc(self, eth_amount: float, slippage_pct: float = 2.0) -> Dict[str, Any]:
+        """Convert ETH to USDC (like Lotus buyback)"""
+        try:
+            # USDC contract on Base
+            usdc_contract = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            
+            # Wrap ETH to WETH first
+            if not self._wrap_native_token(eth_amount):
+                return {'success': False, 'error': 'Failed to wrap ETH to WETH'}
+            
+            amount_wei = int(eth_amount * 1e18)
+            
+            # Approve WETH for router
+            approve_res = self.client.approve_erc20(
+                self.client.weth_address, 
+                self.client.router_contract.address, 
+                amount_wei
+            )
+            if not approve_res or approve_res.get('status') != 1:
+                return {'success': False, 'error': f'WETH approval failed: {approve_res}'}
+            
+            import time
+            time.sleep(3)  # Wait for approval
+            
+            # Try V3 swap (WETH -> USDC)
+            for fee in [10000, 3000, 500, 2500]:
+                try:
+                    res_v3 = self.client.swap_exact_input_single(
+                        self.client.weth_address, 
+                        usdc_contract, 
+                        amount_wei,
+                        fee=fee, 
+                        amount_out_min=0
+                    )
+                    if res_v3 and res_v3.get('status') == 1:
+                        # Get USDC balance after swap
+                        usdc_balance = self.client.erc20_balance(usdc_contract, self.client.account.address)
+                        usdc_received = float(usdc_balance) / 1e6  # USDC has 6 decimals on Base
+                        
+                        return {
+                            'success': True,
+                            'tx_hash': res_v3.get('tx_hash'),
+                            'usdc_received': usdc_received,
+                            'eth_amount': eth_amount
+                        }
+                except Exception as e:
+                    print(f"V3 USDC swap error (fee={fee}): {e}")
+                    continue
+            
+            # Fallback to V2
+            if hasattr(self.client, 'v2_router') and self.client.v2_router:
+                try:
+                    # Approve WETH for V2 router
+                    approve_res_v2 = self.client.approve_erc20(
+                        self.client.weth_address, 
+                        self.client.v2_router.address, 
+                        amount_wei
+                    )
+                    if approve_res_v2 and approve_res_v2.get('status') == 1:
+                        time.sleep(3)
+                        
+                        # Get quote for minOut
+                        amounts = self.client.v2_get_amounts_out(
+                            self.client.weth_address, 
+                            usdc_contract, 
+                            amount_wei
+                        )
+                        min_out = 0
+                        if amounts and len(amounts) >= 2 and amounts[1]:
+                            min_out = int(int(amounts[1]) * (100 - slippage_pct) / 100)
+                        
+                        swap_v2 = self.client.v2_swap_exact_tokens_for_tokens(
+                            self.client.weth_address,
+                            usdc_contract,
+                            amount_wei,
+                            amount_out_min_wei=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                        
+                        if swap_v2 and swap_v2.get('status') == 1:
+                            # Get USDC balance after swap
+                            usdc_balance = self.client.erc20_balance(usdc_contract, self.client.account.address)
+                            usdc_received = float(usdc_balance) / 1e6  # USDC has 6 decimals on Base
+                            
+                            return {
+                                'success': True,
+                                'tx_hash': swap_v2.get('tx_hash'),
+                                'usdc_received': usdc_received,
+                                'eth_amount': eth_amount
+                            }
+                except Exception as e:
+                    print(f"V2 USDC swap error: {e}")
+            
+            return {'success': False, 'error': 'All swap methods failed'}
+            
+        except Exception as e:
+            return {'success': False, 'error': f'USDC conversion error: {e}'}
 
 
 class EthExecutor(BaseEvmExecutor):

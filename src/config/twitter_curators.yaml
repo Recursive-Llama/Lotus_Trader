@@ -23,16 +23,6 @@ curators:
     tags: ["crypto", "trading", "analysis"]
     notes: "Active crypto trader and analyst"
     
-  - id: "zinceth"
-    name: "Zinc ETH"
-    platforms:
-      twitter:
-        handle: "@zinceth"
-        active: true
-        priority: "medium"
-    tags: ["ethereum", "defi", "yield"]
-    notes: "Ethereum and DeFi specialist"
-    
   - id: "cryptotrissy"
     name: "Crypto Trissy"
     platforms:
@@ -139,6 +129,49 @@ curators:
         priority: "high"
     tags: ["alpha", "calls", "multi_platform"]
     notes: "Added via request; verified TG channel id -1002252103258"
+
+  - id: "0xunihax0r"
+    name: "0xUnihax0r"
+    platforms:
+      twitter:
+        handle: "@0xUnihax0r"
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls"]
+    notes: "Twitter-only curator"
+
+  - id: "crypticsden"
+    name: "Cryptic's Den"
+    platforms:
+      telegram:
+        handle: "@crypticsden22"
+        channel_id: -1002263903412
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls"]
+    notes: "Telegram-only curator; verified TG channel id -1002263903412"
+
+  - id: "sachs"
+    name: "Sachs"
+    platforms:
+      telegram:
+        handle: "@PredictTheMarkets"
+        channel_id: -1002227629400
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls"]
+    notes: "Telegram-only curator; @PredictTheMarkets"
+
+  - id: "eleetmo"
+    name: "Eleetmo"
+    platforms:
+      telegram:
+        handle: "@eleetmoramblings"
+        channel_id: -1002690101974
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls"]
+    notes: "Telegram-only curator; @eleetmoramblings"
 
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"

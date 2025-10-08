@@ -163,6 +163,16 @@ lotus_buyback:
   min_amount_sol: 0.001  # Minimum SOL amount to trigger buyback
   slippage_pct: 2.0  # Slippage tolerance for Jupiter swaps
 
+# USDC Conversion for EVM/BSC (like Lotus buybacks)
+usdc_conversion:
+  enabled: true
+  percentage: 10.0  # 10% of sell proceeds
+  min_amount_native:
+    bsc: 0.0004  # BNB minimum
+    base: 0.0001  # ETH minimum
+  slippage_pct: 2.0  # Slippage tolerance for swaps
+  chains: ['base', 'bsc']  # Only these chains (low fees)
+
 # Monitoring & Alerts
 monitoring:
   health_check_interval: 300  # seconds

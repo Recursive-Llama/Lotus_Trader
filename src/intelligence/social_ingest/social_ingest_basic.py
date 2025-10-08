@@ -68,6 +68,9 @@ class SocialIngestModule:
             'WEED',  # Specific token to avoid
             'BLV',   # Specific token to avoid
             'LIGHTER',  # Specific token to avoid
+            'BSC',    # BSC token - avoid confusion with BSC chain
+            '$4',     # Specific token to avoid
+            '4',      # Specific token to avoid
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
@@ -202,10 +205,11 @@ class SocialIngestModule:
             created_strands = []
             for token_info in extraction_result['tokens']:
                 token_name = token_info.get('token_name', 'unknown')
-                print(f"   🔍 Processing token: {token_name}")
+                identifier_used = "contract" if token_info.get('contract_address') else "ticker"
+                print(f"   🔍 Processing token: {token_name} (using {identifier_used})")
                 
-                # Check if token is in ignore list
-                if token_name.upper() in self.ignored_tokens:
+                # Check if token is in ignore list (contract addresses bypass ignore list)
+                if token_name.upper() in self.ignored_tokens and not token_info.get('contract_address'):
                     print(f"   ⏭️  Skipping ignored token: {token_name}")
                     self.logger.info(f"Skipping ignored token: {token_name}")
                     continue
@@ -254,7 +258,7 @@ class SocialIngestModule:
                 
                 # Create social_lowcap strand for this token with intent data
                 print(f"   🔧 Creating strand for {verified_token.get('ticker', 'unknown')}...")
-                strand = await self._create_social_strand(curator, message_data, verified_token, extraction_result, intent_analysis)
+                strand = await self._create_social_strand(curator, message_data, verified_token, extraction_result, intent_analysis, identifier_used)
                 if strand:
                     created_strands.append(strand)
                     print(f"   ✅ Strand created successfully for {verified_token.get('ticker', 'unknown')}")
@@ -621,6 +625,21 @@ class SocialIngestModule:
             self.logger.error(f"Error calculating age score: {e}")
             return 0.5
     
+    def _calculate_age_days(self, pair_created_at: str) -> int:
+        """Calculate age in days from pairCreatedAt timestamp"""
+        try:
+            if not pair_created_at:
+                return 999  # Default to "old" if no data
+            
+            from datetime import datetime, timezone
+            # Parse DexScreener timestamp (ISO format with Z suffix)
+            created_at = datetime.fromisoformat(pair_created_at.replace('Z', '+00:00'))
+            # Calculate days since creation
+            age_days = (datetime.now(timezone.utc) - created_at).days
+            return max(0, age_days)  # Ensure non-negative
+        except:
+            return 999  # Default to "old" if parsing fails
+    
     def _extract_dexscreener_token_details(self, pair_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract token details from DexScreener pair data"""
         try:
@@ -643,6 +662,9 @@ class SocialIngestModule:
             else:
                 liquidity = float(liquidity)
             
+            # Calculate age in days from pairCreatedAt timestamp
+            age_days = self._calculate_age_days(pair_data.get('pairCreatedAt', ''))
+            
             # Extract token details
             return {
                 'ticker': base_token.get('symbol', ''),
@@ -658,7 +680,8 @@ class SocialIngestModule:
                 'dexscreener_pair_id': pair_data.get('pairAddress', ''),
                 'quote_token': quote_token.get('symbol', ''),
                 'quote_contract': quote_token.get('address', ''),
-                'raw_chain_id': raw_chain_id
+                'raw_chain_id': raw_chain_id,
+                'age_days': age_days
             }
             
         except Exception as e:
@@ -840,7 +863,7 @@ class SocialIngestModule:
             self.logger.error(f"Error scanning handle {handle}: {e}")
             return None
     
-    async def _create_social_strand(self, curator: Dict[str, Any], message_data: Dict[str, Any], token: Dict[str, Any], extraction_result: Dict[str, Any] = None, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _create_social_strand(self, curator: Dict[str, Any], message_data: Dict[str, Any], token: Dict[str, Any], extraction_result: Dict[str, Any] = None, intent_analysis: Dict[str, Any] = None, identifier_used: str = "ticker") -> Dict[str, Any]:
         """Create social_lowcap strand for DML"""
         try:
             # Verbose details moved to DEBUG level to keep INFO concise
@@ -892,6 +915,7 @@ class SocialIngestModule:
                     "token": {
                         "ticker": token['ticker'],
                         "contract": token.get('contract'),
+                        "identifier_used": identifier_used,
                         "chain": token['chain'],
                         "price": token.get('price'),
                         "volume_24h": token.get('volume_24h'),

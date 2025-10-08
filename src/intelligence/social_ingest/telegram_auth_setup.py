@@ -161,9 +161,12 @@ async def main():
     group_handles = [
         -1002691312655,  # ducksinnerpond (now private)
         -1002252103258,  # slaying charts with jones rida
+        -1002263903412,  # cryptic's den
         "cryptolyxecalls", 
         "crypto_popseye_calls",
-        "zincalpha"
+        "zincalpha",
+        "PredictTheMarkets",  # Sachs
+        "eleetmoramblings"  # Eleetmo
     ]
     
     print("🔍 Testing group access...")

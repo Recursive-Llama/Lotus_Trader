@@ -20,7 +20,7 @@ class SolanaExecutor:
             return None
         return None
 
-    async def execute_sell(self, token_mint: str, tokens_to_sell: float, target_price_sol: float) -> Optional[str]:
+    async def execute_sell(self, token_mint: str, tokens_to_sell: float, target_price_sol: float) -> Optional[dict]:
         """Execute a sell order for Solana tokens"""
         try:
             # Detect Token-2022 to adjust slippage for transfer-fee (tax) tokens
@@ -56,8 +56,15 @@ class SolanaExecutor:
             )
             
             if res.get('success'):
-                print(f"✅ Solana sell successful: {res.get('tx_hash') or res.get('signature')}")
-                return res.get('tx_hash') or res.get('signature')
+                tx_hash = res.get('tx_hash') or res.get('signature')
+                output_amount = res.get('outputAmount', 0)
+                # Convert from lamports to SOL (9 decimals)
+                actual_sol_received = float(output_amount) / 1_000_000_000
+                print(f"✅ Solana sell successful: {tx_hash}, received {actual_sol_received:.6f} SOL")
+                return {
+                    'tx_hash': tx_hash,
+                    'actual_sol_received': actual_sol_received
+                }
             
             # Retry once with higher slippage if simulation failed
             err = res.get('error', '') if isinstance(res, dict) else ''
@@ -70,8 +77,15 @@ class SolanaExecutor:
                     slippage_bps=retry_slippage_bps
                 )
                 if res2.get('success'):
-                    print(f"✅ Solana sell successful on retry: {res2.get('tx_hash') or res2.get('signature')}")
-                    return res2.get('tx_hash') or res2.get('signature')
+                    tx_hash = res2.get('tx_hash') or res2.get('signature')
+                    output_amount = res2.get('outputAmount', 0)
+                    # Convert from lamports to SOL (9 decimals)
+                    actual_sol_received = float(output_amount) / 1_000_000_000
+                    print(f"✅ Solana sell successful on retry: {tx_hash}, received {actual_sol_received:.6f} SOL")
+                    return {
+                        'tx_hash': tx_hash,
+                        'actual_sol_received': actual_sol_received
+                    }
 
             print(f"❌ Solana sell failed for {token_mint}")
             print(f"Error details: {res.get('error', 'No error details available')}")

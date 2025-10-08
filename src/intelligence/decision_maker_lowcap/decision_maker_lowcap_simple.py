@@ -178,7 +178,7 @@ class DecisionMakerLowcapSimple:
             # All checks passed → approve
             # Extract intent analysis from signal pack
             intent_analysis = social_signal.get('signal_pack', {}).get('intent_analysis')
-            allocation_pct = self._calculate_allocation(curator_score, intent_analysis)
+            allocation_pct = self._calculate_allocation(curator_score, intent_analysis, token_data)
             decision = await self._create_approval_decision(social_signal, allocation_pct, curator_score, intent_analysis)
             
             # Enhanced logging with intent information
@@ -299,13 +299,14 @@ class DecisionMakerLowcapSimple:
             self.logger.error(f"Error checking portfolio capacity: {e}")
             return True  # Assume we have capital if we can't check
     
-    def _calculate_allocation(self, curator_score: float, intent_analysis: Dict[str, Any] = None) -> float:
+    def _calculate_allocation(self, curator_score: float, intent_analysis: Dict[str, Any] = None, token_data: Dict[str, Any] = None) -> float:
         """
-        Step 4: Calculate allocation percentage (2-6%) with intent multiplier
+        Step 4: Calculate allocation percentage (2-6%) with intent multiplier and market cap multiplier
         
         Args:
             curator_score: Curator performance score (0.0 to 1.0)
             intent_analysis: Intent analysis from Stage 2 (optional)
+            token_data: Token data containing market cap (optional)
             
         Returns:
             Allocation percentage (6.0 to 20.0)
@@ -317,6 +318,7 @@ class DecisionMakerLowcapSimple:
             )
             
             # Apply intent multiplier if available
+            allocation = base_allocation
             if intent_analysis:
                 intent_data = intent_analysis.get('intent_analysis', {})
                 multiplier = intent_data.get('allocation_multiplier', 1.0)
@@ -328,9 +330,23 @@ class DecisionMakerLowcapSimple:
                 # Log intent-based adjustment
                 self.logger.info(f"Intent adjustment: {intent_type} -> {multiplier}x multiplier")
                 self.logger.info(f"Allocation: {base_allocation}% -> {allocation}% (curator score: {curator_score:.2f})")
-            else:
-                allocation = base_allocation
-                self.logger.info(f"Allocation calculated: {allocation}% (curator score: {curator_score:.2f})")
+            
+            # Apply market cap multiplier if available
+            if token_data:
+                market_cap = token_data.get('market_cap')
+                if market_cap and market_cap > 0:
+                    market_cap_multiplier = self._get_market_cap_multiplier(market_cap)
+                    allocation = allocation * market_cap_multiplier
+                    self.logger.info(f"Market cap multiplier: ${market_cap:,.0f} -> {market_cap_multiplier}x")
+                    self.logger.info(f"Allocation after market cap: {allocation:.2f}%")
+                
+                # Apply age multiplier if available
+                age_days = token_data.get('age_days')
+                if age_days is not None:
+                    age_multiplier = self._get_age_multiplier(age_days)
+                    allocation = allocation * age_multiplier
+                    self.logger.info(f"Age multiplier: {age_days} days -> {age_multiplier}x")
+                    self.logger.info(f"Final allocation: {allocation:.2f}% (curator score: {curator_score:.2f})")
             
             # AllocationManager already handles proper bounds and logic
             return allocation
@@ -339,6 +355,28 @@ class DecisionMakerLowcapSimple:
             self.logger.error(f"Error calculating allocation: {e}")
             # Fallback to acceptable allocation if error occurs
             return self.allocation_manager.get_social_curator_allocation(0.5)  # 0.5 score = acceptable
+    
+    def _get_market_cap_multiplier(self, market_cap: float) -> float:
+        """Get allocation multiplier based on market cap"""
+        if market_cap < 1_000_000:  # < $1M
+            return 0.5
+        elif market_cap < 10_000_000:  # $1M - $10M
+            return 1.0
+        elif market_cap < 100_000_000:  # $10M - $100M
+            return 1.33
+        else:  # $100M+
+            return 1.5
+    
+    def _get_age_multiplier(self, age_days: int) -> float:
+        """Get allocation multiplier based on token age"""
+        if age_days < 1:  # < 24 hours
+            return 0.5
+        elif age_days < 2:  # < 48 hours  
+            return 0.6
+        elif age_days < 3:  # < 72 hours
+            return 0.9
+        else:  # 3+ days
+            return 1.0
     
     async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create approval decision strand"""
