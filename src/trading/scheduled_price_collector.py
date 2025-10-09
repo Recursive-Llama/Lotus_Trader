@@ -118,9 +118,10 @@ class ScheduledPriceCollector:
             
             positions = result.data if result.data else []
             
-            # Add native tokens for price collection (WETH once for both Ethereum and Base)
+            # Add native tokens for price collection (store WETH separately for each chain)
             native_tokens = [
-                {'token_contract': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'token_chain': 'ethereum'},  # WETH (used for both ETH and Base)
+                {'token_contract': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'token_chain': 'ethereum'},  # WETH on Ethereum
+                {'token_contract': '0x4200000000000000000000000000000000000006', 'token_chain': 'base'},      # WETH on Base
                 {'token_contract': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', 'token_chain': 'bsc'},       # WBNB
                 {'token_contract': 'So11111111111111111111111111111111111111112', 'token_chain': 'solana'},    # SOL
             ]
@@ -282,10 +283,10 @@ class ScheduledPriceCollector:
     def _get_native_usd_rate(self, chain: str) -> float:
         """Get current native token USD rate from database"""
         try:
-            # Native token addresses (WETH stored once for both Ethereum and Base)
+            # Native token addresses (WETH stored separately for each chain)
             native_addresses = {
                 'ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
-                'base': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',      # WETH (same as Ethereum)
+                'base': '0x4200000000000000000000000000000000000006',      # WETH (Base)
                 'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       # WBNB
                 'solana': 'So11111111111111111111111111111111111111112',    # SOL
             }
@@ -294,8 +295,8 @@ class ScheduledPriceCollector:
             if not native_address:
                 return 0.0
             
-            # For WETH, always look up Ethereum chain (used for both Ethereum and Base)
-            lookup_chain = 'ethereum' if chain in ['ethereum', 'base'] else chain
+            # Use the actual chain for lookup - store native prices separately for each chain
+            lookup_chain = chain
             
             # Get latest native token price from database
             result = self.supabase_manager.client.table('lowcap_price_data_1m').select(

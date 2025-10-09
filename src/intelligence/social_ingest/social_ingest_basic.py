@@ -71,6 +71,7 @@ class SocialIngestModule:
             'BSC',    # BSC token - avoid confusion with BSC chain
             '$4',     # Specific token to avoid
             '4',      # Specific token to avoid
+            'XING',   # Specific token to avoid
         }
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']

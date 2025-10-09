@@ -1541,28 +1541,23 @@ class TraderService:
                 contract = pos.get('token_contract')
                 total_quantity = float(pos.get('total_quantity') or 0.0)
                 
-                # Get latest price from DB
-                price_result = self.repo.client.table('lowcap_price_data_1m').select('price_native').eq('token_contract', contract).eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
+                # Get latest price from DB - use price_usd directly
+                price_result = self.repo.client.table('lowcap_price_data_1m').select('price_usd').eq('token_contract', contract).eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
                 
                 if not price_result.data:
                     # Skip positions without price data
                     continue
                     
-                price_native = float(price_result.data[0]['price_native'])
+                price_usd = float(price_result.data[0]['price_usd'])
                 
-                # Get native->USD rate
-                usd_rate = await self._get_native_usd_rate(chain)
-                
-                # Calculate USD value
-                native_value = total_quantity * price_native
-                usd_value = native_value * usd_rate
+                # Calculate USD value directly
+                usd_value = total_quantity * price_usd
                 
                 position_values.append({
                     'position': pos,
                     'usd_value': usd_value,
                     'total_quantity': total_quantity,
-                    'price_native': price_native,
-                    'usd_rate': usd_rate
+                    'price_usd': price_usd
                 })
                 
             except Exception as e:
@@ -1590,11 +1585,8 @@ class TraderService:
                 return 0.0
             
             # Get price from database (from scheduled price collection)
-            if chain.lower() in ['ethereum', 'base']:
-                # Use Ethereum WETH price for both Ethereum and Base
-                lookup_chain = 'ethereum'
-            else:
-                lookup_chain = chain.lower()
+            # Use the actual chain for lookup - store native prices separately for each chain
+            lookup_chain = chain.lower()
             
             result = self.repo.client.table('lowcap_price_data_1m').select(
                 'price_usd'
@@ -1646,7 +1638,7 @@ class TraderService:
             # Execute full sell (100% of remaining tokens)
             trading_logger.info(f"Executing full sell for {token_ticker} ({position_id}) - {total_quantity} tokens")
             
-            # Execute full sell using existing exit logic
+            # Execute full sell using the working execute_exit method
             success = await self._execute_full_sell_for_cap(position_id, total_quantity, chain, contract, token_ticker)
             
             if success:
@@ -1658,71 +1650,38 @@ class TraderService:
             trading_logger.error(f"Error closing position {position.get('id')} for cap: {e}")
 
     async def _execute_full_sell_for_cap(self, position_id: str, total_quantity: float, chain: str, contract: str, token_ticker: str) -> bool:
-        """Execute a full sell for cap management"""
+        """Execute a full sell for cap management using the working execute_exit method"""
         try:
-            # Get current price
+            # Get current price for target
             price_result = self.repo.client.table('lowcap_price_data_1m').select('price_native').eq('token_contract', contract).eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
             if not price_result.data:
+                trading_logger.error(f"No price data for {token_ticker} cap sell")
                 return False
             
             price_native = float(price_result.data[0]['price_native'])
             
-            # Execute sell based on chain
-            executor = None
-            if chain == 'bsc':
-                executor = self.bsc_executor
-            elif chain == 'base':
-                executor = self.base_executor
-            elif chain == 'ethereum':
-                executor = self.eth_executor
-            elif chain == 'solana':
-                executor = self.sol_executor
+            # Use the working execute_exit method with 100% sell
+            trading_logger.info(f"Executing cap sell via execute_exit: {total_quantity} {token_ticker} at {price_native:.8f} {chain.upper()}")
             
-            if not executor:
-                trading_logger.error(f"No executor available for chain {chain}")
+            result = await self.execute_exit(
+                position_id=position_id,
+                chain=chain,
+                contract=contract,
+                token_ticker=token_ticker,
+                exit_number=999,  # Special exit number for cap cleanup
+                tokens_to_sell=total_quantity,
+                target_price_native=price_native
+            )
+            
+            if result:  # result is the tx_hash string
+                trading_logger.info(f"Cap sell successful for {token_ticker}: {result}")
+                return True
+            else:  # result is None
+                trading_logger.error(f"Cap sell failed for {token_ticker}: No transaction hash returned")
                 return False
-            
-            # Execute the sell
-            if chain == 'solana':
-                result = await executor.execute_sell(contract, total_quantity)
-            else:
-                # EVM chains
-                result = await executor.execute_sell(contract, total_quantity)
-            
-            if result and result.get('tx_hash'):
-                # Update position aggregates
-                native_amount = total_quantity * price_native
                 
-                # Mark position as closed
-                position = self.repo.get_position(position_id)
-                if position:
-                    position['status'] = 'closed'
-                    position['close_reason'] = 'cap_cleanup_full_sell'
-                    position['closed_at'] = datetime.now(timezone.utc).isoformat()
-                    position['total_quantity'] = 0.0
-                    position['total_tokens_sold'] = float(position.get('total_tokens_sold', 0.0)) + total_quantity
-                    position['total_extracted_native'] = float(position.get('total_extracted_native', 0.0)) + native_amount
-                    
-                    # Update P&L
-                    await self._update_position_pnl_in_memory(position)
-                    
-                    # Save to database
-                    success = self.repo.update_position(position_id, position)
-                    
-                    # Log the sell
-                    trading_logger.log_trade_success(
-                        chain=chain,
-                        token=token_ticker,
-                        tx_hash=result['tx_hash'],
-                        details={'amount': total_quantity, 'price': price_native, 'reason': 'cap_cleanup'}
-                    )
-                    
-                    return success
-            
-            return False
-            
         except Exception as e:
-            trading_logger.error(f"Error executing full sell for cap: {e}")
+            trading_logger.error(f"Error executing cap sell for {token_ticker}: {e}")
             return False
 
 

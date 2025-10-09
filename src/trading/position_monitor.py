@@ -163,8 +163,8 @@ class PositionMonitor:
                 # Fallback: compute native from USD when native is zero (tiny price precision)
                 usd = float(price_data.get('price_usd', 0) or 0)
                 if usd > 0:
-                    # Fetch latest WETH USD price
-                    weth_row = self.client.table('lowcap_price_data_1m').select('price_usd').eq('token_contract', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2').eq('chain', 'ethereum').order('timestamp', desc=True).limit(1).execute()
+                    # Fetch latest WETH USD price for the current chain
+                    weth_row = self.client.table('lowcap_price_data_1m').select('price_usd').eq('token_contract', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2').eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
                     if weth_row.data:
                         weth_usd = float(weth_row.data[0].get('price_usd', 0) or 0)
                         if weth_usd > 0:

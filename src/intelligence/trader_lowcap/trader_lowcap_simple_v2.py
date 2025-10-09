@@ -105,6 +105,7 @@ class TraderLowcapSimpleV2:
                 eth_executor=self.eth_executor,
                 sol_executor=self.sol_executor,
                 js_solana_client=self.js_solana_client,
+                trader_instance=self,  # Pass reference to this instance for cap sells
             )
             trading_logger.log_initialization(
                 component="TraderService",
@@ -1396,7 +1397,7 @@ class TraderLowcapSimpleV2:
             # Map chains to their native token contracts
             native_contracts = {
                 'ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
-                'base': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',      # WETH (same as Ethereum)
+                'base': '0x4200000000000000000000000000000000000006',      # WETH (Base)
                 'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       # WBNB
                 'solana': 'So11111111111111111111111111111111111111112'      # SOL
             }
