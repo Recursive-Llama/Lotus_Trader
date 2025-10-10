@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from utils.supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,98 @@ class TelegramSignalNotifier:
         self.api_hash = api_hash
         self.session_file = session_file or "src/config/telegram_session.txt"
         self.client = None
+        self.supabase_manager = SupabaseManager()
         
         logger.info(f"Telegram Signal Notifier initialized for channel: {channel_id}")
+    
+    def _get_lotus_price_per_sol(self) -> Optional[float]:
+        """Get current Lotus token price in SOL from wallet_balances table"""
+        try:
+            # Get Lotus token price from wallet_balances
+            result = self.supabase_manager.client.table('wallet_balances').select(
+                'balance_usd', 'balance'
+            ).eq('chain', 'lotus').order('last_updated', desc=True).limit(1).execute()
+            
+            if result.data and len(result.data) > 0:
+                lotus_data = result.data[0]
+                balance_usd = float(lotus_data.get('balance_usd', 0) or 0)
+                balance_tokens = float(lotus_data.get('balance', 0) or 0)
+                
+                if balance_tokens > 0 and balance_usd > 0:
+                    # Calculate price per token in USD
+                    price_per_token_usd = balance_usd / balance_tokens
+                    
+                    # Get SOL price in USD
+                    sol_result = self.supabase_manager.client.table('wallet_balances').select(
+                        'balance_usd', 'balance'
+                    ).eq('chain', 'solana').order('last_updated', desc=True).limit(1).execute()
+                    
+                    if sol_result.data and len(sol_result.data) > 0:
+                        sol_data = sol_result.data[0]
+                        sol_balance_usd = float(sol_data.get('balance_usd', 0) or 0)
+                        sol_balance = float(sol_data.get('balance', 0) or 0)
+                        
+                        if sol_balance > 0 and sol_balance_usd > 0:
+                            sol_price_usd = sol_balance_usd / sol_balance
+                            # Convert Lotus price from USD to SOL
+                            lotus_price_per_sol = price_per_token_usd / sol_price_usd
+                            return lotus_price_per_sol
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting Lotus price: {e}")
+            return None
+    
+    def _get_usdc_conversion_to_lotus_tokens(self, exit_value_native: float, chain: str) -> Optional[float]:
+        """Calculate how many Lotus tokens the 10% USDC conversion would buy"""
+        try:
+            # Get native token price in USD from wallet_balances
+            native_result = self.supabase_manager.client.table('wallet_balances').select(
+                'balance_usd', 'balance'
+            ).eq('chain', chain).order('last_updated', desc=True).limit(1).execute()
+            
+            if not native_result.data or len(native_result.data) == 0:
+                return None
+                
+            native_data = native_result.data[0]
+            native_balance_usd = float(native_data.get('balance_usd', 0) or 0)
+            native_balance = float(native_data.get('balance', 0) or 0)
+            
+            if native_balance <= 0 or native_balance_usd <= 0:
+                return None
+                
+            # Calculate native token price in USD
+            native_price_usd = native_balance_usd / native_balance
+            
+            # Calculate 10% USDC value in USD
+            usdc_value_usd = exit_value_native * native_price_usd * 0.10
+            
+            # Get Lotus price in USD
+            lotus_result = self.supabase_manager.client.table('wallet_balances').select(
+                'balance_usd', 'balance'
+            ).eq('chain', 'lotus').order('last_updated', desc=True).limit(1).execute()
+            
+            if not lotus_result.data or len(lotus_result.data) == 0:
+                return None
+                
+            lotus_data = lotus_result.data[0]
+            lotus_balance_usd = float(lotus_data.get('balance_usd', 0) or 0)
+            lotus_balance = float(lotus_data.get('balance', 0) or 0)
+            
+            if lotus_balance <= 0 or lotus_balance_usd <= 0:
+                return None
+                
+            # Calculate Lotus price in USD
+            lotus_price_usd = lotus_balance_usd / lotus_balance
+            
+            # Calculate how many Lotus tokens the USDC can buy
+            lotus_tokens = usdc_value_usd / lotus_price_usd
+            return lotus_tokens
+            
+        except Exception as e:
+            logger.error(f"Error calculating USDC conversion to Lotus tokens: {e}")
+            return None
     
     async def _get_client(self) -> TelegramClient:
         """Get or create Telegram client"""
@@ -153,7 +244,7 @@ class TelegramSignalNotifier:
             # Format message
             message = self._format_sell_message(
                 token_ticker, token_link, tokens_sold, sell_price, native_symbol,
-                tx_link, tokens_sold_value_usd, total_profit_usd, source_tweet_url,
+                tx_link, chain, tokens_sold_value_usd, total_profit_usd, source_tweet_url,
                 remaining_tokens, position_value, total_pnl_pct, profit_native,
                 buyback_amount_sol, lotus_tokens, buyback_tx_hash
             )
@@ -341,6 +432,7 @@ class TelegramSignalNotifier:
                            sell_price: float,
                            native_symbol: str,
                            tx_link: str,
+                           chain: str,
                            tokens_sold_value_usd: Optional[float] = None,
                            total_profit_usd: Optional[float] = None,
                            source_tweet_url: Optional[str] = None,
@@ -357,7 +449,7 @@ class TelegramSignalNotifier:
         message = f"⚘ **LOTUS SELL SIGNAL** ⟁\n\n"
         message += f"**Token:** [{token_ticker}]({token_link})\n"
         message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
-        message += f"**Sell Price:** ${sell_price:.8f}\n"
+        message += f"**Sell Price:** {sell_price:.8f} {native_symbol}\n"
         message += f"**Transaction:** [View on Explorer]({tx_link})\n"
         
         # Position context
@@ -380,8 +472,27 @@ class TelegramSignalNotifier:
             message += f"**Total P&L %:** {emoji} {total_pnl_pct:+.1f}%\n"
         
         # Add Lotus buyback information if available
-        if buyback_amount_sol is not None and lotus_tokens is not None:
-            message += f"⚘ **Lotus Buyback:** {buyback_amount_sol:.6f} SOL → {lotus_tokens:.2f} ⚘❈ tokens\n"
+        if buyback_amount_sol is not None:
+            # Calculate expected Lotus tokens from SOL amount and current price
+            lotus_price_per_sol = self._get_lotus_price_per_sol()
+            if lotus_price_per_sol and lotus_price_per_sol > 0:
+                expected_lotus_tokens = buyback_amount_sol / lotus_price_per_sol
+                message += f"⚘ **Lotus Buyback:** {buyback_amount_sol:.6f} SOL → {expected_lotus_tokens:.3f} ⚘❈ tokens\n"
+            else:
+                message += f"⚘ **Lotus Buyback:** {buyback_amount_sol:.6f} SOL → ? ⚘❈ tokens\n"
+        
+        # Add USDC conversion information for Base/BSC chains
+        if chain.lower() in ['base', 'bsc'] and tokens_sold_value_usd is not None:
+            # Calculate exit value in native currency
+            exit_value_native = tokens_sold * sell_price
+            # Calculate expected Lotus tokens from 10% USDC conversion
+            usdc_lotus_tokens = self._get_usdc_conversion_to_lotus_tokens(exit_value_native, chain)
+            if usdc_lotus_tokens and usdc_lotus_tokens > 0:
+                usdc_amount_native = exit_value_native * 0.10
+                message += f"⚘ **USDC Conversion:** {usdc_amount_native:.6f} {native_symbol} → {usdc_lotus_tokens:.3f} ⚘❈ tokens\n"
+            else:
+                usdc_amount_native = exit_value_native * 0.10
+                message += f"⚘ **USDC Conversion:** {usdc_amount_native:.6f} {native_symbol} → ? ⚘❈ tokens\n"
         
         message += f"**Time:** {timestamp}\n"
         

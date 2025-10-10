@@ -212,6 +212,9 @@ class SocialTradingSystem:
             self.wallet_manager.trader = self.trader
             print(f"DEBUG: Set trader reference in wallet manager: {self.wallet_manager.trader}")
             
+            # Attach wallet manager to supabase manager for price collector
+            self.supabase_manager.wallet_manager = self.wallet_manager
+            
             # Initialize scheduled price collector
             self.price_collector = ScheduledPriceCollector(
                 supabase_manager=self.supabase_manager,
