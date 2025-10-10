@@ -223,8 +223,8 @@ class PositionMonitor:
                     if current_price <= target_price and self.trader:
                         logger.info(f"Triggering planned entry {entry_number} at {current_price:.6f} (target {target_price:.6f})")
                         try:
-                            # Execute entry and wait for confirmation
-                            success = await self.trader._execute_entry_with_confirmation(position_id, entry_number)
+                            # Execute entry using the same path as new positions
+                            success = await self.trader._service.execute_individual_entry(position_id, entry_number)
                             if success:
                                 logger.info(f"Entry {entry_number} executed and confirmed successfully")
                                 await asyncio.sleep(5)  # Cooldown between entries

@@ -261,7 +261,12 @@ class TraderLowcapSimpleV2:
                 # Execute USDC conversion for Base/BSC exits after successful execution
                 if tx_hash and chain.lower() in ['base', 'bsc']:
                     try:
+                        # Calculate exit value from available parameters
+                        exit_value_native = actual_sell_amount * target_price
+                        
+                        self.logger.info(f"USDC conversion check: tx_hash={tx_hash}, chain={chain}, exit_value_native={exit_value_native}")
                         usdc_cfg = (self.config or {}).get('usdc_conversion', {})
+                        self.logger.info(f"USDC config: {usdc_cfg}")
                         if usdc_cfg.get('enabled', False):
                             # Calculate 10% of native amount received
                             conversion_amount = exit_value_native * (float(usdc_cfg.get('percentage', 10.0)) / 100.0)
@@ -269,6 +274,7 @@ class TraderLowcapSimpleV2:
                             min_amounts = usdc_cfg.get('min_amount_native', {})
                             min_amount = min_amounts.get(chain.lower(), 0.001)  # Default fallback
                             
+                            self.logger.info(f"USDC conversion calculation: {conversion_amount:.6f} {chain.upper()} >= {min_amount:.6f} {chain.upper()}? {conversion_amount >= min_amount}")
                             if conversion_amount >= min_amount:
                                 self.logger.info(f"Executing USDC conversion: {conversion_amount:.6f} {chain.upper()} from {exit_value_native:.6f} {chain.upper()} exit")
                                 usdc_result = await self._convert_to_usdc_after_exit(
@@ -589,151 +595,6 @@ class TraderLowcapSimpleV2:
         except Exception as e:
             self.logger.error(f"Error recalculating position totals: {e}")
 
-    async def _execute_entry(self, position_id: str, entry_number: int):
-        """
-        Execute a planned entry for a position
-        
-        Args:
-            position_id: Position ID
-            entry_number: Entry number to execute
-        """
-        try:
-            # Get position data
-            position = self.repo.get_position(position_id)
-            if not position:
-                self.logger.error(f"Position {position_id} not found")
-                return
-            
-            # Get the specific entry
-            entries = position.get('entries', [])
-            entry = next((e for e in entries if e.get('entry_number') == entry_number), None)
-            if not entry:
-                self.logger.error(f"Entry {entry_number} not found for position {position_id}")
-                return
-            
-            if entry.get('status') != 'pending':
-                self.logger.warning(f"Entry {entry_number} is not pending (status: {entry.get('status')})")
-                return
-            
-            # Execute the entry
-            chain = position.get('token_chain', '').lower()
-            contract = position.get('token_contract')
-            amount = entry.get('amount_native', 0)
-            
-            # Delegate entries for EVM via service; Solana uses native executor
-            if chain in ('bsc','base','ethereum') and self._service:
-                result = self._service.execute_entry(
-                    position_id=position_id,
-                    chain=chain,
-                    contract=contract,
-                    token_ticker=position.get('token_ticker', 'UNKNOWN'),
-                    entry_number=entry_number,
-                    amount_native=amount,
-                    price_native=entry.get('price', 0.0),
-                )
-            elif chain == 'solana' and self.sol_executor:
-                result = await self.sol_executor.execute_buy(contract, amount)
-            else:
-                self.logger.error(f"No executor available for chain {chain}")
-                return
-            
-            if result:
-                # Get current price info for cost calculation
-                chain = position.get('token_chain', '').lower()
-                contract = position.get('token_contract')
-                
-                # Calculate cost tracking
-                cost_native = amount
-                cost_usd = 0
-                tokens_bought = 0
-                
-                # Get price info from database (not API)
-                price = await self._get_current_price_from_db(contract, chain)
-                if price and price > 0:
-                    tokens_bought = amount / price
-                    
-                    # Get USD rate for cost calculation
-                    native_usd_rate = await self._get_native_usd_rate(chain)
-                    if native_usd_rate > 0:
-                        cost_usd = amount * native_usd_rate
-                    else:
-                        cost_usd = 0.0
-                else:
-                    # No DB price available: abort execution (no API fallback)
-                    self.logger.error("DB price unavailable for entry; aborting without fallback")
-                    return None
-                
-                # Mark entry as executed with cost tracking
-                self.repo.mark_entry_executed(
-                    position_id=position_id,
-                    entry_number=entry_number,
-                    tx_hash=result,
-                    cost_native=cost_native,
-                    cost_usd=cost_usd,
-                    tokens_bought=tokens_bought
-                )
-                
-                # Update totals and calculated fields
-                await self._update_tokens_bought(position_id, tokens_bought)
-                await self._update_total_investment_native(position_id, amount)
-                await self._update_position_pnl(position_id)
-                if self._service:
-                    await self._service.recalculate_exits_after_entry(position_id)
-                else:
-                    # Fallback: recalculate exits using existing method
-                    self.recalculate_exits_for_position(position_id, position.get('avg_entry_price', 0))
-                # Update P&L for all positions after successful entry
-                await self._update_all_positions_pnl()
-                
-                # Set total_quantity immediately from trade execution and schedule reconciliation
-                await self._set_quantity_from_trade(position_id, tokens_bought)
-                
-                # Update wallet balance for this chain after successful entry
-                await self._update_wallet_balance_after_trade(chain)
-                
-                # Send notification for additional entries via service notifier if configured
-                if self._service and self.telegram_notifier:
-                    await self._service.send_buy_signal(
-                        token_ticker=position.get('token_ticker', 'Unknown'),
-                        token_contract=position.get('token_contract', ''),
-                        chain=chain,
-                        amount_native=amount,
-                        price=entry.get('price', 0),
-                        tx_hash=result,
-                        allocation_pct=None,
-                        source_tweet_url=position.get('source_tweet_url'),
-                    )
-                
-                trading_logger.log_entry_execution(
-                    position_id=position_id,
-                    entry_number=entry_number,
-                    token=position.get('token_ticker', 'UNKNOWN'),
-                    chain=chain,
-                    amount=amount,
-                    price=entry.get('price', 0),
-                    tx_hash=result
-                )
-                self.logger.info(f"Entry {entry_number} executed successfully: {result}")
-            else:
-                trading_logger.log_entry_failure(
-                    position_id=position_id,
-                    entry_number=entry_number,
-                    token=position.get('token_ticker', 'UNKNOWN'),
-                    chain=chain,
-                    reason='execution_failed',
-                    details='No transaction hash returned'
-                )
-                self.logger.error(f"Entry {entry_number} execution failed")
-                # Mark as failed to prevent endless retries
-                self.repo.mark_entry_failed(position_id, entry_number, reason='confirmation_failed')
-                
-        except Exception as e:
-            self.logger.error(f"Error executing entry {entry_number} for position {position_id}: {e}")
-            # Mark as failed on unexpected error
-            try:
-                self.repo.mark_entry_failed(position_id, entry_number, reason='execution_exception')
-            except Exception:
-                pass
 
     async def _execute_entry_with_confirmation(self, position_id: str, entry_number: int) -> bool:
         """

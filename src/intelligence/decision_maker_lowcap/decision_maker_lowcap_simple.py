@@ -71,6 +71,12 @@ class DecisionMakerLowcapSimple:
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
             # Note: Allocation percentages are now handled by AllocationManager
+            'chain_multipliers': {
+                'ethereum': 2.0,  # 2x boost for Ethereum
+                'base': 2.0,      # 2x boost for Base
+                'solana': 1.0,    # No boost for Solana
+                'bsc': 1.0        # No boost for BSC
+            }
         }
     
     async def make_decision(self, social_signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -346,7 +352,14 @@ class DecisionMakerLowcapSimple:
                     age_multiplier = self._get_age_multiplier(age_days)
                     allocation = allocation * age_multiplier
                     self.logger.info(f"Age multiplier: {age_days} days -> {age_multiplier}x")
-                    self.logger.info(f"Final allocation: {allocation:.2f}% (curator score: {curator_score:.2f})")
+                    self.logger.info(f"Allocation after age: {allocation:.2f}%")
+                
+                # Apply chain multiplier
+                chain = token_data.get('chain', '').lower()
+                chain_multiplier = self._get_chain_multiplier(chain)
+                allocation = allocation * chain_multiplier
+                self.logger.info(f"Chain multiplier: {chain} -> {chain_multiplier}x")
+                self.logger.info(f"Final allocation: {allocation:.2f}% (curator score: {curator_score:.2f})")
             
             # AllocationManager already handles proper bounds and logic
             return allocation
@@ -358,7 +371,9 @@ class DecisionMakerLowcapSimple:
     
     def _get_market_cap_multiplier(self, market_cap: float) -> float:
         """Get allocation multiplier based on market cap"""
-        if market_cap < 1_000_000:  # < $1M
+        if market_cap < 100_000:  # < $100k
+            return 0.33
+        elif market_cap < 1_000_000:  # $100k - $1M
             return 0.5
         elif market_cap < 10_000_000:  # $1M - $10M
             return 1.0
@@ -377,6 +392,11 @@ class DecisionMakerLowcapSimple:
             return 0.9
         else:  # 3+ days
             return 1.0
+    
+    def _get_chain_multiplier(self, chain: str) -> float:
+        """Get allocation multiplier based on chain"""
+        chain_multipliers = self.config.get('chain_multipliers', {})
+        return chain_multipliers.get(chain.lower(), 1.0)
     
     async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create approval decision strand"""

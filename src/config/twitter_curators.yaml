@@ -173,6 +173,16 @@ curators:
     tags: ["alpha", "calls"]
     notes: "Telegram-only curator; @eleetmoramblings"
 
+  - id: "breakb0nes"
+    name: "breakb0nes"
+    platforms:
+      twitter:
+        handle: "@breakb0nes__"
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
 #   name: "Example Curator"

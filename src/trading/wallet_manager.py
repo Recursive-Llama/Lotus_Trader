@@ -241,7 +241,7 @@ class WalletManager:
         Get wallet balance for a specific chain
         
         Args:
-            chain: Blockchain network (solana, ethereum, base)
+            chain: Blockchain network (solana, ethereum, base, bsc, lotus)
             token_address: Token contract address (None for native token)
             
         Returns:
@@ -250,6 +250,8 @@ class WalletManager:
         try:
             if chain == 'solana':
                 return await self._get_solana_balance(token_address)
+            elif chain == 'lotus':
+                return await self._get_lotus_balance()
             elif chain in ['ethereum', 'base', 'bsc']:
                 return await self._get_ethereum_balance(chain, token_address)
             else:
@@ -317,6 +319,141 @@ class WalletManager:
         except Exception as e:
             logger.error(f"Error getting Solana balance: {e}")
             return None
+    
+    async def _get_lotus_balance(self) -> Optional[Decimal]:
+        """Get Lotus token balance using the same method as other SPL tokens"""
+        try:
+            # Lotus token contract
+            lotus_contract = 'Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC'
+            
+            logger.info(f"Getting Lotus token balance using SPL token method")
+            
+            # Use the same method as other SPL tokens - this will work when trader instance is available
+            return await self._get_solana_balance(lotus_contract)
+                
+        except Exception as e:
+            logger.error(f"Error getting Lotus token balance: {e}")
+            return None
+    
+    async def get_lotus_token_price(self) -> Optional[float]:
+        """Get Lotus token price from DexScreener API"""
+        try:
+            import requests
+            
+            lotus_contract = 'Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC'
+            
+            # Get price from DexScreener
+            response = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{lotus_contract}", timeout=10)
+            
+            if response.ok:
+                data = response.json()
+                pairs = data.get('pairs', [])
+                
+                if pairs:
+                    # Find the best pair (highest liquidity)
+                    best_pair = max(pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+                    price_usd = best_pair.get('priceUsd')
+                    
+                    if price_usd:
+                        price = float(price_usd)
+                        logger.info(f"Lotus token price: ${price}")
+                        return price
+                    else:
+                        logger.warning("No price data found in DexScreener response")
+                        return None
+                else:
+                    logger.warning("No pairs found for Lotus token")
+                    return None
+            else:
+                logger.error(f"DexScreener API error: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting Lotus token price: {e}")
+            return None
+    
+    async def update_lotus_wallet_balance(self) -> bool:
+        """Update Lotus wallet balance in the database"""
+        try:
+            from utils.supabase_manager import SupabaseManager
+            
+            # Get Lotus token balance and price
+            balance = await self._get_lotus_balance()
+            price = await self.get_lotus_token_price()
+            
+            if balance is None:
+                logger.warning("Could not get Lotus token balance")
+                return False
+            
+            # Calculate USD value
+            balance_usd = 0.0
+            if price is not None:
+                balance_usd = float(balance) * price
+            
+            # Update database
+            supabase = SupabaseManager()
+            lotus_wallet = 'AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd'
+            
+            result = supabase.client.table('wallet_balances').upsert({
+                'chain': 'lotus',
+                'balance': float(balance),
+                'balance_usd': balance_usd,
+                'wallet_address': lotus_wallet,
+                'last_updated': datetime.now(timezone.utc).isoformat()
+            }).execute()
+            
+            if result.data:
+                logger.info(f"Updated Lotus wallet balance: {balance} tokens (${balance_usd:.2f})")
+                return True
+            else:
+                logger.error("Failed to update Lotus wallet balance in database")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error updating Lotus wallet balance: {e}")
+            return False
+    
+    async def _get_native_usd_rate(self, chain: str) -> float:
+        """Get native currency USD rate for balance conversion"""
+        try:
+            from utils.supabase_manager import SupabaseManager
+            
+            # Map chains to their native token contracts
+            native_contracts = {
+                'ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+                'base': '0x4200000000000000000000000000000000000006',      # WETH (Base)
+                'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       # WBNB
+                'solana': 'So11111111111111111111111111111111111111112'      # SOL
+            }
+            
+            native_contract = native_contracts.get(chain.lower())
+            if not native_contract:
+                logger.error(f"Unknown chain for native USD rate: {chain}")
+                return 0.0
+            
+            # Get price from database (from scheduled price collection)
+            supabase = SupabaseManager()
+            if chain.lower() in ['ethereum', 'base']:
+                # Use Ethereum WETH price for both Ethereum and Base
+                lookup_chain = 'ethereum'
+            else:
+                lookup_chain = chain.lower()
+            
+            result = supabase.client.table('lowcap_price_data_1m').select(
+                'price_usd'
+            ).eq('token_contract', native_contract).eq('chain', lookup_chain).order(
+                'timestamp', desc=True
+            ).limit(1).execute()
+            
+            if result.data:
+                return float(result.data[0].get('price_usd', 0))
+            else:
+                logger.warning(f"No native USD rate found in database for {chain}")
+                return 0.0
+                
+        except Exception as e:
+            logger.error(f"Error getting native USD rate for {chain}: {e}")
+            return 0.0
     
     async def _get_ethereum_balance(self, chain: str, token_address: str = None) -> Optional[Decimal]:
         """Get Ethereum/Base balance (ETH or ERC-20 token)"""

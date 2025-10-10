@@ -112,11 +112,13 @@ class TraderService:
                  bsc_executor=None,
                  eth_executor=None,
                  sol_executor=None,
-                 js_solana_client=None) -> None:
+                 js_solana_client=None,
+                 trader_instance=None) -> None:
         self.price_oracle = price_oracle
         self.price_provider = _PriceProviderAdapter(repo, price_oracle)
         self.wallet = wallet
         self.repo = repo
+        self._trader_instance = trader_instance
         self.executor = _TradeExecutorAdapter(
             base_executor=base_executor,
             bsc_executor=bsc_executor,
@@ -228,6 +230,216 @@ class TraderService:
             return None
         except Exception:
             return None
+
+    async def execute_individual_entry(self, position_id: str, entry_number: int) -> bool:
+        """
+        Execute an individual entry (dip buy) using the same logic as main execution
+        
+        Args:
+            position_id: Position ID
+            entry_number: Entry number to execute
+            
+        Returns:
+            True if executed successfully, False otherwise
+        """
+        start_time = time.time()
+        try:
+            # Get position data
+            position = self.repo.get_position(position_id)
+            if not position:
+                trading_logger.error(f"Position {position_id} not found for entry execution")
+                return False
+            
+            # Get the specific entry
+            entries = position.get('entries', [])
+            entry = next((e for e in entries if e.get('entry_number') == entry_number), None)
+            if not entry:
+                trading_logger.error(f"Entry {entry_number} not found for position {position_id}")
+                return False
+            
+            if entry.get('status') != 'pending':
+                trading_logger.warning(f"Entry {entry_number} is not pending (status: {entry.get('status')})")
+                return False
+            
+            # Get execution parameters
+            chain = position.get('token_chain', '').lower()
+            contract = position.get('token_contract')
+            ticker = position.get('token_ticker', 'UNKNOWN')
+            amount = entry.get('amount_native', 0)
+            price = entry.get('price', 0.0)
+            
+            # Get executor
+            executor = None
+            if chain == 'base' and self.base_executor:
+                executor = self.base_executor
+            elif chain == 'bsc' and self.bsc_executor:
+                executor = self.bsc_executor
+            elif chain == 'ethereum' and self.eth_executor:
+                executor = self.eth_executor
+            elif chain == 'solana' and self.sol_executor:
+                executor = self.sol_executor
+            
+            if not executor:
+                trading_logger.error(f"No executor available for chain {chain}")
+                return False
+            
+            # Log entry attempt
+            structured_logger.log_entry_attempted(
+                position_id=position_id,
+                entry_number=entry_number,
+                token=ticker,
+                chain=chain,
+                contract=contract,
+                amount_native=amount,
+                target_price=price,
+                decision_id=None
+            )
+            
+            # Execute the trade
+            tx_hash = None
+            v = None
+            if chain in ('bsc','base') and executor:
+                v = self.resolve_bsc_venue(contract) if chain=='bsc' else self.resolve_base_venue(contract)
+                tx_hash = executor.execute_buy(contract, amount, venue=v)
+            elif chain == 'ethereum' and executor:
+                tx_hash = executor.execute_buy(contract, amount)
+            elif chain == 'solana' and executor:
+                tx_hash = await executor.execute_buy(contract, amount)
+            
+            if not tx_hash:
+                structured_logger.log_entry_failed(
+                    position_id=position_id,
+                    entry_number=entry_number,
+                    token=ticker,
+                    chain=chain,
+                    contract=contract,
+                    reason='executor_noop',
+                    error_details={'executor': executor is not None, 'amount': amount}
+                )
+                trading_logger.log_trade_failure(
+                    chain=chain,
+                    token=ticker,
+                    reason='transaction_execution_failed',
+                    details={'executor': executor is not None, 'amount': amount}
+                )
+                return False
+            
+            # Calculate tokens bought and costs
+            tokens_bought = amount / price
+            cost_native = amount
+            cost_usd = 0.0
+            
+            # Get USD cost if possible
+            info = None
+            if chain == 'bsc': info = self.price_oracle.price_bsc(contract)
+            elif chain == 'base': info = self.price_oracle.price_base(contract)
+            elif chain == 'ethereum': info = self.price_oracle.price_eth(contract)
+            elif chain == 'solana': info = self.price_oracle.price_solana(contract)
+            
+            if info and info.get('price_usd'):
+                cost_usd = tokens_bought * float(info['price_usd'])
+            
+            # Create proper state objects for logging (like execute_decision does)
+            duration_ms = int((time.time() - start_time) * 1000)
+            performance = PerformanceMetrics(
+                duration_ms=duration_ms,
+                executor=f"{chain}_executor",
+                venue=v if chain in ('bsc','base') else None
+            )
+            
+            state_before = StateDelta(
+                total_tokens_bought=0.0,
+                total_quantity_before=0.0,
+                total_investment_native=0.0,
+                avg_entry_price=0.0,
+                pnl_native=0.0,
+                pnl_usd=0.0,
+                pnl_pct=0.0
+            )
+            
+            # Update entry object in the position
+            for entry_data in entries:
+                if entry_data.get('entry_number') == entry_number:
+                    entry_data['status'] = 'executed'
+                    entry_data['tx_hash'] = tx_hash
+                    entry_data['executed_at'] = datetime.now(timezone.utc).isoformat()
+                    entry_data['cost_native'] = cost_native
+                    entry_data['cost_usd'] = cost_usd
+                    entry_data['tokens_bought'] = tokens_bought
+                    break
+            
+            # Update all aggregate fields in memory (atomic operation)
+            current_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
+            current_investment = position.get('total_investment_native', 0.0) or 0.0
+            
+            position['total_tokens_bought'] = current_tokens_bought + tokens_bought
+            position['total_investment_native'] = current_investment + cost_native
+            
+            # Update total_quantity = total_tokens_bought - total_tokens_sold
+            total_tokens_sold = position.get('total_tokens_sold', 0.0) or 0.0
+            position['total_quantity'] = position['total_tokens_bought'] - total_tokens_sold
+            
+            position['entries'] = entries
+            
+            # Update P&L in memory
+            await self._update_position_pnl_in_memory(position)
+            
+            # Single atomic database write with entry object and all aggregates
+            success = self.repo.update_position(position_id, position)
+            if not success:
+                trading_logger.error(f"Failed to update position {position_id} with entry {entry_number}")
+                return False
+            
+            # Log successful entry with proper objects
+            structured_logger.log_entry_success(
+                position_id=position_id,
+                entry_number=entry_number,
+                token=ticker,
+                chain=chain,
+                contract=contract,
+                tx_hash=tx_hash,
+                amount_native=amount,
+                tokens_bought=tokens_bought,
+                actual_price=price,
+                venue=v if chain in ('bsc','base') else "unknown",
+                state_before=state_before,
+                state_after=state_before,  # Proper StateDelta object
+                performance=performance     # Proper PerformanceMetrics object
+            )
+            
+            trading_logger.log_trade_success(
+                chain=chain,
+                token=ticker,
+                tx_hash=tx_hash,
+                details={'amount': amount, 'price': price}
+            )
+            
+            # Recalculate exits after entry
+            await self.recalculate_exits_after_entry(position_id)
+            
+            # Update wallet balance after successful entry
+            await self._update_wallet_balance_after_trade(chain)
+            
+            # Send Telegram notification (same as execute_decision)
+            await self.send_buy_signal(
+                token_ticker=ticker,
+                token_contract=contract,
+                chain=chain,
+                amount_native=amount,
+                price=price,
+                tx_hash=tx_hash,
+                allocation_pct=None,  # Entry 2/3 don't have allocation_pct
+                source_tweet_url=position.get('source_tweet_url')
+            )
+            
+            trading_logger.info(f"Successfully executed entry {entry_number} for {ticker}: {tokens_bought:.8f} tokens")
+            return True
+            
+        except Exception as e:
+            trading_logger.error(f"Error executing individual entry {entry_number} for position {position_id}: {e}")
+            import traceback
+            trading_logger.error(f"TRACEBACK: {traceback.format_exc()}")
+            return False
 
     def spawn_trend_from_exit(self, *, position_id: str, exit_price: float, native_amount: float, source_exit_number: str) -> Optional[str]:
         """Replicate legacy trend batch creation using domain planner and repo updates."""
@@ -1155,10 +1367,15 @@ class TraderService:
             new_total = current_total + tokens_bought
             position['total_tokens_bought'] = new_total
             
+            # Update total_quantity = total_tokens_bought - total_tokens_sold
+            total_tokens_sold = position.get('total_tokens_sold', 0.0) or 0.0
+            position['total_quantity'] = new_total - total_tokens_sold
+            
             # Update position in database
             success = self.repo.update_position(position_id, position)
             if success:
                 trading_logger.info(f"Updated total_tokens_bought for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_bought:.8f})")
+                trading_logger.info(f"Updated total_quantity for {position_id}: {position['total_quantity']:.8f}")
                 
                 # Post-write verification
                 await self._verify_entry_aggregates(position_id, tokens_bought)
@@ -1332,10 +1549,15 @@ class TraderService:
             new_total = current_total + tokens_sold
             position['total_tokens_sold'] = new_total
             
+            # Update total_quantity = total_tokens_bought - total_tokens_sold
+            total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
+            position['total_quantity'] = total_tokens_bought - new_total
+            
             # Update position in database
             success = self.repo.update_position(position_id, position)
             if success:
                 trading_logger.info(f"Updated total_tokens_sold for {position_id}: {current_total:.8f} -> {new_total:.8f} (+{tokens_sold:.8f})")
+                trading_logger.info(f"Updated total_quantity for {position_id}: {position['total_quantity']:.8f}")
                 
                 # Post-write verification
                 await self._verify_exit_aggregates(position_id, tokens_sold)
