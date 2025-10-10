@@ -619,6 +619,10 @@ class ScheduledPriceCollector:
             # Update wallet balance for each chain
             for chain in chains:
                 await self._update_wallet_balance_for_chain(chain)
+            
+            # Also update Lotus wallet balance
+            if hasattr(self.supabase_manager, 'wallet_manager'):
+                await self.supabase_manager.wallet_manager.update_lotus_wallet_balance()
                 
         except Exception as e:
             logger.error(f"Error updating wallet balances: {e}")

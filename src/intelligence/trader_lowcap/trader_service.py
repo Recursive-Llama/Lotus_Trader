@@ -1303,6 +1303,14 @@ class TraderService:
             old_quantity = float(position.get('total_quantity', 0.0) or 0.0)
             new_quantity = old_quantity + float(tokens_delta)
             position['total_quantity'] = new_quantity
+            
+            # Check if position should be marked as closed (all tokens sold)
+            if position['total_quantity'] <= 0 and position.get('status') == 'active':
+                position['status'] = 'closed'
+                position['close_reason'] = 'fully_exited'
+                position['closed_at'] = datetime.now(timezone.utc).isoformat()
+                trading_logger.info(f"Position {position_id} fully exited - marking as closed")
+            
             ok = self.repo.update_position(position_id, position)
             return bool(ok)
         except Exception:
@@ -1552,6 +1560,13 @@ class TraderService:
             # Update total_quantity = total_tokens_bought - total_tokens_sold
             total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
             position['total_quantity'] = total_tokens_bought - new_total
+            
+            # Check if position should be marked as closed (all tokens sold)
+            if position['total_quantity'] <= 0 and position.get('status') == 'active':
+                position['status'] = 'closed'
+                position['close_reason'] = 'fully_exited'
+                position['closed_at'] = datetime.now(timezone.utc).isoformat()
+                trading_logger.info(f"Position {position_id} fully exited - marking as closed")
             
             # Update position in database
             success = self.repo.update_position(position_id, position)
@@ -1827,7 +1842,7 @@ class TraderService:
             return 0.0
 
     async def _close_position_for_cap(self, position: Dict[str, Any]) -> None:
-        """Close a position for cap management"""
+        """Create a 100% exit at current price -3% for cap management"""
         try:
             position_id = position.get('id')
             token_ticker = position.get('token_ticker', 'UNKNOWN')
@@ -1846,64 +1861,47 @@ class TraderService:
                     trading_logger.error(f"Failed to close position {token_ticker} ({position_id}) - zero quantity")
                 return
             
-            # Get current price for full sell
+            # Get current price
             chain = (position.get('token_chain') or '').lower()
             contract = position.get('token_contract')
             
             price_result = self.repo.client.table('lowcap_price_data_1m').select('price_native').eq('token_contract', contract).eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
             
             if not price_result.data:
-                # No price data, skip sell but don't close
-                trading_logger.warning(f"Skipping sell for {token_ticker} ({position_id}) - no price data")
+                trading_logger.warning(f"Skipping cap exit for {token_ticker} - no price data")
                 return
             
-            # Execute full sell (100% of remaining tokens)
-            trading_logger.info(f"Executing full sell for {token_ticker} ({position_id}) - {total_quantity} tokens")
+            current_price = float(price_result.data[0]['price_native'])
+            target_price = current_price * 0.97  # 3% below current price
             
-            # Execute full sell using the working execute_exit method
-            success = await self._execute_full_sell_for_cap(position_id, total_quantity, chain, contract, token_ticker)
+            # Get existing exits to find next exit number
+            existing_exits = position.get('exits', [])
+            next_exit_number = max([exit_data.get('exit_number', 0) for exit_data in existing_exits], default=0) + 1
+            
+            # Create new exit entry
+            new_exit = {
+                'exit_number': next_exit_number,
+                'price': target_price,
+                'exit_pct': 100.0,  # 100% of holdings
+                'status': 'pending',
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'exit_type': 'cap_cleanup'  # Mark as cap cleanup for identification
+            }
+            
+            # Add to existing exits
+            existing_exits.append(new_exit)
+            position['exits'] = existing_exits
+            
+            # Update position in database
+            success = self.repo.update_position(position_id, position)
             
             if success:
-                trading_logger.info(f"Successfully closed position {token_ticker} ({position_id}) for cap management")
+                trading_logger.info(f"Created cap cleanup exit for {token_ticker}: {next_exit_number} at {target_price:.8f} (3% below current {current_price:.8f})")
             else:
-                trading_logger.error(f"Failed to close position {token_ticker} ({position_id}) for cap management")
+                trading_logger.error(f"Failed to create cap cleanup exit for {token_ticker}")
                 
         except Exception as e:
-            trading_logger.error(f"Error closing position {position.get('id')} for cap: {e}")
+            trading_logger.error(f"Error creating cap cleanup exit for {position.get('id')}: {e}")
 
-    async def _execute_full_sell_for_cap(self, position_id: str, total_quantity: float, chain: str, contract: str, token_ticker: str) -> bool:
-        """Execute a full sell for cap management using the working execute_exit method"""
-        try:
-            # Get current price for target
-            price_result = self.repo.client.table('lowcap_price_data_1m').select('price_native').eq('token_contract', contract).eq('chain', chain).order('timestamp', desc=True).limit(1).execute()
-            if not price_result.data:
-                trading_logger.error(f"No price data for {token_ticker} cap sell")
-                return False
-            
-            price_native = float(price_result.data[0]['price_native'])
-            
-            # Use the working execute_exit method with 100% sell
-            trading_logger.info(f"Executing cap sell via execute_exit: {total_quantity} {token_ticker} at {price_native:.8f} {chain.upper()}")
-            
-            result = await self.execute_exit(
-                position_id=position_id,
-                chain=chain,
-                contract=contract,
-                token_ticker=token_ticker,
-                exit_number=999,  # Special exit number for cap cleanup
-                tokens_to_sell=total_quantity,
-                target_price_native=price_native
-            )
-            
-            if result:  # result is the tx_hash string
-                trading_logger.info(f"Cap sell successful for {token_ticker}: {result}")
-                return True
-            else:  # result is None
-                trading_logger.error(f"Cap sell failed for {token_ticker}: No transaction hash returned")
-                return False
-                
-        except Exception as e:
-            trading_logger.error(f"Error executing cap sell for {token_ticker}: {e}")
-            return False
 
 

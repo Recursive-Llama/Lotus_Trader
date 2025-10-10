@@ -353,13 +353,9 @@ class TraderLowcapSimpleV2:
                 # Update P&L for all positions after successful exit
                 await self._update_all_positions_pnl()
                 
-                # Set total_quantity immediately from trade execution and schedule reconciliation
+                # Note: total_quantity is now updated atomically in _update_exit_aggregates_atomic
                 if self._service:
-                    await self._service.set_quantity_from_trade(position_id, -actual_sell_amount)
-                    # schedule reconciliation
                     await self._service.reconcile_wallet_quantity(position_id, position.get('total_quantity', 0))
-                else:
-                    await self._set_quantity_from_trade(position_id, -actual_sell_amount)
                 
                 # Update wallet balance for this chain after successful exit
                 await self._update_wallet_balance_after_trade(chain)
@@ -1238,6 +1234,17 @@ class TraderLowcapSimpleV2:
             
             position['total_tokens_sold'] = current_tokens_sold + tokens_sold
             position['total_extracted_native'] = current_extracted + native_amount
+            
+            # Update total_quantity = total_tokens_bought - total_tokens_sold
+            total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
+            position['total_quantity'] = total_tokens_bought - position['total_tokens_sold']
+            
+            # Check if position should be marked as closed (all tokens sold)
+            if position['total_quantity'] <= 0 and position.get('status') == 'active':
+                position['status'] = 'closed'
+                position['close_reason'] = 'fully_exited'
+                position['closed_at'] = datetime.now(timezone.utc).isoformat()
+                self.logger.info(f"Position {position_id} fully exited - marking as closed")
             
             # Update P&L in memory
             await self._service._update_position_pnl_in_memory(position)

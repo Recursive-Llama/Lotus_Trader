@@ -403,7 +403,7 @@ class WalletManager:
             }).execute()
             
             if result.data:
-                logger.info(f"Updated Lotus wallet balance: {balance} tokens (${balance_usd:.2f})")
+                logger.info(f"Updated Lotus wallet balance: {balance} tokens (${balance_usd:.3f})")
                 return True
             else:
                 logger.error("Failed to update Lotus wallet balance in database")

@@ -165,13 +165,17 @@ curators:
   - id: "eleetmo"
     name: "Eleetmo"
     platforms:
+      twitter:
+        handle: "@eleetmowiz"
+        active: true
+        priority: "high"
       telegram:
         handle: "@eleetmoramblings"
         channel_id: -1002690101974
         active: true
         priority: "high"
-    tags: ["alpha", "calls"]
-    notes: "Telegram-only curator; @eleetmoramblings"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @eleetmowiz and Telegram @eleetmoramblings"
 
   - id: "breakb0nes"
     name: "breakb0nes"
