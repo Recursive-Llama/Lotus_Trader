@@ -8,9 +8,6 @@ curator_intent_analysis:
     **Token from Stage 1:**
     - Token: {token_name}
     - Network: {network}
-    - Sentiment: {sentiment}
-    - Action: {action}
-    - Confidence: {confidence}
     
     **Analysis Tasks:**
     1. **Token Verification**: Is "{token_name}" actually a valid token mention in this context?

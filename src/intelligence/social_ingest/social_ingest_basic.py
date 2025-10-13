@@ -407,7 +407,12 @@ class SocialIngestModule:
             self.logger.info(f"🔍 Verifying token {token_name} on {network} via DexScreener...")
             
             # Search for token on DexScreener
-            params = {"q": token_name}
+            if token_info.get('contract_address'):
+                params = {"q": token_info.get('contract_address')}
+                print(f"   🔍 Searching by contract address: {token_info.get('contract_address')}")
+            else:
+                params = {"q": token_name}
+                print(f"   🔍 Searching by ticker: {token_name}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.dexscreener_base_url, params=params) as response:
@@ -422,26 +427,34 @@ class SocialIngestModule:
                                 # Extract token details from DexScreener result
                                 token_details = self._extract_dexscreener_token_details(best_match)
                                 if token_details:
+                                    # Calculate confidence level
+                                    confidence = self._calculate_token_confidence(token_info, token_details)
+                                    print(f"   🎯 Token confidence: {confidence}")
+                                    
                                     # Early filter: only trade on allowed chains
                                     chain = token_details.get('chain', 'unknown').lower()
                                     vol24 = float(token_details.get('volume_24h', 0))
                                     liq = float(token_details.get('liquidity', 0))
                                     min_vol = self.min_volume_requirements.get(chain, None)
                                     min_liq = self.min_liquidity_requirements.get(chain, None)
+                                    
+                                    # Apply confidence-based filter relaxation
+                                    relaxed_min_vol = self._get_relaxed_volume_threshold(min_vol, confidence) if min_vol else None
+                                    relaxed_min_liq = self._get_relaxed_liquidity_threshold(min_liq, confidence) if min_liq else None
 
                                     if chain not in self.allowed_chains:
                                         print(f"   ⚠️  Skipping unsupported chain from DexScreener: raw_chainId={best_match.get('chainId')} mapped={chain}")
                                         self.logger.info(f"Skipping token on unsupported chain: {chain}")
                                         return None
 
-                                    if min_vol is not None and vol24 < min_vol:
-                                        print(f"   ⚠️  Skipping low-volume token: ${vol24:,.0f} < ${min_vol:,.0f} required for {chain}")
-                                        self.logger.info(f"Skipping low-volume token on {chain}: {vol24} < {min_vol}")
+                                    if relaxed_min_vol is not None and vol24 < relaxed_min_vol:
+                                        print(f"   ⚠️  Skipping low-volume token: ${vol24:,.0f} < ${relaxed_min_vol:,.0f} required for {chain} (confidence: {confidence})")
+                                        self.logger.info(f"Skipping low-volume token on {chain}: {vol24} < {relaxed_min_vol} (confidence: {confidence})")
                                         return None
 
-                                    if min_liq is not None and liq < min_liq:
-                                        print(f"   ⚠️  Skipping low-liquidity token: ${liq:,.0f} < ${min_liq:,.0f} required for {chain}")
-                                        self.logger.info(f"Skipping low-liquidity token on {chain}: {liq} < {min_liq}")
+                                    if relaxed_min_liq is not None and liq < relaxed_min_liq:
+                                        print(f"   ⚠️  Skipping low-liquidity token: ${liq:,.0f} < ${relaxed_min_liq:,.0f} required for {chain} (confidence: {confidence})")
+                                        self.logger.info(f"Skipping low-liquidity token on {chain}: {liq} < {relaxed_min_liq} (confidence: {confidence})")
                                         return None
 
                                     # Liquidity-to-market cap ratio check (hard filter)
@@ -449,15 +462,16 @@ class SocialIngestModule:
                                     if market_cap > 0:
                                         liq_mcap_ratio = (liq / market_cap) * 100  # Convert to percentage
                                         required_ratio = self._get_required_liq_mcap_ratio(market_cap)
+                                        relaxed_required_ratio = self._get_relaxed_liq_mcap_ratio(required_ratio, confidence)
                                         
-                                        if liq_mcap_ratio < required_ratio:
-                                            print(f"   ⚠️  Skipping token with low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f})")
-                                            self.logger.info(f"Skipping token with low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {required_ratio:.1f}% (mcap: ${market_cap:,.0f})")
+                                        if liq_mcap_ratio < relaxed_required_ratio:
+                                            print(f"   ⚠️  Skipping token with low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f}, confidence: {confidence})")
+                                            self.logger.info(f"Skipping token with low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% (mcap: ${market_cap:,.0f}, confidence: {confidence})")
                                             return None
                                         
-                        # Add liquidity health bonus to token details for scoring
-                        ratio_excess = liq_mcap_ratio - required_ratio
-                        liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))  # Max 10% bonus
+                                        # Add liquidity health bonus to token details for scoring
+                                        ratio_excess = liq_mcap_ratio - required_ratio
+                                        liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))  # Max 10% bonus
                                         token_details['liquidity_health_bonus'] = liquidity_bonus
                                         
                                         print(f"   ✅ Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {required_ratio:.1f}%, bonus: +{liquidity_bonus:.1%})")
@@ -716,6 +730,16 @@ class SocialIngestModule:
             # Calculate age in days from pairCreatedAt timestamp
             age_days = self._calculate_age_days(pair_data.get('pairCreatedAt', ''))
             
+            # Extract social links from info section
+            social_links = {}
+            info_section = pair_data.get('info', {})
+            if info_section and 'socials' in info_section:
+                for social in info_section['socials']:
+                    social_type = social.get('type', '').lower()
+                    social_url = social.get('url', '')
+                    if social_type and social_url:
+                        social_links[social_type] = social_url
+            
             # Extract token details
             return {
                 'ticker': base_token.get('symbol', ''),
@@ -732,7 +756,8 @@ class SocialIngestModule:
                 'quote_token': quote_token.get('symbol', ''),
                 'quote_contract': quote_token.get('address', ''),
                 'raw_chain_id': raw_chain_id,
-                'age_days': age_days
+                'age_days': age_days,
+                'social_links': social_links
             }
             
         except Exception as e:
@@ -803,6 +828,82 @@ class SocialIngestModule:
             self.logger.error(f"Error selecting venue: {e}")
             return 'Jupiter'
     
+    def _calculate_token_confidence(self, token_info: Dict[str, Any], verified_token: Dict[str, Any]) -> str:
+        """Calculate confidence level based on extraction and verification results"""
+        # Highest: Contract address
+        if token_info.get('contract_address'):
+            return "highest"
+        
+        # Check if exact ticker (has $)
+        ticker_source = token_info.get('ticker_source', '')
+        is_exact_ticker = ticker_source.startswith('$')
+        
+        # Check Twitter match (if we have social links from Dexscreener)
+        twitter_match = self._check_twitter_handle_match(
+            token_info.get('twitter_handles', []), 
+            verified_token.get('social_links', {})
+        )
+        
+        if is_exact_ticker and twitter_match:
+            return "high"
+        elif is_exact_ticker:
+            return "medium"
+        else:
+            return "low"
+    
+    def _check_twitter_handle_match(self, extracted_handles: list, token_socials: dict) -> bool:
+        """Check if any extracted Twitter handles match the token's official socials"""
+        if not extracted_handles or not token_socials:
+            return False
+        
+        # Get Twitter URL from social links
+        twitter_url = token_socials.get('twitter', '')
+        if not twitter_url:
+            return False
+            
+        # Extract handle from Twitter URL (e.g., "https://twitter.com/bonk_inu" -> "bonk_inu")
+        if 'twitter.com/' in twitter_url.lower():
+            twitter_handle = twitter_url.split('twitter.com/')[-1].split('/')[0].split('?')[0].lower()
+        else:
+            twitter_handle = twitter_url.lower()
+        
+        # Check if any extracted handle matches exactly
+        for handle in extracted_handles:
+            handle_clean = handle.lower().replace('@', '')
+            # Exact match only
+            if handle_clean == twitter_handle:
+                return True
+        return False
+    
+    def _get_relaxed_volume_threshold(self, base_threshold: float, confidence: str) -> float:
+        """Get relaxed volume threshold based on confidence"""
+        if confidence == "highest":
+            return base_threshold * 0.1  # 90% reduction
+        elif confidence == "high":
+            return base_threshold * 0.4  # 60% reduction
+        elif confidence == "medium":
+            return base_threshold * 0.7  # 30% reduction
+        else:  # low
+            return base_threshold
+    
+    def _get_relaxed_liquidity_threshold(self, base_threshold: float, confidence: str) -> float:
+        """Get relaxed liquidity threshold based on confidence"""
+        if confidence == "highest":
+            return base_threshold * 0.1  # 90% reduction
+        elif confidence == "high":
+            return base_threshold * 0.7  # 30% reduction
+        else:  # medium, low
+            return base_threshold
+    
+    def _get_relaxed_liq_mcap_ratio(self, base_ratio: float, confidence: str) -> float:
+        """Get relaxed liquidity/market cap ratio based on confidence"""
+        if confidence == "highest":
+            return base_ratio * 0.1  # 90% reduction
+        elif confidence == "high":
+            return base_ratio * 0.7  # 30% reduction
+        else:  # medium, low
+            return base_ratio
+    
     async def _analyze_curator_intent(self, message_text: str, token_info: Dict[str, Any], curator_id: str) -> Optional[Dict[str, Any]]:
         """
         Analyze curator intent for a specific token mention (Stage 2)
@@ -820,10 +921,7 @@ class SocialIngestModule:
             prompt_vars = {
                 'message_text': message_text,
                 'token_name': token_info.get('token_name', ''),
-                'network': token_info.get('network', ''),
-                'sentiment': token_info.get('sentiment', ''),
-                'action': token_info.get('trading_signals', {}).get('action', ''),
-                'confidence': token_info.get('confidence', 0.0)
+                'network': token_info.get('network', '')
             }
             
             print(f"   🔧 Calling LLM for intent analysis: {token_info.get('token_name', 'unknown')}")

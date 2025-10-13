@@ -321,15 +321,30 @@ class WalletManager:
             return None
     
     async def _get_lotus_balance(self) -> Optional[Decimal]:
-        """Get Lotus token balance using the same method as other SPL tokens"""
+        """Get Lotus token balance from the correct Lotus wallet"""
         try:
-            # Lotus token contract
+            # Lotus token contract and correct wallet
             lotus_contract = 'Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC'
+            lotus_wallet = 'AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd'
             
-            logger.info(f"Getting Lotus token balance using SPL token method")
+            logger.info(f"Getting Lotus token balance from correct wallet: {lotus_wallet}")
             
-            # Use the same method as other SPL tokens - this will work when trader instance is available
-            return await self._get_solana_balance(lotus_contract)
+            # Use JS client directly with the correct wallet address
+            if hasattr(self, 'trader') and self.trader and hasattr(self.trader, 'js_solana_client') and self.trader.js_solana_client:
+                js_client = self.trader.js_solana_client
+                result = await js_client.get_spl_token_balance(lotus_contract, lotus_wallet)
+                
+                if result.get('success'):
+                    balance_str = result.get('balance', '0')
+                    balance = Decimal(balance_str)
+                    logger.info(f"Lotus token balance from correct wallet: {balance}")
+                    return balance
+                else:
+                    logger.warning(f"Failed to get Lotus token balance: {result.get('error')}")
+                    return Decimal('0')
+            else:
+                logger.warning("JSSolanaClient not available for Lotus balance check")
+                return None
                 
         except Exception as e:
             logger.error(f"Error getting Lotus token balance: {e}")

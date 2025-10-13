@@ -9,16 +9,13 @@ token_extraction:
     
     Return a JSON object with:
     - tokens: Array of token objects, each containing:
-      - token_name: The token ticker/symbol
-      - network: The blockchain network (solana, ethereum, base, bsc, etc.) or null if not clear
+I      - token_name: The token ticker/symbol (e.g., "TOKEN", "SYMBOL", "ABC")
+      - ticker_source: The exact text that contains the token mention (e.g., "$TOKEN", "TOKEN token", "buying SYMBOL")
+      - twitter_handles: Array of @handles mentioned (e.g., ["@project", "@team"])
+      - market_cap_mentioned: The number if market cap is mentioned (e.g., 1000000 for "$1M MC")
       - contract_address: Contract address if mentioned, null otherwise
+      - network: The blockchain network (solana, ethereum, base, bsc, etc.) or null if not clear
       - chain_context: Any chain-specific context mentioned in the message
-      - sentiment: positive, negative, or neutral
-      - confidence: 0.0 to 1.0
-      - has_chart: true if post contains chart/image, false otherwise
-      - chart_type: type of chart if present (price, volume, technical, etc.) or null
-      - market_context: Object with price_mention, market_cap, risk_assessment, competitors, platform
-      - trading_signals: Object with action (set to "buy" if the token is discussed positively/favorably, null otherwise), timing, confidence
     
     Return only the JSON object, no explanations or markdown formatting.
     If no clear tokens are mentioned, return {"tokens": []}.
