@@ -444,6 +444,28 @@ class SocialIngestModule:
                                         self.logger.info(f"Skipping low-liquidity token on {chain}: {liq} < {min_liq}")
                                         return None
 
+                                    # Liquidity-to-market cap ratio check (hard filter)
+                                    market_cap = float(token_details.get('market_cap', 0))
+                                    if market_cap > 0:
+                                        liq_mcap_ratio = (liq / market_cap) * 100  # Convert to percentage
+                                        required_ratio = self._get_required_liq_mcap_ratio(market_cap)
+                                        
+                                        if liq_mcap_ratio < required_ratio:
+                                            print(f"   ⚠️  Skipping token with low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f})")
+                                            self.logger.info(f"Skipping token with low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {required_ratio:.1f}% (mcap: ${market_cap:,.0f})")
+                                            return None
+                                        
+                        # Add liquidity health bonus to token details for scoring
+                        ratio_excess = liq_mcap_ratio - required_ratio
+                        liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))  # Max 10% bonus
+                                        token_details['liquidity_health_bonus'] = liquidity_bonus
+                                        
+                                        print(f"   ✅ Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {required_ratio:.1f}%, bonus: +{liquidity_bonus:.1%})")
+                                    else:
+                                        print(f"   ⚠️  Skipping token with zero market cap")
+                                        self.logger.info(f"Skipping token with zero market cap on {chain}")
+                                        return None
+
                                     self.logger.info(f"✅ Found verified token: {token_details['ticker']} on {token_details['chain']}")
                                     return token_details
                                 else:
@@ -521,10 +543,19 @@ class SocialIngestModule:
                 chain = (first_pair.get('chainId', '') or '').lower()
                 age_str = first_pair.get('pairCreatedAt', '')
                 
+                # Calculate liquidity health bonus for scoring
+                liquidity_bonus = 0.0
+                if market_cap > 0:
+                    liq_mcap_ratio = (total_liquidity / market_cap) * 100
+                    required_ratio = self._get_required_liq_mcap_ratio(market_cap)
+                    if liq_mcap_ratio >= required_ratio:
+                        ratio_excess = liq_mcap_ratio - required_ratio
+                        liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))
+                
                 # Calculate scores
                 score = self._calculate_token_score(
                     pairs_for_token, total_volume, total_liquidity, 
-                    market_cap, chain, age_str, token_name
+                    market_cap, chain, age_str, token_name, liquidity_bonus
                 )
                 
                 if score > best_score:
@@ -546,7 +577,7 @@ class SocialIngestModule:
             return None
 
     def _calculate_token_score(self, pairs: list, total_volume: float, total_liquidity: float, 
-                             market_cap: float, chain: str, age_str: str, token_name: str) -> float:
+                             market_cap: float, chain: str, age_str: str, token_name: str, liquidity_bonus: float = 0.0) -> float:
         """Calculate weighted score for a token based on multiple factors."""
         try:
             import math
@@ -591,11 +622,29 @@ class SocialIngestModule:
                 0.05 * age_score            # Reduced from 0.05 - PREFERENCE only
             )
             
+            # Add liquidity health bonus (0-10% bonus for exceeding ratio thresholds)
+            total_score += liquidity_bonus
+            
             return total_score
             
         except Exception as e:
             self.logger.error(f"Error calculating token score: {e}")
             return 0.0
+
+    def _get_required_liq_mcap_ratio(self, market_cap: float) -> float:
+        """Get required liquidity-to-market cap ratio based on market cap tiers"""
+        if market_cap < 500_000:
+            return 10.0  # 10%
+        elif market_cap < 1_000_000:
+            return 6.0   # 6%
+        elif market_cap < 5_000_000:
+            return 4.0   # 4%
+        elif market_cap < 50_000_000:
+            return 3.0   # 3%
+        elif market_cap < 200_000_000:
+            return 2.0   # 2%
+        else:
+            return 1.0   # 1%
 
     def _calculate_age_score(self, age_str: str) -> float:
         """Calculate age score based on token age. Sweet spot: 30-180 days."""

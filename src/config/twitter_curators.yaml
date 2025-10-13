@@ -43,6 +43,16 @@ curators:
     tags: ["hunting", "alpha", "early"]
     notes: "Alpha hunter and early signal provider"
     
+  - id: "m4cero"
+    name: "M4Cero"
+    platforms:
+      twitter:
+        handle: "@M4Cero"
+        active: true
+        priority: "medium"
+    tags: ["crypto", "alpha", "signals"]
+    notes: "Crypto signals and alpha provider"
+    
   # New curators with both Twitter and Telegram
   - id: "duckingnator"
     name: "Ducking Nator"
@@ -186,6 +196,17 @@ curators:
         priority: "high"
     tags: ["alpha", "calls"]
     notes: "Twitter curator added via request"
+
+  - id: "lotus_alpha"
+    name: "Lotus Alpha"
+    platforms:
+      telegram:
+        handle: null
+        channel_id: -1003105710301
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls", "lotus"]
+    notes: "Lotus Alpha Telegram channel; verified TG channel id -1003105710301"
 
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
