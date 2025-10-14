@@ -9,7 +9,7 @@ token_extraction:
     
     Return a JSON object with:
     - tokens: Array of token objects, each containing:
-I      - token_name: The token ticker/symbol (e.g., "TOKEN", "SYMBOL", "ABC")
+      - token_name: The token ticker/symbol (e.g., "TOKEN", "SYMBOL", "ABC")
       - ticker_source: The exact text that contains the token mention (e.g., "$TOKEN", "TOKEN token", "buying SYMBOL")
       - twitter_handles: Array of @handles mentioned (e.g., ["@project", "@team"])
       - market_cap_mentioned: The number if market cap is mentioned (e.g., 1000000 for "$1M MC")
