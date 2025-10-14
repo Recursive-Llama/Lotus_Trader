@@ -1239,12 +1239,22 @@ class TraderLowcapSimpleV2:
             total_tokens_bought = position.get('total_tokens_bought', 0.0) or 0.0
             position['total_quantity'] = total_tokens_bought - position['total_tokens_sold']
             
-            # Check if position should be marked as closed (all tokens sold)
-            if position['total_quantity'] <= 0 and position.get('status') == 'active':
+            # Check if position should be marked as closed
+            # Method 1: Check if 100% exit was executed successfully
+            exits = position.get('exits', [])
+            has_100_percent_exit_executed = any(
+                exit_data.get('exit_pct') == 100.0 and exit_data.get('status') == 'executed'
+                for exit_data in exits
+            )
+            
+            # Method 2: Check if total_quantity is effectively zero (with tolerance for dust)
+            is_effectively_empty = position['total_quantity'] <= 0.001
+            
+            if (has_100_percent_exit_executed or is_effectively_empty) and position.get('status') == 'active':
                 position['status'] = 'closed'
                 position['close_reason'] = 'fully_exited'
                 position['closed_at'] = datetime.now(timezone.utc).isoformat()
-                self.logger.info(f"Position {position_id} fully exited - marking as closed")
+                self.logger.info(f"Position {position_id} fully exited - marking as closed (100% exit executed or effectively empty)")
             
             # Update P&L in memory
             await self._service._update_position_pnl_in_memory(position)

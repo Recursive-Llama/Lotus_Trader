@@ -1058,19 +1058,6 @@ class EthExecutor(BaseEvmExecutor):
                 })
                 print(f"ETH: V2 quote: {int(v2_quote[1])} tokens")
             
-            # SwapRouter02 quotes
-            for fee in [3000, 10000, 500, 2500]:
-                quote = self.client.v3_quote_amount_out(weth, token_address, amount_wei, fee=fee)
-                if quote and quote > 0:
-                    routes.append({
-                        'type': 'SwapRouter02',
-                        'router': self.client.router,
-                        'fee': fee,
-                        'amount_out': quote,
-                        'priority': 2  # Second priority (future-proof)
-                    })
-                    print(f"ETH: SwapRouter02 fee {fee} quote: {quote} tokens")
-            
             # Classic V3 quotes
             for fee in [3000, 10000, 500, 2500]:
                 quote = self.client.v3_quote_amount_out(weth, token_address, amount_wei, fee=fee)
@@ -1080,9 +1067,22 @@ class EthExecutor(BaseEvmExecutor):
                         'router': self.client.v3_router,
                         'fee': fee,
                         'amount_out': quote,
-                        'priority': 3  # Third priority (fallback)
+                        'priority': 2  # Second priority (reliable for V3)
                     })
                     print(f"ETH: Classic V3 fee {fee} quote: {quote} tokens")
+            
+            # SwapRouter02 quotes
+            for fee in [3000, 10000, 500, 2500]:
+                quote = self.client.v3_quote_amount_out(weth, token_address, amount_wei, fee=fee)
+                if quote and quote > 0:
+                    routes.append({
+                        'type': 'SwapRouter02',
+                        'router': self.client.router,
+                        'fee': fee,
+                        'amount_out': quote,
+                        'priority': 3  # Third priority (unreliable for simple swaps)
+                    })
+                    print(f"ETH: SwapRouter02 fee {fee} quote: {quote} tokens")
             
             if not routes:
                 print(f"❌ ETH: No viable routes found")
@@ -1100,8 +1100,10 @@ class EthExecutor(BaseEvmExecutor):
                     # Approve WETH for the router
                     current_allowance = self.client.erc20_allowance(weth, self.client.account.address, route['router'].address)
                     if current_allowance < amount_wei:
-                        print(f"ETH: Approving WETH for {route['type']}...")
-                        approve_res = self.client.approve_erc20(weth, route['router'].address, amount_wei)
+                        # Approve more than needed to account for fees/rounding
+                        approval_amount = amount_wei * 2
+                        print(f"ETH: Approving WETH for {route['type']}: {approval_amount} wei")
+                        approve_res = self.client.approve_erc20(weth, route['router'].address, approval_amount)
                         if not approve_res or approve_res.get('status') != 1:
                             print(f"ETH: {route['type']} approval failed: {approve_res}")
                             continue
@@ -1109,8 +1111,15 @@ class EthExecutor(BaseEvmExecutor):
                         import time
                         time.sleep(3)  # Wait for approval
                     
-                    # Calculate min_out with 1% slippage
-                    min_out = int(route['amount_out'] * 0.99)
+                    # Calculate min_out with proper fee accounting and slippage
+                    if route['type'] == 'V2':
+                        # V2 doesn't have fees, just slippage
+                        min_out = int(route['amount_out'] * 0.98)  # 2% slippage
+                    else:
+                        # V3 has fees (0.3% for 3000, 0.05% for 500, 1% for 10000)
+                        fee_rate = 0.997 if route['fee'] == 3000 else (0.9995 if route['fee'] == 500 else 0.99)
+                        expected_after_fee = int(route['amount_out'] * fee_rate)
+                        min_out = int(expected_after_fee * 0.98)  # 2% slippage after fee
                     
                     # Execute swap
                     if route['type'] == 'V2':
@@ -1159,6 +1168,184 @@ class EthExecutor(BaseEvmExecutor):
             
         except Exception as e:
             print(f"❌ ETH: Smart routing error: {e}")
+            return None
+
+    def _smart_routing_sell(self, token_address: str, amount_wei: int) -> Optional[str]:
+        """Smart routing for sells: token -> WETH using proper router flow"""
+        try:
+            print(f"ETH: Smart routing sell for {token_address}")
+            weth = self._get_wrapped_token_address()
+            is_tax_known = False
+            try:
+                is_tax_known = self._is_taxed_token(token_address, amount_wei)
+            except Exception:
+                is_tax_known = False
+            
+            # Step 1: Quote all available routes (token -> WETH)
+            routes = []
+            
+            # V2 quote (token -> WETH)
+            v2_quote = self.client.v2_get_amounts_out(token_address, weth, amount_wei)
+            if v2_quote and len(v2_quote) >= 2 and v2_quote[1]:
+                routes.append({
+                    'type': 'V2',
+                    'router': self.client.v2_router,
+                    'fee': None,
+                    'amount_out': int(v2_quote[1]),
+                    'priority': 1  # Highest priority (most reliable)
+                })
+                print(f"ETH: V2 sell quote: {int(v2_quote[1]) / 10**18:.6f} WETH")
+            
+            # Only include V3/Router02 routes when token is NOT known tax token
+            if not is_tax_known:
+                # SwapRouter02 quotes (token -> WETH)
+                for fee in [3000, 10000, 500, 2500]:
+                    quote = self.client.v3_quote_amount_out(token_address, weth, amount_wei, fee=fee)
+                    if quote and quote > 0:
+                        routes.append({
+                            'type': 'SwapRouter02',
+                            'router': self.client.router,
+                            'fee': fee,
+                            'amount_out': quote,
+                            'priority': 2  # Second priority (less reliable)
+                        })
+                        print(f"ETH: SwapRouter02 fee {fee} sell quote: {quote / 10**18:.6f} WETH")
+                
+                # Classic V3 quotes (token -> WETH)
+                for fee in [3000, 10000, 500, 2500]:
+                    quote = self.client.v3_quote_amount_out(token_address, weth, amount_wei, fee=fee)
+                    if quote and quote > 0:
+                        routes.append({
+                            'type': 'Classic V3',
+                            'router': self.client.v3_router,
+                            'fee': fee,
+                            'amount_out': quote,
+                            'priority': 3  # Third priority (fallback)
+                        })
+                        print(f"ETH: Classic V3 fee {fee} sell quote: {quote / 10**18:.6f} WETH")
+            
+            if not routes:
+                print(f"❌ ETH: No viable sell routes found")
+                return None
+            
+            # Sort by priority (V2 first, then SwapRouter02, then Classic V3)
+            routes.sort(key=lambda x: x['priority'])
+            
+            # Step 2: Try each route in order
+            for route in routes:
+                try:
+                    print(f"ETH: Trying {route['type']} sell...")
+                    
+                    # Approve token for the router
+                    current_allowance = self.client.erc20_allowance(
+                        token_address, 
+                        self.client.account.address, 
+                        route['router'].address
+                    )
+                    if current_allowance < amount_wei:
+                        # Approve more than needed to account for fees/rounding
+                        approval_amount = amount_wei * 2
+                        print(f"ETH: Approving token for {route['type']} router: {approval_amount} wei")
+                        approve_res = self.client.approve_erc20(
+                            token_address, 
+                            route['router'].address, 
+                            approval_amount
+                        )
+                        if not approve_res or approve_res.get('status') != 1:
+                            print(f"ETH: Token approval for {route['type']} failed: {approve_res}")
+                            continue
+                        print(f"ETH: Token approved for {route['type']}: {approve_res.get('tx_hash')}")
+                        import time
+                        time.sleep(3)  # Wait for approval to be mined
+                    
+                    # Calculate min_out with proper fee accounting and slippage
+                    if route['type'] == 'V2':
+                        # V2 doesn't have fees, just slippage
+                        min_out = int(route['amount_out'] * 0.98)  # 2% slippage
+                    else:
+                        # V3 has fees (0.3% for 3000, 0.05% for 500, 1% for 10000)
+                        fee_rate = 0.997 if route['fee'] == 3000 else (0.9995 if route['fee'] == 500 else 0.99)
+                        expected_after_fee = int(route['amount_out'] * fee_rate)
+                        min_out = int(expected_after_fee * 0.98)  # 2% slippage after fee
+                    
+                    # Execute swap (token -> WETH)
+                    if route['type'] == 'V2':
+                        result = self.client.v2_swap_exact_tokens_for_tokens(
+                            token_in=token_address,
+                            token_out=weth,
+                            amount_in_wei=amount_wei,
+                            amount_out_min_wei=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    elif route['type'] == 'SwapRouter02':
+                        result = self.client.swap_exact_input_single(
+                            token_in=token_address,
+                            token_out=weth,
+                            amount_in_wei=amount_wei,
+                            fee=route['fee'],
+                            amount_out_min=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    elif route['type'] == 'Classic V3':
+                        result = self.client.v3_swap_exact_input_single(
+                            token_in=token_address,
+                            token_out=weth,
+                            amount_in_wei=amount_wei,
+                            fee=route['fee'],
+                            amount_out_min=min_out,
+                            recipient=self.client.account.address,
+                            deadline_seconds=600
+                        )
+                    
+                    if result and result.get('status') == 1:
+                        print(f"✅ ETH: {route['type']} sell successful: {result.get('tx_hash')}")
+                        print(f"ETH: Gas used: {result.get('gas_used', 'unknown')}")
+                        return result.get('tx_hash')
+                    else:
+                        print(f"❌ ETH: {route['type']} sell failed: {result}")
+                        
+                except Exception as e:
+                    print(f"❌ ETH: {route['type']} sell error: {e}")
+                    continue
+            
+            print(f"❌ ETH: All smart routing sell attempts failed")
+
+            # Final fallback: try V2 supportingFeeOnTransfer for potential tax tokens
+            try:
+                # Derive a conservative min_out from V2 quote if available
+                min_out_support = 0
+                if v2_quote and len(v2_quote) >= 2 and v2_quote[1]:
+                    # Apply an extra buffer to tolerate transfer fees (e.g., ~5%) plus 2% slippage
+                    expected_out = int(v2_quote[1])
+                    min_out_support = int(expected_out * 0.93)  # 7% total headroom
+                print("ETH: Trying V2 supportingFeeOnTransfer as final fallback...")
+                result_tax = self.client.v2_swap_exact_tokens_for_tokens_supporting_fee(
+                    token_in=token_address,
+                    token_out=weth,
+                    amount_in_wei=amount_wei,
+                    amount_out_min_wei=min_out_support,
+                    recipient=self.client.account.address,
+                    deadline_seconds=600
+                )
+                if result_tax and result_tax.get('status') == 1:
+                    print(f"✅ ETH: V2 supportingFeeOnTransfer sell successful: {result_tax.get('tx_hash')}")
+                    # Persist tax flag conservatively
+                    try:
+                        self._update_position_tax(token_address, 1.0)
+                    except Exception:
+                        pass
+                    return result_tax.get('tx_hash')
+                else:
+                    print(f"❌ ETH: V2 supportingFeeOnTransfer sell failed: {result_tax}")
+            except Exception as e:
+                print(f"❌ ETH: V2 supportingFeeOnTransfer error: {e}")
+
+            return None
+            
+        except Exception as e:
+            print(f"❌ ETH: Smart routing sell error: {e}")
             return None
 
     def _try_swaprouter02_swap_simple(self, token_address: str, amount_wei: int) -> Optional[str]:
@@ -1338,7 +1525,7 @@ class EthExecutor(BaseEvmExecutor):
 
     def execute_sell(self, token_address: str, tokens_to_sell: float, target_price_eth: float) -> Optional[str]:
         """
-        Execute sell for Ethereum token
+        Execute sell for Ethereum token using smart routing
         
         Args:
             token_address: Token contract address
@@ -1364,74 +1551,9 @@ class EthExecutor(BaseEvmExecutor):
                 print(f"ETH: Insufficient balance. Available: {balance}, Requested: {tokens_to_sell}")
                 return None
             
-            # Resolve venue
-            venue = self._resolve_venue(token_address)
-            if not venue:
-                print(f"ETH: No venue found for {token_address}")
-                return None
-            
-            print(f"ETH: Using venue: {venue}")
-            
-            # Check if this is a tax token first
-            is_tax_token = self._is_taxed_token(token_address, tokens_wei)
-            
-            # Try V3 swap first (only for non-tax tokens)
-            if not is_tax_token and venue.get('dex') == 'uniswap':
-                print("ETH: Trying Uniswap V3 swap...")
-                for fee in [500, 3000, 10000]:
-                    print(f"ETH: Trying V3 sell with fee {fee}...")
-                    # Approve token for V3 router
-                    current_allowance = self.client.erc20_allowance(token_address, self.client.account.address, self.client.router.address)
-                    if current_allowance < tokens_wei:
-                        print(f"ETH: Approving token for V3 router: {tokens_wei} wei")
-                        approve_res = self.client.approve_erc20(token_address, self.client.router.address, tokens_wei)
-                        if not approve_res or approve_res.get('status') != 1:
-                            print(f"ETH: Token approval for V3 failed: {approve_res}")
-                            continue
-                        print(f"ETH: Token V3 approved: {approve_res.get('tx_hash')}")
-                        time.sleep(3)  # Wait for approval to be mined
-                    
-                    res_v3 = self.client.swap_exact_input_single(
-                        token_address, self.client.weth.address, tokens_wei, fee=fee, amount_out_min=0
-                    )
-                    print(f"ETH: V3 sell result: {res_v3}")
-                    if res_v3 and res_v3.get('status') == 1:
-                        print(f"ETH: V3 sell successful: {res_v3.get('tx_hash')}")
-                        return res_v3.get('tx_hash')
-            elif is_tax_token:
-                print("ETH: Skipping V3 for tax token (V3 doesn't support fee-on-transfer)")
-            
-            # Try V2 swap as fallback
-            print("ETH: Trying Uniswap V2 swap...")
-            # Approve token for V2 router
-            current_allowance = self.client.erc20_allowance(token_address, self.client.account.address, self.client.v2_router.address)
-            if current_allowance < tokens_wei:
-                print(f"ETH: Approving token for V2 router: {tokens_wei} wei")
-                approve_res = self.client.approve_erc20(token_address, self.client.v2_router.address, tokens_wei)
-                if not approve_res or approve_res.get('status') != 1:
-                    print(f"ETH: Token approval for V2 failed: {approve_res}")
-                    return None
-                print(f"ETH: Token V2 approved: {approve_res.get('tx_hash')}")
-                time.sleep(3)  # Wait for approval to be mined
-            
-            # Use appropriate swap method based on tax status
-            if is_tax_token:
-                print(f"ETH: Detected tax token, using fee-on-transfer swap method")
-                res_v2 = self.client.v2_swap_exact_tokens_for_tokens_supporting_fee(
-                    token_address, self.client.weth.address, tokens_wei, amount_out_min_wei=0
-                )
-            else:
-                print(f"ETH: Regular token, using standard swap method")
-                res_v2 = self.client.v2_swap_exact_tokens_for_tokens(
-                    token_address, self.client.weth.address, tokens_wei, amount_out_min_wei=0
-                )
-            print(f"ETH: V2 sell result: {res_v2}")
-            if res_v2 and res_v2.get('status') == 1:
-                print(f"ETH: V2 sell successful: {res_v2.get('tx_hash')}")
-                return res_v2.get('tx_hash')
-            
-            print("ETH: All sell methods failed")
-            return None
+            # Use smart routing for sell (token -> WETH)
+            print("ETH: Using smart routing for sell...")
+            return self._smart_routing_sell(token_address, tokens_wei)
             
         except Exception as e:
             print(f"ETH: Sell execution error: {e}")
