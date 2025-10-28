@@ -75,8 +75,8 @@ class EntryExitPlanner:
             gain_pct = stage.get('gain_pct', 0)
             exit_pct = stage.get('exit_pct', 0)
             
-            # Calculate exit price based on gain percentage
-            exit_price = base_price * (1 + gain_pct / 100)
+            # Calculate exit price based on gain percentage, rounded to 8 decimals
+            exit_price = round(base_price * (1 + gain_pct / 100), 8)
             
             # Store percentage only - actual token amounts calculated at execution time
             exits.append({

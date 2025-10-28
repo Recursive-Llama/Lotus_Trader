@@ -730,6 +730,17 @@ class SocialIngestModule:
             # Calculate age in days from pairCreatedAt timestamp
             age_days = self._calculate_age_days(pair_data.get('pairCreatedAt', ''))
             
+            # Extract pair creation date from pairCreatedAt (ISO8601 format)
+            pair_created_at = pair_data.get('pairCreatedAt', '')
+            if pair_created_at:
+                try:
+                    # Ensure it's in ISO8601 format
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(pair_created_at.replace('Z', '+00:00'))
+                    pair_created_at = dt.isoformat()
+                except:
+                    pair_created_at = ''  # Fallback to empty if parsing fails
+            
             # Extract social links from info section
             social_links = {}
             info_section = pair_data.get('info', {})
@@ -757,6 +768,7 @@ class SocialIngestModule:
                 'quote_contract': quote_token.get('address', ''),
                 'raw_chain_id': raw_chain_id,
                 'age_days': age_days,
+                'pair_created_at': pair_created_at,  # Added for A/E age component
                 'social_links': social_links
             }
             

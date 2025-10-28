@@ -135,6 +135,69 @@ class PositionMonitor:
 
             logger.info(f"Price check: {current_price} for {token_contract} on {token_chain}")
 
+            # Geometry runtime: evaluate sr/diagonal breaks from stored geometry and persist flags
+            try:
+                features = position.get('features') or {}
+                geometry = (features.get('geometry') if isinstance(features, dict) else None) or {}
+                if geometry:
+                    updates = self._evaluate_geometry_runtime(geometry, float(current_price))
+                    # Enrich geometry with channel/wedge, breakout line, retrace ratio, and ATR(15m) zone bands
+                    enrich = await self._compute_geometry_enrichment(token_contract, token_chain, geometry)
+                    if enrich:
+                        updates.update(enrich)
+                    # Maintain resistance zone tracking: zone_id and zone_trim_count
+                    try:
+                        new_geometry = {**geometry, **updates}
+                        # Reset zone state when leaving the zone
+                        if not new_geometry.get('in_resistance_zone'):
+                            new_geometry.pop('zone_id', None)
+                            new_geometry['zone_trim_count'] = 0
+                            new_geometry.pop('last_zone_trim_ts', None)
+                        else:
+                            # Initialize/adjust zone_id
+                            current_zone_id = new_geometry.get('zone_id')
+                            prior_zone_id = geometry.get('zone_id') if isinstance(geometry, dict) else None
+                            # On zone change, reset counter
+                            if prior_zone_id is not None and current_zone_id is not None and prior_zone_id != current_zone_id:
+                                new_geometry['zone_trim_count'] = 0
+                                new_geometry.pop('last_zone_trim_ts', None)
+                            # Increment counter if a fresh trim strand occurred for this zone
+                            token_key = position.get('token_contract') or position.get('token_ticker') or position.get('id')
+                            last_ts_prev = new_geometry.get('last_zone_trim_ts')
+                            try:
+                                strand = (
+                                    self.client.table('ad_strands')
+                                    .select('ts,decision_type,reasons')
+                                    .eq('token', token_key)
+                                    .order('ts', desc=True)
+                                    .limit(1)
+                                    .execute()
+                                )
+                                rows = strand.data or []
+                                if rows:
+                                    row = rows[0]
+                                    if str(row.get('decision_type')) == 'trim':
+                                        reasons = row.get('reasons') or {}
+                                        if (reasons.get('zone') == 'resistance'):
+                                            zone_reason_id = reasons.get('zone_id')
+                                            # If zone_id present in reasons, ensure it matches the current zone
+                                            if (zone_reason_id is None) or (current_zone_id is None) or (str(zone_reason_id) == str(current_zone_id)):
+                                                ts_str = str(row.get('ts'))
+                                                if ts_str and ts_str != last_ts_prev:
+                                                    prev_cnt = int(new_geometry.get('zone_trim_count') or 0)
+                                                    new_geometry['zone_trim_count'] = prev_cnt + 1
+                                                    new_geometry['last_zone_trim_ts'] = ts_str
+                            except Exception:
+                                pass
+                        if updates or new_geometry != geometry:
+                            new_features = {**features, 'geometry': new_geometry}
+                            self.client.table('lowcap_positions').update({'features': new_features}).eq('id', position.get('id')).execute()
+                            logger.info(f"geometry update {position.get('token_ticker','?')}: {updates}")
+                    except Exception as zerr:
+                        logger.debug(f"zone tracking skipped: {zerr}")
+            except Exception as ge:
+                logger.debug(f"geometry runtime skipped: {ge}")
+
             # Check planned entries, exits, trend entries, and trend exits
             await self._check_planned_entries(position, float(current_price))
             await self._check_exits(position, float(current_price))
@@ -143,6 +206,337 @@ class PositionMonitor:
             
         except Exception as e:
             logger.error(f"Error checking position {position.get('id', 'unknown')}: {e}")
+
+    def _evaluate_geometry_runtime(self, geometry: Dict[str, Any], close: float) -> Dict[str, Any]:
+        """Lightweight per-minute evaluation of stored geometry vs current price.
+        Returns updates for sr_*/diag_* flags.
+        """
+        levels = geometry.get('levels') or {}
+        supports = levels.get('supports') or []
+        resistances = levels.get('resistances') or []
+        candidates = supports + resistances
+        sr_break = 'none'
+        sr_conf = 0.0
+        if candidates:
+            try:
+                nearest = min(candidates, key=lambda x: abs(close - float(x.get('price', 0.0))))
+                price_lvl = float(nearest.get('price', 0.0))
+                eps = max(1e-6, 0.002 * close)
+                if close > price_lvl + eps:
+                    sr_break = 'bull'
+                    sr_conf = min(1.0, 0.5 + 0.05 * float(nearest.get('strength', 1)))
+                elif close < price_lvl - eps:
+                    sr_break = 'bear'
+                    sr_conf = min(1.0, 0.5 + 0.05 * float(nearest.get('strength', 1)))
+            except Exception:
+                pass
+        # diagonals
+        diag_break = 'none'
+        diag_conf = 0.0
+        diags = geometry.get('diagonals') or {}
+        up = diags.get('uptrend') or {}
+        dn = diags.get('downtrend') or {}
+        up_px = float(up.get('intercept', 0.0)) if up else 0.0
+        dn_px = float(dn.get('intercept', 0.0)) if dn else 0.0
+        if up and close < up_px * (1 - 0.002):
+            diag_break = 'bear'
+            diag_conf = max(diag_conf, min(1.0, 0.3 + 0.5 * float(up.get('confidence', 0.5))))
+        if dn and close > dn_px * (1 + 0.002):
+            diag_break = 'bull'
+            diag_conf = max(diag_conf, min(1.0, 0.3 + 0.5 * float(dn.get('confidence', 0.5))))
+        return {
+            'sr_break': sr_break,
+            'sr_conf': sr_conf,
+            'diag_break': diag_break,
+            'diag_conf': diag_conf,
+        }
+
+    async def _compute_geometry_enrichment(self, contract: str, chain: str, geometry: Dict[str, Any]) -> Dict[str, Any]:
+        """Compute channel/wedge flags, breakout line B + last impulse high H + retrace r,
+        and ATR(15m)-based zone bands and Fib overlays from recent 1m bars.
+        """
+        try:
+            # fetch recent 1m closes for 48h window
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            since = (now - timedelta(hours=48)).isoformat()
+            rows = (
+                self.client.table('lowcap_price_data_1m')
+                .select('timestamp, price_native, price_usd')
+                .eq('token_contract', contract)
+                .eq('chain', chain)
+                .gte('timestamp', since)
+                .order('timestamp', desc=False)
+                .execute()
+            ).data or []
+            if not rows or len(rows) < 60:
+                return {}
+            closes = []
+            times = []
+            for r in rows:
+                px = float(r.get('price_native') or r.get('price_usd') or 0.0)
+                if px > 0:
+                    closes.append(px)
+                    times.append(r.get('timestamp'))
+            if len(closes) < 60:
+                return {}
+
+            # build 15m bars from 1m closes (OHLC via close aggregation)
+            import math
+            fifteen = []  # list of dicts {t0, o,h,l,c}
+            bucket = []
+            bucket_t0 = None
+            for i, px in enumerate(closes):
+                ts = times[i]
+                # align to 15m by index groups of 15
+                if bucket_t0 is None:
+                    bucket_t0 = ts
+                bucket.append(px)
+                if len(bucket) == 15:
+                    o = bucket[0]
+                    h = max(bucket)
+                    l = min(bucket)
+                    c = bucket[-1]
+                    fifteen.append({'t0': bucket_t0, 'o': o, 'h': h, 'l': l, 'c': c})
+                    bucket = []
+                    bucket_t0 = None
+            if len(fifteen) < 20:
+                return {}
+
+            # ATR(15m) using Wilder(14)
+            trs = []
+            prev_c = fifteen[0]['c']
+            for b in fifteen[1:]:
+                tr = max(b['h'] - b['l'], abs(b['h'] - prev_c), abs(prev_c - b['l']))
+                trs.append(tr)
+                prev_c = b['c']
+            if not trs:
+                return {}
+            # Wilder smoothing
+            atr = sum(trs[:14]) / max(1, min(14, len(trs)))
+            for tr in trs[14:]:
+                atr = (atr * 13 + tr) / 14
+
+            # Fib top-bottom from visible range (48h)
+            top = max(closes)
+            bottom = min(closes)
+            fib = {
+                'top': top,
+                'bottom': bottom,
+                'levels': {
+                    '0.382': bottom + 0.382 * (top - bottom),
+                    '0.5': bottom + 0.5 * (top - bottom),
+                    '0.618': bottom + 0.618 * (top - bottom),
+                }
+            }
+
+            # Channel / wedge flags from stored diagonals
+            diags = geometry.get('diagonals') or {}
+            up = diags.get('uptrend') or {}
+            dn = diags.get('downtrend') or {}
+            channel = False
+            wedge = False
+            if up and dn:
+                m_up = float(up.get('slope', 0.0))
+                m_dn = float(dn.get('slope', 0.0))
+                # parallel tolerance
+                if abs(abs(m_up) - abs(m_dn)) <= max(1e-9, 0.1 * (abs(m_up) + abs(m_dn))):
+                    channel = (m_up * m_dn) > 0  # same sign
+                # wedge: opposite signs and non-trivial slopes
+                if (m_up * m_dn) < 0 and (abs(m_up) + abs(m_dn)) > 0.0:
+                    wedge = True
+
+            # Breakout line B and retrace r if a bull breakout flagged
+            breakout = geometry.get('breakout') or {}
+            sr_break = (geometry.get('sr_break') or 'none').lower()
+            from datetime import datetime
+            def to_float(x):
+                try:
+                    return float(x)
+                except Exception:
+                    return 0.0
+            # current close
+            c_now = closes[-1]
+            if sr_break == 'bull' and dn and not breakout:
+                breakout = {
+                    'line': {'slope': to_float(dn.get('slope')), 'intercept': to_float(dn.get('intercept'))},
+                    'origin_ts': times[-1],
+                    'last_high': c_now,
+                }
+            # update retrace ratio r if breakout exists
+            retrace_r = None
+            if breakout and breakout.get('line'):
+                # compute H as max close since origin_ts
+                try:
+                    origin_ts = breakout.get('origin_ts')
+                    # find index since origin (approx by scanning times)
+                    start_idx = next((i for i, t in enumerate(times) if t >= origin_ts), max(0, len(times) - 60))
+                except Exception:
+                    start_idx = max(0, len(times) - 60)
+                h_since = max(closes[start_idx:]) if start_idx < len(closes) else c_now
+                B_slope = float(breakout['line'].get('slope') or 0.0)
+                B_int = float(breakout['line'].get('intercept') or 0.0)
+                # project B at now: we lack absolute index offset; approximate with last close as baseline
+                B_now = B_slope * 0.0 + B_int
+                denom = max(1e-9, (h_since - B_now))
+                retrace_r = max(0.0, min(1.0, (h_since - c_now) / denom))
+                breakout['last_high'] = h_since
+
+            bands = {'atr15m_zone': 0.5 * atr}
+
+            # EMA_long (1m=60) and consecutive closes below EMA_long
+            def ema(series, span):
+                if not series:
+                    return 0.0
+                alpha = 2.0 / (span + 1)
+                out = series[0]
+                for v in series[1:]:
+                    out = alpha * v + (1 - alpha) * out
+                return out
+
+            ema_long = ema(closes[-120:], 60)  # use up to last 120 samples
+            consec_below = 0
+            for v in reversed(closes[-120:]):
+                if v < ema_long:
+                    consec_below += 1
+                else:
+                    break
+            trail_pending = consec_below >= 15
+
+            # Proximity flags relative to horizontal levels
+            at_support = False
+            in_resistance_zone = False
+            try:
+                supports = ((geometry.get('levels') or {}).get('supports') or [])
+                resistances = ((geometry.get('levels') or {}).get('resistances') or [])
+                # current close
+                c_now = closes[-1]
+                # nearest support/resistance
+                if supports:
+                    nearest_sup = min(supports, key=lambda x: abs(c_now - float(x.get('price', 0.0))))
+                    if abs(c_now - float(nearest_sup.get('price', 0.0))) <= bands['atr15m_zone']:
+                        at_support = True
+                if resistances:
+                    nearest_res = min(resistances, key=lambda x: abs(c_now - float(x.get('price', 0.0))))
+                    nearest_res_price = float(nearest_res.get('price', 0.0))
+                    if abs(c_now - nearest_res_price) <= bands['atr15m_zone']:
+                        in_resistance_zone = True
+                    # also check Fib confluence
+                    best_zone_price = nearest_res_price if 'nearest_res_price' in locals() else None
+                    for lvl in fib['levels'].values():
+                        lvlp = float(lvl)
+                        if abs(c_now - lvlp) <= bands['atr15m_zone']:
+                            in_resistance_zone = True
+                            # choose closer zone id (resistance vs fib)
+                            if best_zone_price is None or abs(c_now - lvlp) < abs(c_now - best_zone_price):
+                                best_zone_price = lvlp
+                            break
+            except Exception:
+                pass
+
+            out = {
+                'channel': channel,
+                'wedge': wedge,
+                'wedge_score': 0.0,
+                'near_upper': False,
+                'near_lower': False,
+                'bands': bands,
+                'fib': fib,
+                'at_support': at_support,
+                'in_resistance_zone': in_resistance_zone,
+                'ema_long': ema_long,
+                'consec_below_ema_long': consec_below,
+                'trail_pending': trail_pending,
+                'ema_mid_15m': None,
+                'ema_mid_15m_break': False,
+                'rsi_div': 0.0,
+            }
+            # Provide stable zone identifier when inside resistance
+            if in_resistance_zone:
+                try:
+                    # prefer nearest explicit resistance; fallback to best_zone_price
+                    zone_id = None
+                    if 'nearest_res_price' in locals():
+                        zone_id = float(nearest_res_price)
+                    if zone_id is None and 'best_zone_price' in locals():
+                        zone_id = float(best_zone_price)
+                    if zone_id is not None:
+                        out['zone_id'] = round(zone_id, 8)
+                except Exception:
+                    pass
+            # compute wedge/channel proximity and wedge score
+            try:
+                diags = geometry.get('diagonals') or {}
+                up = diags.get('uptrend') or {}
+                dn = diags.get('downtrend') or {}
+                if up and dn:
+                    m_up = float(up.get('slope', 0.0))
+                    m_dn = float(dn.get('slope', 0.0))
+                    if (m_up * m_dn) < 0 and (abs(m_up) + abs(m_dn)) > 0.0:
+                        denom = max(1e-6, abs(m_up) + abs(m_dn))
+                        out['wedge_score'] = max(0.0, min(1.0, 1.0 - abs(m_up - (-m_dn)) / (2 * denom)))
+                    up_px = float(up.get('intercept', 0.0))
+                    dn_px = float(dn.get('intercept', 0.0))
+                    if abs(c_now - dn_px) <= 0.5 * atr:
+                        out['near_upper'] = True
+                    if abs(c_now - up_px) <= 0.5 * atr:
+                        out['near_lower'] = True
+            except Exception:
+                pass
+            # EMA_mid(15m) and break
+            try:
+                def ema_series(vals, span):
+                    if not vals:
+                        return []
+                    alpha = 2.0 / (span + 1)
+                    out_s = [vals[0]]
+                    for v in vals[1:]:
+                        out_s.append(alpha * v + (1 - alpha) * out_s[-1])
+                    return out_s
+                fifteen_closes = [b['c'] for b in fifteen]
+                ema_mid_series = ema_series(fifteen_closes, 55)
+                out['ema_mid_15m'] = ema_mid_series[-1] if ema_mid_series else fifteen_closes[-1]
+                out['ema_mid_15m_break'] = fifteen_closes[-1] < out['ema_mid_15m']
+            except Exception:
+                pass
+            # RSI divergence (simple)
+            try:
+                def rsi(values, period=14):
+                    if len(values) <= period:
+                        return 50.0
+                    gains = []
+                    losses = []
+                    for i in range(len(values) - period, len(values)):
+                        ch = values[i] - values[i - 1]
+                        gains.append(max(0.0, ch))
+                        losses.append(max(0.0, -ch))
+                    avg_gain = sum(gains) / period
+                    avg_loss = sum(losses) / period or 1e-9
+                    rs = avg_gain / avg_loss
+                    return 100.0 - (100.0 / (1.0 + rs))
+                rsi_series = []
+                window_vals = closes[-200:]
+                for k in range(max(15, len(window_vals) - 60), len(window_vals)):
+                    rsi_series.append(rsi(window_vals[: k + 1], 14))
+                rsi_last = rsi_series[-1] if rsi_series else 50.0
+                lookback = 20
+                prior_prices = window_vals[-(lookback + 1):-1] if len(window_vals) > lookback else window_vals[:-1]
+                prior_rsi = rsi_series[-lookback:] if len(rsi_series) >= lookback else rsi_series
+                if prior_prices and prior_rsi:
+                    if window_vals[-1] < min(prior_prices) and rsi_last > min(prior_rsi):
+                        out['rsi_div'] = 1.0
+                    if window_vals[-1] > max(prior_prices) and rsi_last < max(prior_rsi):
+                        out['rsi_div'] = -1.0
+            except Exception:
+                pass
+            if breakout:
+                out['breakout'] = {**breakout}
+                if retrace_r is not None:
+                    out['breakout']['retrace_r'] = retrace_r
+            return out
+        except Exception as e:
+            logger.debug(f"geometry enrichment skipped: {e}")
+            return {}
     
     async def _get_current_price_from_db(self, token_contract: str, chain: str) -> Optional[float]:
         """Get current price from database"""
@@ -524,15 +918,17 @@ class PositionMonitor:
             logger.info(f"Executing trend exit: {tokens_to_sell:.6f} {token_ticker} @ {current_price:.6f}")
             
             # Execute the sell transaction
+            # TODO: TEMPORARY FIX - Trend exits are being removed soon, this bypasses trader service
+            # All executors require 3 parameters: (token_address, tokens_to_sell, target_price)
             tx_hash = None
             if token_chain == 'bsc' and hasattr(self.trader, 'bsc_executor') and self.trader.bsc_executor:
-                tx_hash = self.trader.bsc_executor.execute_sell(token_contract, tokens_to_sell)
+                tx_hash = self.trader.bsc_executor.execute_sell(token_contract, tokens_to_sell, current_price)
             elif token_chain == 'base' and hasattr(self.trader, 'base_executor') and self.trader.base_executor:
-                tx_hash = self.trader.base_executor.execute_sell(token_contract, tokens_to_sell)
+                tx_hash = self.trader.base_executor.execute_sell(token_contract, tokens_to_sell, current_price)
             elif token_chain == 'ethereum' and hasattr(self.trader, 'eth_executor') and self.trader.eth_executor:
-                tx_hash = self.trader.eth_executor.execute_sell(token_contract, tokens_to_sell)
+                tx_hash = self.trader.eth_executor.execute_sell(token_contract, tokens_to_sell, current_price)
             elif token_chain == 'solana' and hasattr(self.trader, 'sol_executor') and self.trader.sol_executor:
-                tx_hash = await self.trader.sol_executor.execute_sell(token_contract, tokens_to_sell)
+                tx_hash = await self.trader.sol_executor.execute_sell(token_contract, tokens_to_sell, current_price)
             
             if not tx_hash:
                 logger.error(f"Failed to execute trend exit sell for {token_ticker}")

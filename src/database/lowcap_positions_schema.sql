@@ -43,6 +43,7 @@ CREATE TABLE lowcap_positions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     closed_at TIMESTAMP WITH TIME ZONE,
+    close_reason TEXT,                      -- Reason for position closure: "fully_exited", "cap_cleanup_qty_zero", etc.
     
     -- ADDITIONAL TRACKING
     tax_pct FLOAT,                          -- Tax percentage detected for this token
@@ -60,7 +61,16 @@ CREATE TABLE lowcap_positions (
     source_tweet_url TEXT,                  -- Original tweet URL that triggered this position
     
     -- NOTES
-    notes TEXT                              -- Any additional notes
+    notes TEXT,                             -- Any additional notes
+
+    -- PM FEATURES & STATE (added for Position Manager integration)
+    features JSONB,                         -- Cached PM inputs/diagnostics
+    cooldown_until TIMESTAMPTZ,             -- Time gate before new actions
+    last_review_at TIMESTAMPTZ,             -- Last PM evaluation time
+    time_patience_h INT,                    -- Patience window in hours
+    reentry_lock_until TIMESTAMPTZ,         -- Lockout after exits/trails
+    trend_entry_count INT DEFAULT 0,        -- Count of trend adds
+    new_token_mode BOOLEAN DEFAULT FALSE    -- New token discovery mode flag
 );
 
 -- Note: Using JSONB columns in main table instead of separate tables for:
@@ -82,6 +92,7 @@ CREATE INDEX idx_lowcap_positions_active ON lowcap_positions(book_id, status) WH
 
 -- Note: Indexes for JSONB columns can be added as needed using GIN indexes
 -- Example: CREATE INDEX idx_entries_gin ON lowcap_positions USING GIN (entries);
+CREATE INDEX IF NOT EXISTS idx_lowcap_positions_features_gin ON lowcap_positions USING GIN (features);
 
 -- Create trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_lowcap_position_updated_at()

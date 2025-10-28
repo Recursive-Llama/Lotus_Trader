@@ -97,8 +97,9 @@ class ModuleTriggeringEngine:
                 # Check for new strands and trigger appropriate modules
                 await self._process_new_strands()
                 
-                # Sleep for 30 seconds before next check
-                await asyncio.sleep(30)
+                # Sleep for 1 day before next check (optimized for egress reduction)
+                # TODO: Revert to 30 seconds when future system types are implemented
+                await asyncio.sleep(86400)  # 1 day = 86400 seconds
                 
             except asyncio.CancelledError:
                 self.logger.info("Module triggering loop cancelled")

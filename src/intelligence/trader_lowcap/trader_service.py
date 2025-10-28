@@ -1120,6 +1120,20 @@ class TraderService:
                 allocation=allocation_pct
             )
 
+            # Kick off GeckoTerminal backfill and canonical_pool persistence for new tokens (non-blocking)
+            try:
+                import asyncio as _asyncio
+                async def _run_onboarding_backfill():
+                    try:
+                        from intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import backfill_token_1m
+                        # Seed recent history (default 24h) without blocking trading
+                        await _asyncio.to_thread(backfill_token_1m, contract, chain, 1440)
+                    except Exception:
+                        return
+                _asyncio.create_task(_run_onboarding_backfill())
+            except Exception:
+                pass
+
             # entries
             from .entry_exit_planner import EntryExitPlanner
             entries = EntryExitPlanner.build_entries(price, alloc_native)
@@ -1892,7 +1906,7 @@ class TraderService:
                 return
             
             current_price = float(price_result.data[0]['price_native'])
-            target_price = current_price * 0.97  # 3% below current price
+            target_price = round(current_price * 0.97, 8)  # 3% below current price, rounded to 8 decimals
             
             # Get existing exits to find next exit number
             existing_exits = position.get('exits', [])

@@ -253,14 +253,28 @@ class BscExecutor(BaseEvmExecutor):
                     for fee in [10000, 3000, 500, 2500]:
                         try:
                             print(f"Trying V3 sell with fee {fee}...")
+                            # Get quote first to calculate proper minimum output
+                            try:
+                                quote_amount = self.client.v3_quote_amount_out(token_address, self.client.weth_address, tokens_wei, fee)
+                                if quote_amount and quote_amount > 0:
+                                    # Use 5% slippage tolerance for V3
+                                    min_out = int(quote_amount * 0.95)
+                                else:
+                                    # Fallback to 0 if quote fails
+                                    min_out = 0
+                            except Exception:
+                                min_out = 0
+                            
                             res_v3 = self.client.swap_exact_input_single(
                                 token_address, self.client.weth_address, tokens_wei,
-                                fee=fee, amount_out_min=0
+                                fee=fee, amount_out_min=min_out
                             )
                             print(f"V3 sell result: {res_v3}")
                             if res_v3 and res_v3.get('status') == 1:
                                 print(f"✅ V3 sell successful: {res_v3.get('tx_hash')}")
                                 return res_v3.get('tx_hash')
+                            elif res_v3 and res_v3.get('status') == 0:
+                                print(f"❌ V3 sell failed (status=0) for fee {fee}: {res_v3.get('tx_hash', 'no_hash')}")
                         except Exception as ve:
                             print(f"V3 sell error (fee={fee}): {ve}")
             except Exception as e:
@@ -298,9 +312,12 @@ class BscExecutor(BaseEvmExecutor):
                 deadline_seconds=600
             )
             
-            if swap_res and swap_res.get('tx_hash'):
+            if swap_res and swap_res.get('tx_hash') and swap_res.get('status') == 1:
                 print(f"✅ BSC sell successful: {swap_res['tx_hash']}")
                 return swap_res['tx_hash']
+            elif swap_res and swap_res.get('tx_hash'):
+                print(f"❌ BSC sell transaction failed (status={swap_res.get('status')}): {swap_res['tx_hash']}")
+                return None
             
             print(f"❌ BSC sell failed for {token_address}")
             return None

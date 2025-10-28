@@ -208,6 +208,16 @@ curators:
     tags: ["alpha", "calls", "lotus"]
     notes: "Lotus Alpha Telegram channel; verified TG channel id -1003105710301"
 
+  - id: "tonybetw"
+    name: "TonyBetW"
+    platforms:
+      twitter:
+        handle: "@TonyBetW"
+        active: true
+        priority: "medium"
+    tags: ["crypto", "trading", "alpha"]
+    notes: "Twitter curator added via request"
+
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
 #   name: "Example Curator"

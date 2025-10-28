@@ -58,6 +58,7 @@ CREATE TABLE lowcap_positions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     closed_at TIMESTAMP WITH TIME ZONE,
+    close_reason TEXT,                      -- Reason for position closure: "fully_exited", "cap_cleanup_qty_zero", etc.
     
     -- TIMESTAMPS
     first_entry_timestamp TIMESTAMP WITH TIME ZONE,
@@ -361,16 +362,21 @@ BEGIN
         SET curator_sources = current_sources, updated_at = NOW()
         WHERE id = position_id_param;
     ELSE
-        -- Create new position
+        -- Create new position with initial features
         INSERT INTO lowcap_positions (
             id, token_chain, token_contract, token_ticker, token_name,
             total_allocation_pct, total_allocation_usd, book_id, status,
-            curator_sources
+            curator_sources, features
         ) VALUES (
             position_id_param, token_chain_param, token_contract_param, 
             token_ticker_param, token_name_param, total_allocation_pct_param, 
             total_allocation_usd_param, 'social', 'pending',
-            jsonb_build_array(new_curator_source)
+            jsonb_build_array(new_curator_source),
+            jsonb_build_object(
+                'pair_created_at', '',
+                'market_cap', 0.0,
+                'features_initialized_at', NOW()
+            )
         );
     END IF;
     

@@ -1,0 +1,29 @@
+{
+  "ema": { "short": 12, "long": 60 },
+  "atr": { "tf": "1m", "mult_support_zone": 1.0 },
+  "sr_conf": { "valid": 0.50, "strong": 0.60 },
+  "obv_slope_per_bar": { "rise": 0.05, "fall": -0.05 },
+  "voz": { "moderate": 0.30, "strong": 0.80 },
+  "divergence_lookback": { "aggr": 10, "norm": 15, "pat": 20 },
+  "e2_retrace_window": [0.68, 1.00],
+  "mode_sizes": {
+    "patient":   { "immediate": 0.00, "e1": 0.05, "e2": 0.05 },
+    "normal":    { "immediate": 0.10, "e1": 0.15, "e2": 0.15 },
+    "aggressive":{ "immediate": 0.15, "e1": 0.35, "e2": 0.50 }
+  },
+  "trend_redeploy_frac": { "pat": 0.12, "norm": 0.23, "aggr": 0.38 },
+  "cuts": {
+    "e1_support_loss": { "bars15m": 1, "require_reclaim_next": true },
+    "e2_breakout_fail": { "bars15m_below_B": 2 }
+  },
+  "trail": { "consec_below_long": 15, "no_reclaim_bars": 6 },
+  "ae_coupling": { "cut_pressure_coeff": 0.33, "per_lever_cap": 0.40 },
+  "bands": { "ideal_core_count": 12, "tanh_tau": 4, "tanh_k": 0.25 },
+  "macro_freeze": ["Oh-Shit", "Double-Dip"],
+  "geom": {
+    "break_bar": "15m",
+    "break_tol_pct": 0.0075,
+    "retrace_min": 0.68,
+    "retrace_max": 1.00
+  }
+}

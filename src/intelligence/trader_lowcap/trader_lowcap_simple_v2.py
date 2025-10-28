@@ -231,7 +231,8 @@ class TraderLowcapSimpleV2:
                     position['total_quantity'] = wallet_balance_float
                     await self._recalculate_position_totals(position)
                     self.repo.update_position(position_id, position)
-            except Exception:
+            except Exception as e:
+                self.logger.error(f"Error during balance reconciliation: {e}")
                 wallet_balance_float = float(position.get('total_quantity', 0) or 0)
             
             # Step 2: Calculate actual sell amount (min of requested vs available)
@@ -239,6 +240,9 @@ class TraderLowcapSimpleV2:
             if actual_sell_amount <= 0:
                 self.logger.error(f"No tokens available to sell (requested: {requested_tokens}, available: {wallet_balance_float})")
                 return False
+            
+            # Round to 8 decimal places to avoid precision issues
+            actual_sell_amount = round(actual_sell_amount, 8)
             
             if actual_sell_amount < requested_tokens:
                 self.logger.warning(f"Adjusting sell amount: {requested_tokens} -> {actual_sell_amount} (limited by wallet balance)")

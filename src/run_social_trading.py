@@ -226,6 +226,16 @@ class SocialTradingSystem:
                 supabase_manager=self.supabase_manager,
                 trader=self.trader
             )
+
+            # Register PM executor (event-driven) if actions are enabled
+            try:
+                if os.getenv("ACTIONS_ENABLED", "0") == "1":
+                    from intelligence.lowcap_portfolio_manager.pm.executor import register_pm_executor
+                    # Supabase client reference
+                    sb_client = self.supabase_manager.db_manager.client if hasattr(self.supabase_manager, 'db_manager') else self.supabase_manager.client
+                    register_pm_executor(self.trader, sb_client)
+            except Exception as e:
+                logger.warning(f"PM executor registration skipped: {e}")
             
             print("✅ All components initialized")
             return True
@@ -312,7 +322,8 @@ class SocialTradingSystem:
                 # asyncio.create_task(self.start_discord_monitoring()),  # Disabled for now
                 # asyncio.create_task(self.start_gem_bot_monitoring()),  # Disabled for now
                 asyncio.create_task(self.start_position_management()),
-                asyncio.create_task(self.start_learning_system())
+                asyncio.create_task(self.start_learning_system()),
+                asyncio.create_task(self.start_pm_jobs())
             ]
             
             self.tasks = tasks
@@ -326,6 +337,104 @@ class SocialTradingSystem:
             print(f"❌ System error: {e}")
         finally:
             await self.shutdown()
+
+    async def start_pm_jobs(self):
+        """Start hourly PM jobs (NAV, Dominance, Features/Phase) aligned to UTC.
+        Offsets: :02 NAV, :03 Dominance, :04 Features.
+        """
+        async def schedule_5min(offset_min: int, func):
+            # wait until next 5-minute mark at :offset_min
+            while True:
+                now = datetime.now(timezone.utc)
+                next_run = now.replace(minute=(now.minute // 5) * 5 + offset_min, second=0, microsecond=0)
+                if next_run <= now:
+                    from datetime import timedelta
+                    next_run = next_run + timedelta(minutes=5)
+                await asyncio.sleep((next_run - now).total_seconds())
+                try:
+                    # run sync job in thread
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"PM job error: {e}")
+
+        async def schedule_hourly(offset_min: int, func):
+            # wait until next hour at :offset_min
+            while True:
+                now = datetime.now(timezone.utc)
+                next_run = now.replace(minute=offset_min, second=0, microsecond=0)
+                if next_run <= now:
+                    from datetime import timedelta
+                    next_run = next_run + timedelta(hours=1)
+                await asyncio.sleep((next_run - now).total_seconds())
+                try:
+                    # run sync job in thread
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"PM job error: {e}")
+
+        # Import job entrypoints lazily
+        from intelligence.lowcap_portfolio_manager.jobs.nav_compute_1h import main as nav_main
+        from intelligence.lowcap_portfolio_manager.jobs.dominance_ingest_1h import main as dom_main
+        from intelligence.lowcap_portfolio_manager.jobs.tracker import main as feat_main
+        from intelligence.lowcap_portfolio_manager.jobs.bands_calc import main as bands_main
+        from intelligence.lowcap_portfolio_manager.jobs.geometry_build_daily import main as geom_daily_main
+        from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import main as pm_core_main
+
+        # Fire background schedulers
+        asyncio.create_task(schedule_hourly(2, nav_main))
+        asyncio.create_task(schedule_hourly(3, dom_main))
+        asyncio.create_task(schedule_5min(0, feat_main))  # Tracker every 5 minutes
+        asyncio.create_task(schedule_hourly(5, bands_main))
+        asyncio.create_task(schedule_hourly(6, pm_core_main))
+        # GeckoTerminal backfill is triggered only on new-position onboarding; no hourly scan.
+        # Daily geometry at :10 once per day
+        async def schedule_daily(offset_min: int, func):
+            from datetime import timedelta
+            while True:
+                now = datetime.now(timezone.utc)
+                # next top-of-day UTC at offset_min
+                next_run = now.replace(hour=0, minute=offset_min, second=0, microsecond=0)
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                await asyncio.sleep((next_run - now).total_seconds())
+                try:
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"PM daily job error: {e}")
+        asyncio.create_task(schedule_daily(10, geom_daily_main))
+
+        # One-shot seed after startup: dominance → features/phase → bands → pm_core
+        async def seed_pm_once():
+            try:
+                await asyncio.to_thread(dom_main)
+            except Exception as e:
+                print(f"PM seed (dominance) error: {e}")
+            try:
+                await asyncio.to_thread(feat_main)
+            except Exception as e:
+                print(f"PM seed (features/phase) error: {e}")
+            try:
+                await asyncio.to_thread(bands_main)
+            except Exception as e:
+                print(f"PM seed (bands) error: {e}")
+            try:
+                await asyncio.to_thread(pm_core_main)
+            except Exception as e:
+                print(f"PM seed (core) error: {e}")
+
+        asyncio.create_task(seed_pm_once())
+
+        # Start Hyperliquid WS ingester for majors if enabled
+        async def start_hl_ws_if_enabled():
+            try:
+                if os.getenv("HL_INGEST_ENABLED", "0") == "1":
+                    from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import HyperliquidWSIngester
+                    ing = HyperliquidWSIngester()
+                    asyncio.create_task(ing.run())
+            except Exception as e:
+                print(f"HL WS ingester not started: {e}")
+
+        asyncio.create_task(start_hl_ws_if_enabled())
     
     async def shutdown(self):
         """Shutdown the system gracefully"""
