@@ -1125,9 +1125,9 @@ class TraderService:
                 import asyncio as _asyncio
                 async def _run_onboarding_backfill():
                     try:
-                        from intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import backfill_token_1m
-                        # Seed recent history (default 24h) without blocking trading
-                        await _asyncio.to_thread(backfill_token_1m, contract, chain, 1440)
+                        from intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import backfill_token_15m
+                        # Seed 14 days of 15m history for backtesting without blocking trading
+                        await _asyncio.to_thread(backfill_token_15m, contract, chain, 20160)
                     except Exception:
                         return
                 _asyncio.create_task(_run_onboarding_backfill())

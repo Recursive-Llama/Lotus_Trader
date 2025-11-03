@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 
 from src.utils.supabase_manager import SupabaseManager
-from src.intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import backfill_token_1m, _get_canonical_pool_from_features, _update_canonical_pool_features, _select_canonical_pool_from_gt
+from src.intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import _get_canonical_pool_from_features, _update_canonical_pool_features, _select_canonical_pool_from_gt
 
 
 logger = logging.getLogger(__name__)
@@ -48,12 +48,9 @@ def main():
                 pool_addr, dex_id, _ = picked
                 _update_canonical_pool_features(sb, token, chain, pool_addr, dex_id)
 
-        # Backfill recent 180 minutes (3h) to keep fresh
-        try:
-            res = backfill_token_1m(token, chain, lookback_minutes=180)
-            logger.info(f"Gap scan backfilled {res.get('inserted_rows')} rows for {token} on {chain}")
-        except Exception as e:
-            logger.warning(f"Backfill error for {token} on {chain}: {e}")
+        # Note: Gap filling removed - we only do 15m backfill for new tokens with 14 days
+        # No hourly 1m backfill needed since we use 15m data for analysis
+        logger.info(f"Gap scan completed for {token} on {chain} - no backfill needed")
 
 
 if __name__ == "__main__":

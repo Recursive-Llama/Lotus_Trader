@@ -1,0 +1,5454 @@
+[
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:17.067750+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.41540238266424084,
+      "atr_norm_slope": -0.00017108342127044853,
+      "dsep_fast": 0.013837544506132449,
+      "dsep_mid": -0.002341363630645979
+    },
+    "levels": {
+      "ema20": 5.840632402709286e-06,
+      "ema60": 6.243465117136156e-06,
+      "ema144": 6.6357803426368046e-06,
+      "ema250": 6.542286322373233e-06,
+      "ema333": 6.413872350924648e-06,
+      "current_price": 5.65711560906892e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:17.067761+00:00"
+    },
+    "analysis_ts": "2025-10-18T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:17.394819+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3079578975317117,
+      "atr_norm_slope": 0.0011517307543620447,
+      "dsep_fast": 0.02315576979392881,
+      "dsep_mid": 0.0007476463052698834
+    },
+    "levels": {
+      "ema20": 5.896470585792802e-06,
+      "ema60": 6.249480468216486e-06,
+      "ema144": 6.6328996941188646e-06,
+      "ema250": 6.541367174984492e-06,
+      "ema333": 6.413950560350765e-06,
+      "current_price": 6.426933325086206e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:17.394833+00:00"
+    },
+    "analysis_ts": "2025-10-18T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:17.682401+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2661516368256142,
+      "atr_norm_slope": 0.0010260754946024631,
+      "dsep_fast": 0.024596964608841684,
+      "dsep_mid": 0.0017831677543143146
+    },
+    "levels": {
+      "ema20": 5.922034875515899e-06,
+      "ema60": 6.246707194763005e-06,
+      "ema144": 6.626444465619091e-06,
+      "ema250": 6.538367401700833e-06,
+      "ema333": 6.412459213449774e-06,
+      "current_price": 6.164895627885316e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:17.682409+00:00"
+    },
+    "analysis_ts": "2025-10-18T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:17.985820+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2691287294201694,
+      "atr_norm_slope": 6.571652134680299e-05,
+      "dsep_fast": 0.021098047679779457,
+      "dsep_mid": 0.0014234464445137054
+    },
+    "levels": {
+      "ema20": 5.939453102212297e-06,
+      "ema60": 6.24205863938809e-06,
+      "ema144": 6.619251111001284e-06,
+      "ema250": 6.53491368739109e-06,
+      "ema333": 6.410617698733476e-06,
+      "current_price": 6.104926255828073e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:17.985832+00:00"
+    },
+    "analysis_ts": "2025-10-18T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:18.304995+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2793715970034254,
+      "atr_norm_slope": -4.569412369524811e-05,
+      "dsep_fast": 0.01757114008477724,
+      "dsep_mid": 0.0009591458509141393
+    },
+    "levels": {
+      "ema20": 5.940655880866959e-06,
+      "ema60": 6.232551217706062e-06,
+      "ema144": 6.610048782271421e-06,
+      "ema250": 6.53026961241655e-06,
+      "ema333": 6.407871977651756e-06,
+      "current_price": 5.952082278086247e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:18.305004+00:00"
+    },
+    "analysis_ts": "2025-10-18T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:18.599087+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.26235633361151134,
+      "atr_norm_slope": 0.0008192584974295988,
+      "dsep_fast": 0.017920009982254896,
+      "dsep_mid": 0.0015211529995868694
+    },
+    "levels": {
+      "ema20": 5.929238194601018e-06,
+      "ema60": 6.219050199914866e-06,
+      "ema144": 6.599162180792844e-06,
+      "ema250": 6.524616230445698e-06,
+      "ema333": 6.404356397995604e-06,
+      "current_price": 5.820770175074585e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:18.599099+00:00"
+    },
+    "analysis_ts": "2025-10-18T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:18.882423+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.33787504840273147,
+      "atr_norm_slope": 0.001164893444310038,
+      "dsep_fast": 0.008396927290939625,
+      "dsep_mid": -0.0007738178222606654
+    },
+    "levels": {
+      "ema20": 5.902013224090134e-06,
+      "ema60": 6.200175636122139e-06,
+      "ema144": 6.585978923185173e-06,
+      "ema250": 6.517594395973914e-06,
+      "ema333": 6.3997996291707e-06,
+      "current_price": 5.643376004236727e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:18.882433+00:00"
+    },
+    "analysis_ts": "2025-10-18T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:19.200035+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5035875524480181,
+      "atr_norm_slope": 0.0012668478142943023,
+      "dsep_fast": 0.0007621800014007904,
+      "dsep_mid": -0.002755260619771424
+    },
+    "levels": {
+      "ema20": 5.859479367880753e-06,
+      "ema60": 6.1757570163768765e-06,
+      "ema144": 6.570384837815607e-06,
+      "ema250": 6.509130757232222e-06,
+      "ema333": 6.394144587881603e-06,
+      "current_price": 5.455407733891639e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:19.200049+00:00"
+    },
+    "analysis_ts": "2025-10-18T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:19.477819+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6520639684672113,
+      "atr_norm_slope": 0.0012591291687922787,
+      "dsep_fast": -0.00215624236485136,
+      "dsep_mid": -0.003549014345704593
+    },
+    "levels": {
+      "ema20": 5.8501580809200555e-06,
+      "ema60": 6.162178289767583e-06,
+      "ema144": 6.559229265635991e-06,
+      "ema250": 6.5031743835076105e-06,
+      "ema333": 6.390356930797242e-06,
+      "current_price": 5.761605854793425e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:19.477827+00:00"
+    },
+    "analysis_ts": "2025-10-19T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:19.775254+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6838735486265421,
+      "atr_norm_slope": 0.0008633870005577498,
+      "dsep_fast": -0.002880823081470252,
+      "dsep_mid": -0.0037741428854607822
+    },
+    "levels": {
+      "ema20": 5.844134463442973e-06,
+      "ema60": 6.1498744146083415e-06,
+      "ema144": 6.548576587453573e-06,
+      "ema250": 6.497467098359428e-06,
+      "ema333": 6.386743476705107e-06,
+      "current_price": 5.786910097410692e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:19.775269+00:00"
+    },
+    "analysis_ts": "2025-10-19T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:20.076021+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3964211014565752,
+      "atr_norm_slope": 0.0018996500042359886,
+      "dsep_fast": 0.005131840106013558,
+      "dsep_mid": -0.0014699676577822063
+    },
+    "levels": {
+      "ema20": 5.905481240044238e-06,
+      "ema60": 6.160969536023027e-06,
+      "ema144": 6.547744849940507e-06,
+      "ema250": 6.49739385947016e-06,
+      "ema333": 6.387351453597628e-06,
+      "current_price": 6.488275617756261e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:20.076029+00:00"
+    },
+    "analysis_ts": "2025-10-19T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:20.360230+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3224584243219994,
+      "atr_norm_slope": 0.0012749376225390497,
+      "dsep_fast": 0.011652150376384,
+      "dsep_mid": 0.0005936889424911496
+    },
+    "levels": {
+      "ema20": 5.9397906959069e-06,
+      "ema60": 6.164404322599393e-06,
+      "ema144": 6.543854997204806e-06,
+      "ema250": 6.495547936499101e-06,
+      "ema333": 6.386623184573703e-06,
+      "current_price": 6.265730526602183e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:20.360240+00:00"
+    },
+    "analysis_ts": "2025-10-19T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:20.703153+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2677936313110789,
+      "atr_norm_slope": 0.0007034851171174863,
+      "dsep_fast": 0.017565374325880755,
+      "dsep_mid": 0.00263012410030581
+    },
+    "levels": {
+      "ema20": 5.954897156021539e-06,
+      "ema60": 6.162240526025989e-06,
+      "ema144": 6.537710907962127e-06,
+      "ema250": 6.492383479053774e-06,
+      "ema333": 6.384897348301468e-06,
+      "current_price": 6.098408527110612e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:20.703162+00:00"
+    },
+    "analysis_ts": "2025-10-19T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:21.020461+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2614749114136232,
+      "atr_norm_slope": 0.0006209809209733794,
+      "dsep_fast": 0.017186421550199997,
+      "dsep_mid": 0.002966162789823097
+    },
+    "levels": {
+      "ema20": 5.946888370536515e-06,
+      "ema60": 6.152685259875261e-06,
+      "ema144": 6.5285122045202875e-06,
+      "ema250": 6.487430661757957e-06,
+      "ema333": 6.381818950457919e-06,
+      "current_price": 5.870804908428777e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:21.020486+00:00"
+    },
+    "analysis_ts": "2025-10-19T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:21.323121+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.27159089279597043,
+      "atr_norm_slope": 0.0009320591825275338,
+      "dsep_fast": 0.01281542043997879,
+      "dsep_mid": 0.002118397765157612
+    },
+    "levels": {
+      "ema20": 5.90540075128029e-06,
+      "ema60": 6.131655197857912e-06,
+      "ema144": 6.5144812550558164e-06,
+      "ema250": 6.4796524761530825e-06,
+      "ema333": 6.376606072720723e-06,
+      "current_price": 5.5112683683461575e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:21.323129+00:00"
+    },
+    "analysis_ts": "2025-10-19T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:21.625856+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.47054944016948297,
+      "atr_norm_slope": 0.0005225745678207157,
+      "dsep_fast": 0.0009151566612140977,
+      "dsep_mid": -0.0010305582831469165
+    },
+    "levels": {
+      "ema20": 5.861315057661587e-06,
+      "ema60": 6.109059977216141e-06,
+      "ema144": 6.499695320065858e-06,
+      "ema250": 6.471388320711894e-06,
+      "ema333": 6.371012628981579e-06,
+      "current_price": 5.4425009682839145e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:21.625868+00:00"
+    },
+    "analysis_ts": "2025-10-19T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:21.968407+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7093803208447533,
+      "atr_norm_slope": 0.0008202223634648263,
+      "dsep_fast": -0.009614028377108182,
+      "dsep_mid": -0.004067372095720223
+    },
+    "levels": {
+      "ema20": 5.799769436500159e-06,
+      "ema60": 6.079749356175172e-06,
+      "ema144": 6.481976571312764e-06,
+      "ema250": 6.461377943937032e-06,
+      "ema333": 6.364090912852746e-06,
+      "current_price": 5.215086035466587e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:21.968417+00:00"
+    },
+    "analysis_ts": "2025-10-19T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:22.331797+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7111060387195403,
+      "atr_norm_slope": -0.0001737499970629021,
+      "dsep_fast": -0.01802805289263589,
+      "dsep_mid": -0.006730341562916145
+    },
+    "levels": {
+      "ema20": 5.7360761522004824e-06,
+      "ema60": 6.048642490443316e-06,
+      "ema144": 6.4633422731064305e-06,
+      "ema250": 6.450777242800909e-06,
+      "ema333": 6.3567070747599365e-06,
+      "current_price": 5.130989951353555e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:22.331807+00:00"
+    },
+    "analysis_ts": "2025-10-19T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:22.619882+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7080030551509029,
+      "atr_norm_slope": -0.001325441474491144,
+      "dsep_fast": -0.021587940884549878,
+      "dsep_mid": -0.008168489684367779
+    },
+    "levels": {
+      "ema20": 5.69159270913377e-06,
+      "ema60": 6.023080441576322e-06,
+      "ema144": 6.446868586580824e-06,
+      "ema250": 6.441360691065443e-06,
+      "ema333": 6.35019385874341e-06,
+      "current_price": 5.269e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:22.619903+00:00"
+    },
+    "analysis_ts": "2025-10-19T10:02:08.237393+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:22.930439+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7064688221055115,
+      "atr_norm_slope": -0.002024481327566857,
+      "dsep_fast": -0.022173439672356618,
+      "dsep_mid": -0.0088071952773816
+    },
+    "levels": {
+      "ema20": 5.640504829066357e-06,
+      "ema60": 5.994624360489424e-06,
+      "ema144": 6.429052053916619e-06,
+      "ema250": 6.431112159410945e-06,
+      "ema333": 6.343038027064862e-06,
+      "current_price": 5.155169968425927e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:22.930449+00:00"
+    },
+    "analysis_ts": "2025-10-19T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:23.213772+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7051452121351554,
+      "atr_norm_slope": -0.00226995968137015,
+      "dsep_fast": -0.02049557082833252,
+      "dsep_mid": -0.008797709644297082
+    },
+    "levels": {
+      "ema20": 5.606889227213254e-06,
+      "ema60": 5.971441299804812e-06,
+      "ema144": 6.4133070739951305e-06,
+      "ema250": 6.4220000386953895e-06,
+      "ema333": 6.336717685642969e-06,
+      "current_price": 5.28754100960877e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:23.213781+00:00"
+    },
+    "analysis_ts": "2025-10-19T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:23.508929+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7036396339337542,
+      "atr_norm_slope": -0.0022052737041792893,
+      "dsep_fast": -0.014617647381027978,
+      "dsep_mid": -0.007527525278846557
+    },
+    "levels": {
+      "ema20": 5.593653019407515e-06,
+      "ema60": 5.954932045557211e-06,
+      "ema144": 6.400267101184893e-06,
+      "ema250": 6.414397720022541e-06,
+      "ema333": 6.331515238694525e-06,
+      "current_price": 5.467909045252993e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:23.508944+00:00"
+    },
+    "analysis_ts": "2025-10-19T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:23.791443+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6913544722801478,
+      "atr_norm_slope": -0.001987032764589867,
+      "dsep_fast": -0.00558947925499885,
+      "dsep_mid": -0.005210772878703723
+    },
+    "levels": {
+      "ema20": 5.607130441469464e-06,
+      "ema60": 5.9477265998359235e-06,
+      "ema144": 6.391093292217625e-06,
+      "ema250": 6.408985514692146e-06,
+      "ema333": 6.327944284876342e-06,
+      "current_price": 5.735165951057971e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:23.791452+00:00"
+    },
+    "analysis_ts": "2025-10-19T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:24.102018+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.48480046756022277,
+      "atr_norm_slope": -0.0020952408895061137,
+      "dsep_fast": 0.0010641828041339854,
+      "dsep_mid": -0.003370973499213642
+    },
+    "levels": {
+      "ema20": 5.620507968124794e-06,
+      "ema60": 5.941164890705251e-06,
+      "ema144": 6.38221744641256e-06,
+      "ema250": 6.403715466538029e-06,
+      "ema333": 6.324469136292354e-06,
+      "current_price": 5.747594471350432e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:24.102031+00:00"
+    },
+    "analysis_ts": "2025-10-19T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:24.389247+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3196268573540958,
+      "atr_norm_slope": -0.0014084749862686486,
+      "dsep_fast": 0.011036847840422019,
+      "dsep_mid": -0.00041486492059397695
+    },
+    "levels": {
+      "ema20": 5.658080116466047e-06,
+      "ema60": 5.943586223000421e-06,
+      "ema144": 6.3771525923338755e-06,
+      "ema250": 6.400618255854124e-06,
+      "ema333": 6.322616120660112e-06,
+      "current_price": 6.015015525707951e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:24.389255+00:00"
+    },
+    "analysis_ts": "2025-10-19T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:24.681297+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.25810502722748563,
+      "atr_norm_slope": -0.0003501169745254236,
+      "dsep_fast": 0.01816746082364972,
+      "dsep_mid": 0.0019542112758913766
+    },
+    "levels": {
+      "ema20": 5.690406709451928e-06,
+      "ema60": 5.945354194141973e-06,
+      "ema144": 6.371916133719861e-06,
+      "ema250": 6.397406232642679e-06,
+      "ema333": 6.320669373487403e-06,
+      "current_price": 5.997509342817795e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:24.681310+00:00"
+    },
+    "analysis_ts": "2025-10-19T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:24.944812+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2682144834939017,
+      "atr_norm_slope": -0.00018869112148509,
+      "dsep_fast": 0.021460439856864036,
+      "dsep_mid": 0.003379213583944607
+    },
+    "levels": {
+      "ema20": 5.711039588276286e-06,
+      "ema60": 5.94409838243593e-06,
+      "ema144": 6.36550421376659e-06,
+      "ema250": 6.393499027100567e-06,
+      "ema333": 6.318192622371357e-06,
+      "current_price": 5.907051937107688e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:24.944822+00:00"
+    },
+    "analysis_ts": "2025-10-19T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:25.241488+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2999064157000292,
+      "atr_norm_slope": -0.0006603607878299896,
+      "dsep_fast": 0.020461905648011397,
+      "dsep_mid": 0.0036363201147386753
+    },
+    "levels": {
+      "ema20": 5.7214193859916396e-06,
+      "ema60": 5.9400304834802436e-06,
+      "ema144": 6.357980396532395e-06,
+      "ema250": 6.388929532576161e-06,
+      "ema333": 6.31520959747265e-06,
+      "current_price": 5.820027464287494e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:25.241498+00:00"
+    },
+    "analysis_ts": "2025-10-19T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:25.542929+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3177658708438218,
+      "atr_norm_slope": -0.0008763982315046794,
+      "dsep_fast": 0.016952944174326752,
+      "dsep_mid": 0.0031302129908829662
+    },
+    "levels": {
+      "ema20": 5.709173980274138e-06,
+      "ema60": 5.928647275036887e-06,
+      "ema144": 6.347426772110677e-06,
+      "ema250": 6.382586210611075e-06,
+      "ema333": 6.310884046745016e-06,
+      "current_price": 5.592842625957879e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:25.542941+00:00"
+    },
+    "analysis_ts": "2025-10-19T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:25.829022+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3387785902136806,
+      "atr_norm_slope": -0.0013204626270196089,
+      "dsep_fast": 0.011977929484567343,
+      "dsep_mid": 0.0021120661351527042
+    },
+    "levels": {
+      "ema20": 5.707320113959039e-06,
+      "ema60": 5.920813213034549e-06,
+      "ema144": 6.338354794343159e-06,
+      "ema250": 6.377065271753342e-06,
+      "ema333": 6.307164431997833e-06,
+      "current_price": 5.689708383965586e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:25.829031+00:00"
+    },
+    "analysis_ts": "2025-10-19T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:26.101816+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3640406106635699,
+      "atr_norm_slope": -0.0015461039863990552,
+      "dsep_fast": 0.007748542648171174,
+      "dsep_mid": 0.0011841357878108055
+    },
+    "levels": {
+      "ema20": 5.705406162642316e-06,
+      "ema60": 5.913154538021399e-06,
+      "ema144": 6.329373674767852e-06,
+      "ema250": 6.371568525565136e-06,
+      "ema333": 6.303452211597447e-06,
+      "current_price": 5.6872236251334526e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:26.101828+00:00"
+    },
+    "analysis_ts": "2025-10-19T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:26.412795+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.47980439163990896,
+      "atr_norm_slope": -0.0013146168282502555,
+      "dsep_fast": 0.0017750132720295506,
+      "dsep_mid": -0.00036120879861435695
+    },
+    "levels": {
+      "ema20": 5.675258187267269e-06,
+      "ema60": 5.895964304683135e-06,
+      "ema144": 6.316400967822148e-06,
+      "ema250": 6.363738118359074e-06,
+      "ema333": 6.297975566145991e-06,
+      "current_price": 5.38885242120433e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:26.412806+00:00"
+    },
+    "analysis_ts": "2025-10-19T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:26.809542+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6842143729856915,
+      "atr_norm_slope": -0.0015056485168525957,
+      "dsep_fast": -0.0022805089993221048,
+      "dsep_mid": -0.0014916627739778865
+    },
+    "levels": {
+      "ema20": 5.650328957663882e-06,
+      "ema60": 5.880145844740465e-06,
+      "ema144": 6.303947178975383e-06,
+      "ema250": 6.356166510056865e-06,
+      "ema333": 6.292679312914169e-06,
+      "current_price": 5.413501276431709e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:26.809551+00:00"
+    },
+    "analysis_ts": "2025-10-20T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:27.146031+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7407635211326566,
+      "atr_norm_slope": -0.0013380797007290827,
+      "dsep_fast": -0.006613955513657441,
+      "dsep_mid": -0.002796812717893865
+    },
+    "levels": {
+      "ema20": 5.599702488551889e-06,
+      "ema60": 5.855182080387923e-06,
+      "ema144": 6.287599645913487e-06,
+      "ema250": 6.346306625769463e-06,
+      "ema333": 6.2856498022499396e-06,
+      "current_price": 5.118751031987953e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:27.146041+00:00"
+    },
+    "analysis_ts": "2025-10-20T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:27.542475+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7234096680624269,
+      "atr_norm_slope": -0.00047282031438247317,
+      "dsep_fast": -0.010521968872278381,
+      "dsep_mid": -0.004078761685031462
+    },
+    "levels": {
+      "ema20": 5.5621284722592645e-06,
+      "ema60": 5.833870383243379e-06,
+      "ema144": 6.272669655176464e-06,
+      "ema250": 6.337213946022131e-06,
+      "ema333": 6.279179895155504e-06,
+      "current_price": 5.205175317479324e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:27.542483+00:00"
+    },
+    "analysis_ts": "2025-10-20T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:27.834341+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7071889786505127,
+      "atr_norm_slope": -0.0006579184049898547,
+      "dsep_fast": -0.012819376040490923,
+      "dsep_mid": -0.004982672763549065
+    },
+    "levels": {
+      "ema20": 5.537598961006559e-06,
+      "ema60": 5.816516226550346e-06,
+      "ema144": 6.259316537230662e-06,
+      "ema250": 6.328985696285746e-06,
+      "ema333": 6.273343899400715e-06,
+      "current_price": 5.304568604105857e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:27.834350+00:00"
+    },
+    "analysis_ts": "2025-10-20T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:28.156158+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6907918358774983,
+      "atr_norm_slope": -0.0004918035859345312,
+      "dsep_fast": -0.0075425012298038635,
+      "dsep_mid": -0.00373421140913896
+    },
+    "levels": {
+      "ema20": 5.550382450574288e-06,
+      "ema60": 5.811772271629604e-06,
+      "ema144": 6.251213213978759e-06,
+      "ema250": 6.323749360868869e-06,
+      "ema333": 6.269741993425068e-06,
+      "current_price": 5.6718256014677135e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:28.156171+00:00"
+    },
+    "analysis_ts": "2025-10-20T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:28.453084+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6266669018500546,
+      "atr_norm_slope": -0.0004975519651921266,
+      "dsep_fast": -0.002459947339932128,
+      "dsep_mid": -0.0024142812776427186
+    },
+    "levels": {
+      "ema20": 5.567895502105524e-06,
+      "ema60": 5.809231196876247e-06,
+      "ema144": 6.2440829557397725e-06,
+      "ema250": 6.319052310118139e-06,
+      "ema333": 6.266535571258764e-06,
+      "current_price": 5.734269491652263e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:28.453093+00:00"
+    },
+    "analysis_ts": "2025-10-20T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:28.759047+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3949296822437758,
+      "atr_norm_slope": 0.0003044860615424514,
+      "dsep_fast": 0.002397141442529366,
+      "dsep_mid": -0.0010374725203879803
+    },
+    "levels": {
+      "ema20": 5.559238331272623e-06,
+      "ema60": 5.798338213646208e-06,
+      "ema144": 6.233502435086259e-06,
+      "ema250": 6.312342691777438e-06,
+      "ema333": 6.26180778465458e-06,
+      "current_price": 5.476995208360059e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:28.759056+00:00"
+    },
+    "analysis_ts": "2025-10-20T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:29.063226+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3333996286836234,
+      "atr_norm_slope": -0.00019966505203619566,
+      "dsep_fast": 0.005389259865247006,
+      "dsep_mid": -9.063783171456286e-05
+    },
+    "levels": {
+      "ema20": 5.548409218278388e-06,
+      "ema60": 5.786770817947419e-06,
+      "ema144": 6.22263388625518e-06,
+      "ema250": 6.305435838813738e-06,
+      "ema333": 6.2569199095658285e-06,
+      "current_price": 5.445532644833153e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:29.063235+00:00"
+    },
+    "analysis_ts": "2025-10-20T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:29.348526+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.32818732409917756,
+      "atr_norm_slope": 0.0002507940607843182,
+      "dsep_fast": 0.006956994113512249,
+      "dsep_mid": 0.0005113179494082576
+    },
+    "levels": {
+      "ema20": 5.538906339127259e-06,
+      "ema60": 5.775684200545586e-06,
+      "ema144": 6.211957956612923e-06,
+      "ema250": 6.298608692585672e-06,
+      "ema333": 6.252079844162389e-06,
+      "current_price": 5.448628987191528e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:29.348534+00:00"
+    },
+    "analysis_ts": "2025-10-20T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:29.624855+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3464760845244038,
+      "atr_norm_slope": 0.00033684792467906534,
+      "dsep_fast": 0.007298133568355153,
+      "dsep_mid": 0.0007961673440269601
+    },
+    "levels": {
+      "ema20": 5.5563909935784436e-06,
+      "ema60": 5.773940299244573e-06,
+      "ema144": 6.2052067463267404e-06,
+      "ema250": 6.294018146914589e-06,
+      "ema333": 6.24890867869354e-06,
+      "current_price": 5.722495210864701e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:29.624867+00:00"
+    },
+    "analysis_ts": "2025-10-20T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:29.950199+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.35758589485709286,
+      "atr_norm_slope": -0.0005252623608137702,
+      "dsep_fast": 0.007652864255528961,
+      "dsep_mid": 0.0010924242512221627
+    },
+    "levels": {
+      "ema20": 5.578829946570973e-06,
+      "ema60": 5.774532420580816e-06,
+      "ema144": 6.19950734292913e-06,
+      "ema250": 6.290018002317659e-06,
+      "ema333": 6.246172698581603e-06,
+      "current_price": 5.792e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:29.950210+00:00"
+    },
+    "analysis_ts": "2025-10-20T09:49:19.766504+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:30.279438+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.34018441515599857,
+      "atr_norm_slope": -0.0009136256079724502,
+      "dsep_fast": 0.010028525267995591,
+      "dsep_mid": 0.001982910966073975
+    },
+    "levels": {
+      "ema20": 5.592750904040404e-06,
+      "ema60": 5.772908406791282e-06,
+      "ema144": 6.192962414061142e-06,
+      "ema250": 6.285515866841025e-06,
+      "ema333": 6.243051903979317e-06,
+      "current_price": 5.725e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:30.279446+00:00"
+    },
+    "analysis_ts": "2025-10-20T09:51:03.164979+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:30.586013+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3270675362301557,
+      "atr_norm_slope": -0.0010280956938225523,
+      "dsep_fast": 0.011765470324189009,
+      "dsep_mid": 0.002741245890198099
+    },
+    "levels": {
+      "ema20": 5.599591444720779e-06,
+      "ema60": 5.769356543656628e-06,
+      "ema144": 6.185674333607669e-06,
+      "ema250": 6.280568143449338e-06,
+      "ema333": 6.239587979890724e-06,
+      "current_price": 5.664576581184344e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:30.586032+00:00"
+    },
+    "analysis_ts": "2025-10-20T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:30.878632+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3176432707791609,
+      "atr_norm_slope": -0.0003539000295202787,
+      "dsep_fast": 0.012740574526807106,
+      "dsep_mid": 0.00331554743782235
+    },
+    "levels": {
+      "ema20": 5.601609224719823e-06,
+      "ema60": 5.764485120412501e-06,
+      "ema144": 6.177882661898746e-06,
+      "ema250": 6.275310852543055e-06,
+      "ema333": 6.235882531715994e-06,
+      "current_price": 5.620778134710744e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:30.878640+00:00"
+    },
+    "analysis_ts": "2025-10-20T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:31.174759+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.30598339903854527,
+      "atr_norm_slope": 0.0004107482082071711,
+      "dsep_fast": 0.015251638371359254,
+      "dsep_mid": 0.004369641612300121
+    },
+    "levels": {
+      "ema20": 5.644385469128571e-06,
+      "ema60": 5.773871175186244e-06,
+      "ema144": 6.17612924298996e-06,
+      "ema250": 6.273521601056749e-06,
+      "ema333": 6.234774012310578e-06,
+      "current_price": 6.05075979101168e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:31.174771+00:00"
+    },
+    "analysis_ts": "2025-10-20T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:31.472003+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3008082829893344,
+      "atr_norm_slope": 0.0005102931682057903,
+      "dsep_fast": 0.01674353555260914,
+      "dsep_mid": 0.00518662860866978
+    },
+    "levels": {
+      "ema20": 5.684147260129079e-06,
+      "ema60": 5.78331422762715e-06,
+      "ema144": 6.174553450322979e-06,
+      "ema250": 6.271835247858161e-06,
+      "ema333": 6.233738744420299e-06,
+      "current_price": 6.061884274633896e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:31.472011+00:00"
+    },
+    "analysis_ts": "2025-10-20T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:31.898191+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.29814000372702615,
+      "atr_norm_slope": 0.001025144700894734,
+      "dsep_fast": 0.015579224999474183,
+      "dsep_mid": 0.005250039753071409
+    },
+    "levels": {
+      "ema20": 5.6925931315508375e-06,
+      "ema60": 5.782970446723228e-06,
+      "ema144": 6.169012422181387e-06,
+      "ema250": 6.2678591017402275e-06,
+      "ema333": 6.230978805292377e-06,
+      "current_price": 5.772828910057545e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:31.898210+00:00"
+    },
+    "analysis_ts": "2025-10-20T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:32.194165+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2973769931247685,
+      "atr_norm_slope": 0.0011376104687189608,
+      "dsep_fast": 0.012983547202848805,
+      "dsep_mid": 0.00485498285853795
+    },
+    "levels": {
+      "ema20": 5.68107302100359e-06,
+      "ema60": 5.776041316365245e-06,
+      "ema144": 6.160772691817571e-06,
+      "ema250": 6.262311475198909e-06,
+      "ema333": 6.227030620654727e-06,
+      "current_price": 5.571631970804733e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:32.194173+00:00"
+    },
+    "analysis_ts": "2025-10-20T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:32.495269+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.29485190614928747,
+      "atr_norm_slope": 0.0009979491497720495,
+      "dsep_fast": 0.011101539765566059,
+      "dsep_mid": 0.004602069357348158
+    },
+    "levels": {
+      "ema20": 5.670234136182482e-06,
+      "ema60": 5.7691961823985795e-06,
+      "ema144": 6.152586375108114e-06,
+      "ema250": 6.256773254124671e-06,
+      "ema333": 6.223079926700998e-06,
+      "current_price": 5.567264730381954e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:32.495281+00:00"
+    },
+    "analysis_ts": "2025-10-20T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:32.765659+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4046341370917353,
+      "atr_norm_slope": 0.0011901707483934689,
+      "dsep_fast": 0.0013757323547169652,
+      "dsep_mid": 0.0019911361186759763
+    },
+    "levels": {
+      "ema20": 5.631532928178235e-06,
+      "ema60": 5.752628158455606e-06,
+      "ema144": 6.140328238239559e-06,
+      "ema250": 6.24886168598135e-06,
+      "ema333": 6.21733616338026e-06,
+      "current_price": 5.263871452137884e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:32.765671+00:00"
+    },
+    "analysis_ts": "2025-10-20T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:33.053421+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6844301558008422,
+      "atr_norm_slope": 0.0013037026420009217,
+      "dsep_fast": -0.008213655165271283,
+      "dsep_mid": -0.0008203212734869403
+    },
+    "levels": {
+      "ema20": 5.588392716792266e-06,
+      "ema60": 5.733806274854621e-06,
+      "ema144": 6.1270624792104e-06,
+      "ema250": 6.240333391341065e-06,
+      "ema333": 6.211115951076339e-06,
+      "current_price": 5.178560708625567e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:33.053430+00:00"
+    },
+    "analysis_ts": "2025-10-20T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:33.336703+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.712926133958372,
+      "atr_norm_slope": 0.0008331289141610852,
+      "dsep_fast": -0.015064445532628822,
+      "dsep_mid": -0.00305213872062339
+    },
+    "levels": {
+      "ema20": 5.535573962168546e-06,
+      "ema60": 5.710855111523099e-06,
+      "ema144": 6.1119829387143e-06,
+      "ema250": 6.230719545937895e-06,
+      "ema333": 6.2040661297719484e-06,
+      "current_price": 5.033795793243203e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:33.336714+00:00"
+    },
+    "analysis_ts": "2025-10-20T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:33.641549+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7065836620942656,
+      "atr_norm_slope": 0.0012456836770889644,
+      "dsep_fast": -0.024195802874307976,
+      "dsep_mid": -0.006096632018604407
+    },
+    "levels": {
+      "ema20": 5.442539916033249e-06,
+      "ema60": 5.6730800743501425e-06,
+      "ema144": 6.0905585737354534e-06,
+      "ema250": 6.217396812326821e-06,
+      "ema333": 6.1942137366460555e-06,
+      "current_price": 4.558716477747926e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:33.641557+00:00"
+    },
+    "analysis_ts": "2025-10-20T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:33.992747+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.699105628847115,
+      "atr_norm_slope": 0.0014985764418843212,
+      "dsep_fast": -0.029830637337860587,
+      "dsep_mid": -0.008322413150059167
+    },
+    "levels": {
+      "ema20": 5.3782334745336e-06,
+      "ema60": 5.643383097495611e-06,
+      "ema144": 6.072307038653404e-06,
+      "ema250": 6.205842433585467e-06,
+      "ema333": 6.185669476428336e-06,
+      "current_price": 4.767322280286932e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:33.992761+00:00"
+    },
+    "analysis_ts": "2025-10-20T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:34.302256+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6984376270771647,
+      "atr_norm_slope": 0.0008264588067849596,
+      "dsep_fast": -0.030373036626201447,
+      "dsep_mid": -0.009174459965218387
+    },
+    "levels": {
+      "ema20": 5.328787382803412e-06,
+      "ema60": 5.617667242212693e-06,
+      "ema144": 6.055572452070138e-06,
+      "ema250": 6.1951110158785434e-06,
+      "ema333": 6.1777256443022176e-06,
+      "current_price": 4.85904951136663e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:34.302266+00:00"
+    },
+    "analysis_ts": "2025-10-20T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:34.635657+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6984042028367887,
+      "atr_norm_slope": 0.0007094702325612944,
+      "dsep_fast": -0.03038249530558777,
+      "dsep_mid": -0.009869889217791361
+    },
+    "levels": {
+      "ema20": 5.27958128055286e-06,
+      "ema60": 5.591255965719576e-06,
+      "ema144": 6.038421429409482e-06,
+      "ema250": 6.1840911935143535e-06,
+      "ema333": 6.1695483848104235e-06,
+      "current_price": 4.812123309172612e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:34.635671+00:00"
+    },
+    "analysis_ts": "2025-10-20T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:35.135789+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6968669292325498,
+      "atr_norm_slope": 0.0015088109279061963,
+      "dsep_fast": -0.03182753175589613,
+      "dsep_mid": -0.010959107548422262
+    },
+    "levels": {
+      "ema20": 5.209487941727088e-06,
+      "ema60": 5.5569066298888445e-06,
+      "ema144": 6.017803219664279e-06,
+      "ema250": 6.171019560282225e-06,
+      "ema333": 6.1598121742599555e-06,
+      "current_price": 4.543601222882256e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:35.135803+00:00"
+    },
+    "analysis_ts": "2025-10-21T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:35.470888+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6934960049884935,
+      "atr_norm_slope": 0.003241059323711953,
+      "dsep_fast": -0.03775824926824664,
+      "dsep_mid": -0.013312226902365276
+    },
+    "levels": {
+      "ema20": 5.064895154003963e-06,
+      "ema60": 5.49573800827394e-06,
+      "ema144": 5.985713018988003e-06,
+      "ema250": 6.151260549209333e-06,
+      "ema333": 6.145030446693334e-06,
+      "current_price": 3.691263670634272e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:35.470899+00:00"
+    },
+    "analysis_ts": "2025-10-21T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:35.981228+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6924500210861947,
+      "atr_norm_slope": 0.0037716214370205753,
+      "dsep_fast": -0.03967202864135187,
+      "dsep_mid": -0.014649156404468386
+    },
+    "levels": {
+      "ema20": 4.979858264984765e-06,
+      "ema60": 5.452337018471595e-06,
+      "ema144": 5.960696395544063e-06,
+      "ema250": 6.1354896111224256e-06,
+      "ema333": 6.13321593994249e-06,
+      "current_price": 4.172007819302391e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:35.981242+00:00"
+    },
+    "analysis_ts": "2025-10-21T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:36.376707+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.693326415261704,
+      "atr_norm_slope": 0.003336498224050272,
+      "dsep_fast": -0.04298592996057796,
+      "dsep_mid": -0.016414832575282215
+    },
+    "levels": {
+      "ema20": 4.898052949771952e-06,
+      "ema60": 5.408683426234828e-06,
+      "ema144": 5.935319927402079e-06,
+      "ema250": 6.119437123824639e-06,
+      "ema333": 6.121166158597027e-06,
+      "current_price": 4.120902455250223e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:36.376718+00:00"
+    },
+    "analysis_ts": "2025-10-21T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:36.719242+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6921833371875138,
+      "atr_norm_slope": 0.003908929009262316,
+      "dsep_fast": -0.040448020266822045,
+      "dsep_mid": -0.016592351033067318
+    },
+    "levels": {
+      "ema20": 4.8620958990630125e-06,
+      "ema60": 5.379562786598542e-06,
+      "ema144": 5.915805223814851e-06,
+      "ema250": 6.1066966201872175e-06,
+      "ema333": 6.111581354757093e-06,
+      "current_price": 4.520503917328091e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:36.719252+00:00"
+    },
+    "analysis_ts": "2025-10-21T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:37.006854+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6918156515623833,
+      "atr_norm_slope": 0.00409376312514219,
+      "dsep_fast": -0.040267689381687746,
+      "dsep_mid": -0.017341028310647516
+    },
+    "levels": {
+      "ema20": 4.788724062228239e-06,
+      "ema60": 5.337337502195242e-06,
+      "ema144": 5.890645036069789e-06,
+      "ema250": 6.0906408033912865e-06,
+      "ema333": 6.099486206598654e-06,
+      "current_price": 4.09169161229789e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:37.006866+00:00"
+    },
+    "analysis_ts": "2025-10-21T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:37.315272+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6934874714346836,
+      "atr_norm_slope": 0.0032544801529701024,
+      "dsep_fast": -0.03082093231617679,
+      "dsep_mid": -0.01542842734687043
+    },
+    "levels": {
+      "ema20": 4.716124430820695e-06,
+      "ema60": 5.294356860564218e-06,
+      "ema144": 5.864931696709503e-06,
+      "ema250": 6.074192892069038e-06,
+      "ema333": 6.087072683998956e-06,
+      "current_price": 4.02642793244902e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:37.315280+00:00"
+    },
+    "analysis_ts": "2025-10-21T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:37.593711+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.694365495740522,
+      "atr_norm_slope": 0.0028143999920702653,
+      "dsep_fast": -0.02701918286885198,
+      "dsep_mid": -0.014923476286399562
+    },
+    "levels": {
+      "ema20": 4.657971414711993e-06,
+      "ema60": 5.255378529453238e-06,
+      "ema144": 5.840663918295293e-06,
+      "ema250": 6.0585062376436215e-06,
+      "ema333": 6.075207085661712e-06,
+      "current_price": 4.1055177616793275e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:37.593722+00:00"
+    },
+    "analysis_ts": "2025-10-21T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:37.869315+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6939314110243131,
+      "atr_norm_slope": 0.003035457737758847,
+      "dsep_fast": -0.028309413433973404,
+      "dsep_mid": -0.01573761911559947
+    },
+    "levels": {
+      "ema20": 4.565261656989682e-06,
+      "ema60": 5.203874936967155e-06,
+      "ema144": 5.8109239878171196e-06,
+      "ema250": 6.03959000434469e-06,
+      "ema333": 6.060891587895042e-06,
+      "current_price": 3.684518958627724e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:37.869327+00:00"
+    },
+    "analysis_ts": "2025-10-21T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:38.208222+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6961113699564095,
+      "atr_norm_slope": 0.0019521200186765617,
+      "dsep_fast": -0.03197325612781954,
+      "dsep_mid": -0.017250583592440513
+    },
+    "levels": {
+      "ema20": 4.498686314887791e-06,
+      "ema60": 5.16001741657216e-06,
+      "ema144": 5.784100492328881e-06,
+      "ema250": 6.022272319568396e-06,
+      "ema333": 6.047749845242495e-06,
+      "current_price": 3.866220564919832e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:38.208234+00:00"
+    },
+    "analysis_ts": "2025-10-21T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:38.510743+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6984168661024918,
+      "atr_norm_slope": 0.0008118314322400764,
+      "dsep_fast": -0.029927818680983598,
+      "dsep_mid": -0.01723726452454026
+    },
+    "levels": {
+      "ema20": 4.4383958122352196e-06,
+      "ema60": 5.1175786828168696e-06,
+      "ema144": 5.757638913635183e-06,
+      "ema250": 6.005087966719531e-06,
+      "ema333": 6.034683295492755e-06,
+      "current_price": 3.8656360370357914e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:38.510750+00:00"
+    },
+    "analysis_ts": "2025-10-21T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:38.788852+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6998842188080734,
+      "atr_norm_slope": 9.48001677045356e-05,
+      "dsep_fast": -0.027048425152688682,
+      "dsep_mid": -0.01694608989119234
+    },
+    "levels": {
+      "ema20": 4.385170401085586e-06,
+      "ema60": 5.076986889779073e-06,
+      "ema144": 5.7317339492424775e-06,
+      "ema250": 5.988151241846578e-06,
+      "ema333": 6.0217781799219245e-06,
+      "current_price": 3.879528995164069e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:38.788862+00:00"
+    },
+    "analysis_ts": "2025-10-21T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:39.089123+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7003812269074176,
+      "atr_norm_slope": -0.00013581264476250494,
+      "dsep_fast": -0.024143362421610123,
+      "dsep_mid": -0.016591789966785064
+    },
+    "levels": {
+      "ema20": 4.346142383976991e-06,
+      "ema60": 5.040868507210753e-06,
+      "ema144": 5.707508325410793e-06,
+      "ema250": 5.972113193875253e-06,
+      "ema333": 6.009524275978951e-06,
+      "current_price": 3.975376221445336e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:39.089134+00:00"
+    },
+    "analysis_ts": "2025-10-21T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:39.394944+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7010185366034289,
+      "atr_norm_slope": -0.0004464704630362694,
+      "dsep_fast": -0.0153271138971654,
+      "dsep_mid": -0.01454773494576296
+    },
+    "levels": {
+      "ema20": 4.316596230723806e-06,
+      "ema60": 5.007918975001172e-06,
+      "ema144": 5.684451766092278e-06,
+      "ema250": 5.956685262249303e-06,
+      "ema333": 5.997706213097751e-06,
+      "current_price": 4.035907774818547e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:39.394954+00:00"
+    },
+    "analysis_ts": "2025-10-21T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:39.665703+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6996488399217183,
+      "atr_norm_slope": -0.0005049904346811001,
+      "dsep_fast": -0.007792185621351477,
+      "dsep_mid": -0.012682317172781149
+    },
+    "levels": {
+      "ema20": 4.303611889616448e-06,
+      "ema60": 4.9807826364469225e-06,
+      "ema144": 5.663704302409579e-06,
+      "ema250": 5.942530484455258e-06,
+      "ema333": 5.986823305528882e-06,
+      "current_price": 4.1802606490965485e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:39.665716+00:00"
+    },
+    "analysis_ts": "2025-10-21T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:39.951267+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5854551772604526,
+      "atr_norm_slope": -0.0010647706542094865,
+      "dsep_fast": -0.000657390570365457,
+      "dsep_mid": -0.010771318717794437
+    },
+    "levels": {
+      "ema20": 4.294529632684745e-06,
+      "ema60": 4.9554536382628775e-06,
+      "ema144": 5.6436290457119785e-06,
+      "ema250": 5.92871150204393e-06,
+      "ema333": 5.9761731551474724e-06,
+      "current_price": 4.208248191833563e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:39.951276+00:00"
+    },
+    "analysis_ts": "2025-10-21T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:40.242460+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4051139735627647,
+      "atr_norm_slope": 0.00010917224868859724,
+      "dsep_fast": 0.013163424413401084,
+      "dsep_mid": -0.0068917279226345385
+    },
+    "levels": {
+      "ema20": 4.340219591278504e-06,
+      "ema60": 4.949513328743413e-06,
+      "ema144": 5.631637944363112e-06,
+      "ema250": 5.919512798425406e-06,
+      "ema333": 5.96897615540359e-06,
+      "current_price": 4.774274197919216e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:40.242470+00:00"
+    },
+    "analysis_ts": "2025-10-21T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:40.542917+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4366939971893667,
+      "atr_norm_slope": -0.0005502978682940509,
+      "dsep_fast": 0.0219037580736528,
+      "dsep_mid": -0.004098066784140222
+    },
+    "levels": {
+      "ema20": 4.365965249709928e-06,
+      "ema60": 4.938399744352102e-06,
+      "ema144": 5.617553958989944e-06,
+      "ema250": 5.909082808038019e-06,
+      "ema333": 5.960841861088649e-06,
+      "current_price": 4.610549004808445e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:40.542926+00:00"
+    },
+    "analysis_ts": "2025-10-21T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:40.835576+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.45703855818807915,
+      "atr_norm_slope": -0.0011443067778417735,
+      "dsep_fast": 0.02664565203689924,
+      "dsep_mid": -0.002211769445002995
+    },
+    "levels": {
+      "ema20": 4.374059218426363e-06,
+      "ema60": 4.922417848512115e-06,
+      "ema144": 5.6014628964001855e-06,
+      "ema250": 5.897464235234788e-06,
+      "ema333": 5.951800603963761e-06,
+      "current_price": 4.4509519212325e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:40.835588+00:00"
+    },
+    "analysis_ts": "2025-10-21T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:41.110884+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4714985473554524,
+      "atr_norm_slope": -0.0015430648300019212,
+      "dsep_fast": 0.022901036152140897,
+      "dsep_mid": -0.002552608621966976
+    },
+    "levels": {
+      "ema20": 4.339373238523262e-06,
+      "ema60": 4.892497801985285e-06,
+      "ema144": 5.579509703752511e-06,
+      "ema250": 5.8824235355870516e-06,
+      "ema333": 5.940172195733102e-06,
+      "current_price": 4.009856429443798e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:41.110897+00:00"
+    },
+    "analysis_ts": "2025-10-21T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:41.421944+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4854526780823822,
+      "atr_norm_slope": -0.001330947104028619,
+      "dsep_fast": 0.017062913489655246,
+      "dsep_mid": -0.00355294197000057
+    },
+    "levels": {
+      "ema20": 4.293455658888977e-06,
+      "ema60": 4.858554879046858e-06,
+      "ema144": 5.5557542409747285e-06,
+      "ema250": 5.866286604246623e-06,
+      "ema333": 5.9276995397847796e-06,
+      "current_price": 3.857238652363264e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:41.421961+00:00"
+    },
+    "analysis_ts": "2025-10-21T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:41.784603+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5018294190075829,
+      "atr_norm_slope": -0.0018449162255571815,
+      "dsep_fast": 0.007255376595011451,
+      "dsep_mid": -0.005762656855350823
+    },
+    "levels": {
+      "ema20": 4.273145427483842e-06,
+      "ema60": 4.833034988885815e-06,
+      "ema144": 5.5354017442596986e-06,
+      "ema250": 5.852054824365256e-06,
+      "ema333": 5.91663665768508e-06,
+      "current_price": 4.080198229135059e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:41.784635+00:00"
+    },
+    "analysis_ts": "2025-10-21T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:42.095000+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5609059008135618,
+      "atr_norm_slope": -0.003243955534736844,
+      "dsep_fast": 0.0021940323063910083,
+      "dsep_mid": -0.006900532469886381
+    },
+    "levels": {
+      "ema20": 4.264514965412706e-06,
+      "ema60": 4.811706811405523e-06,
+      "ema144": 5.516741383314557e-06,
+      "ema250": 5.838751802463835e-06,
+      "ema333": 5.906252758990779e-06,
+      "current_price": 4.182525575736918e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:42.095043+00:00"
+    },
+    "analysis_ts": "2025-10-21T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:42.411701+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7020004126504938,
+      "atr_norm_slope": -0.0046764189328729255,
+      "dsep_fast": -0.000904398334808737,
+      "dsep_mid": -0.007616018365943722
+    },
+    "levels": {
+      "ema20": 4.251394089736268e-06,
+      "ema60": 4.789249072369608e-06,
+      "ema144": 5.497569030038633e-06,
+      "ema250": 5.825110320139901e-06,
+      "ema333": 5.895597028522631e-06,
+      "current_price": 4.1267457708100985e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:42.411711+00:00"
+    },
+    "analysis_ts": "2025-10-21T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:42.717186+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5218100203724744,
+      "atr_norm_slope": -0.00454863791402492,
+      "dsep_fast": 0.004309958780748996,
+      "dsep_mid": -0.006120386348444182
+    },
+    "levels": {
+      "ema20": 4.253309673994702e-06,
+      "ema60": 4.772273946208303e-06,
+      "ema144": 5.480657839616719e-06,
+      "ema250": 5.8127310165885855e-06,
+      "ema333": 5.8858719428694996e-06,
+      "current_price": 4.271507724449825e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:42.717322+00:00"
+    },
+    "analysis_ts": "2025-10-22T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:43.398516+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4967627667087745,
+      "atr_norm_slope": -0.0029986325814678485,
+      "dsep_fast": 0.009699566140158516,
+      "dsep_mid": -0.004465617791164028
+    },
+    "levels": {
+      "ema20": 4.246071740179135e-06,
+      "ema60": 4.7527669764615145e-06,
+      "ema144": 5.462680646917609e-06,
+      "ema250": 5.799699784336336e-06,
+      "ema333": 5.875641041229151e-06,
+      "current_price": 4.177311368931246e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:43.398527+00:00"
+    },
+    "analysis_ts": "2025-10-22T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:43.896404+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.48803195903666924,
+      "atr_norm_slope": -0.003217712465450346,
+      "dsep_fast": 0.012415517947394358,
+      "dsep_mid": -0.0034276877667777095
+    },
+    "levels": {
+      "ema20": 4.246386822168843e-06,
+      "ema60": 4.736262488743795e-06,
+      "ema144": 5.445945466974898e-06,
+      "ema250": 5.78734663944976e-06,
+      "ema333": 5.865902951767126e-06,
+      "current_price": 4.249380101071069e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:43.896413+00:00"
+    },
+    "analysis_ts": "2025-10-22T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:44.417248+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.48723422430256313,
+      "atr_norm_slope": -0.0037930219343279134,
+      "dsep_fast": 0.011757865522218552,
+      "dsep_mid": -0.003257965938958246
+    },
+    "levels": {
+      "ema20": 4.235570913154322e-06,
+      "ema60": 4.716477481818306e-06,
+      "ema144": 5.427833388499608e-06,
+      "ema250": 5.774163158478179e-06,
+      "ema333": 5.855525208208738e-06,
+      "current_price": 4.13281977751638e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:44.417264+00:00"
+    },
+    "analysis_ts": "2025-10-22T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:44.939776+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4887956055628887,
+      "atr_norm_slope": -0.0032552674440341923,
+      "dsep_fast": 0.009820246395045903,
+      "dsep_mid": -0.00345874018912673
+    },
+    "levels": {
+      "ema20": 4.211533423887291e-06,
+      "ema60": 4.6924348521144434e-06,
+      "ema144": 5.407907097290655e-06,
+      "ema250": 5.75989235463254e-06,
+      "ema333": 5.844313543943119e-06,
+      "current_price": 3.983177275850494e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:44.939786+00:00"
+    },
+    "analysis_ts": "2025-10-22T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:45.414135+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5007145991860574,
+      "atr_norm_slope": -0.0026012871335801746,
+      "dsep_fast": 0.005745158818996399,
+      "dsep_mid": -0.0042907304459101625
+    },
+    "levels": {
+      "ema20": 4.187567567324901e-06,
+      "ema60": 4.668417051388796e-06,
+      "ema144": 5.387934474293297e-06,
+      "ema250": 5.7455497217668e-06,
+      "ema333": 5.833029582182874e-06,
+      "current_price": 3.959891929982194e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:45.414144+00:00"
+    },
+    "analysis_ts": "2025-10-22T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:45.786656+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7044281156250994,
+      "atr_norm_slope": -0.002320916507424026,
+      "dsep_fast": -0.001120404985911802,
+      "dsep_mid": -0.005978261338066088
+    },
+    "levels": {
+      "ema20": 4.135388775233944e-06,
+      "ema60": 4.634688303814404e-06,
+      "ema144": 5.363820760859871e-06,
+      "ema250": 5.728769965022601e-06,
+      "ema333": 5.819895813728904e-06,
+      "current_price": 3.6396902503698528e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:45.786674+00:00"
+    },
+    "analysis_ts": "2025-10-22T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:46.159795+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.8003537398172791,
+      "atr_norm_slope": -0.002801522924729754,
+      "dsep_fast": -0.006739650324999305,
+      "dsep_mid": -0.007475249062351724
+    },
+    "levels": {
+      "ema20": 4.0980893075962985e-06,
+      "ema60": 4.605477027133232e-06,
+      "ema144": 5.341474879538199e-06,
+      "ema250": 5.712953027970936e-06,
+      "ema333": 5.807463769125968e-06,
+      "current_price": 3.7437443650386714e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:46.159803+00:00"
+    },
+    "analysis_ts": "2025-10-22T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:46.620419+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7995573995146998,
+      "atr_norm_slope": -0.0016850898905934248,
+      "dsep_fast": -0.011170393285810765,
+      "dsep_mid": -0.00876617602508864
+    },
+    "levels": {
+      "ema20": 4.057208201488052e-06,
+      "ema60": 4.57476754078328e-06,
+      "ema144": 5.318404021799186e-06,
+      "ema250": 5.696665256381205e-06,
+      "ema333": 5.794657624960302e-06,
+      "current_price": 3.6688376934597116e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:46.620430+00:00"
+    },
+    "analysis_ts": "2025-10-22T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:47.016043+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7857604365187993,
+      "atr_norm_slope": -0.0012572022332604262,
+      "dsep_fast": -0.014355796786483646,
+      "dsep_mid": -0.009805480655629417
+    },
+    "levels": {
+      "ema20": 4.01130919585711e-06,
+      "ema60": 4.541997085097374e-06,
+      "ema144": 5.294360775186275e-06,
+      "ema250": 5.67976169770377e-06,
+      "ema333": 5.781367870573493e-06,
+      "current_price": 3.575268642363153e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:47.016054+00:00"
+    },
+    "analysis_ts": "2025-10-22T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:47.448305+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7492707175879599,
+      "atr_norm_slope": -0.001727160251578688,
+      "dsep_fast": -0.019168336758450144,
+      "dsep_mid": -0.011347671017609001
+    },
+    "levels": {
+      "ema20": 3.9547357541265276e-06,
+      "ema60": 4.505121379280608e-06,
+      "ema144": 5.268470117013856e-06,
+      "ema250": 5.661734019297254e-06,
+      "ema333": 5.767211704029256e-06,
+      "current_price": 3.4172880576859972e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:47.448317+00:00"
+    },
+    "analysis_ts": "2025-10-22T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:47.839299+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7210454097582746,
+      "atr_norm_slope": -0.0017588268109277614,
+      "dsep_fast": -0.015496551422075566,
+      "dsep_mid": -0.010680094672226276
+    },
+    "levels": {
+      "ema20": 3.9252423658270035e-06,
+      "ema60": 4.476922487401949e-06,
+      "ema144": 5.246078186806514e-06,
+      "ema250": 5.6456648651752155e-06,
+      "ema333": 5.754504179915198e-06,
+      "current_price": 3.645055176981522e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:47.839310+00:00"
+    },
+    "analysis_ts": "2025-10-22T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:48.129729+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7135662478887722,
+      "atr_norm_slope": -0.0022033462552590284,
+      "dsep_fast": -0.01239212931536042,
+      "dsep_mid": -0.010092556788517393
+    },
+    "levels": {
+      "ema20": 3.906767401583737e-06,
+      "ema60": 4.4524743809714815e-06,
+      "ema144": 5.225184077212944e-06,
+      "ema250": 5.630410605223801e-06,
+      "ema333": 5.742388916809554e-06,
+      "current_price": 3.7312552412727056e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:48.129748+00:00"
+    },
+    "analysis_ts": "2025-10-22T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:48.513119+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.47587686850462013,
+      "atr_norm_slope": -0.0009184714240520887,
+      "dsep_fast": 0.0018789429819941195,
+      "dsep_mid": -0.006415852937733835
+    },
+    "levels": {
+      "ema20": 3.956400924379046e-06,
+      "ema60": 4.451669299330924e-06,
+      "ema144": 5.214187322919448e-06,
+      "ema250": 5.620829001922692e-06,
+      "ema333": 5.734517841804313e-06,
+      "current_price": 4.427919390934479e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:48.513132+00:00"
+    },
+    "analysis_ts": "2025-10-22T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:48.799001+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.41770472032848605,
+      "atr_norm_slope": 0.0009264971268548265,
+      "dsep_fast": 0.005259184005076301,
+      "dsep_mid": -0.005378937012784496
+    },
+    "levels": {
+      "ema20": 3.933524240660158e-06,
+      "ema60": 4.427555412314523e-06,
+      "ema144": 5.193525370125121e-06,
+      "ema250": 5.605652641312397e-06,
+      "ema333": 5.722432080747585e-06,
+      "current_price": 3.716195745330727e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:48.799010+00:00"
+    },
+    "analysis_ts": "2025-10-22T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:49.083064+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4113027671620356,
+      "atr_norm_slope": 0.0005835909033383463,
+      "dsep_fast": 0.012807285756671907,
+      "dsep_mid": -0.0031455203696073575
+    },
+    "levels": {
+      "ema20": 3.926890610724034e-06,
+      "ema60": 4.409073960315058e-06,
+      "ema144": 5.175185311590028e-06,
+      "ema250": 5.59177390414123e-06,
+      "ema333": 5.711302973236107e-06,
+      "current_price": 3.863871126330851e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:49.083077+00:00"
+    },
+    "analysis_ts": "2025-10-22T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:49.373756+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4122512948884616,
+      "atr_norm_slope": 0.0025565035326659837,
+      "dsep_fast": 0.015584261989581003,
+      "dsep_mid": -0.002045111452652487
+    },
+    "levels": {
+      "ema20": 3.917463109343322e-06,
+      "ema60": 4.390019136902321e-06,
+      "ema144": 5.156602091378118e-06,
+      "ema250": 5.5777191467076475e-06,
+      "ema333": 5.70002512217617e-06,
+      "current_price": 3.827901846226566e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:49.373764+00:00"
+    },
+    "analysis_ts": "2025-10-22T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:49.697638+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.42213178989511624,
+      "atr_norm_slope": 0.0023229237322718466,
+      "dsep_fast": 0.01612533915553012,
+      "dsep_mid": -0.001493309639133994
+    },
+    "levels": {
+      "ema20": 3.905114018192254e-06,
+      "ema60": 4.370274170192642e-06,
+      "ema144": 5.137722030148863e-06,
+      "ema250": 5.5634568240427034e-06,
+      "ema333": 5.688574658284439e-06,
+      "current_price": 3.7877976522571104e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:49.697650+00:00"
+    },
+    "analysis_ts": "2025-10-22T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:50.007881+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6581182454147319,
+      "atr_norm_slope": 0.003018655825072459,
+      "dsep_fast": -0.0005362010831502229,
+      "dsep_mid": -0.005591164760761075
+    },
+    "levels": {
+      "ema20": 3.851900274399142e-06,
+      "ema60": 4.3367035320999186e-06,
+      "ema144": 5.1130137222621825e-06,
+      "ema250": 5.545790791248456e-06,
+      "ema333": 5.6745494789436e-06,
+      "current_price": 3.3463697083645732e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:50.007890+00:00"
+    },
+    "analysis_ts": "2025-10-22T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:50.338840+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7752561829023544,
+      "atr_norm_slope": 0.003349812059519236,
+      "dsep_fast": -0.00478511861502115,
+      "dsep_mid": -0.0066883234045620465
+    },
+    "levels": {
+      "ema20": 3.80319687631083e-06,
+      "ema60": 4.304041599718671e-06,
+      "ema144": 5.0885654584305915e-06,
+      "ema250": 5.528218869361789e-06,
+      "ema333": 5.660573222150356e-06,
+      "current_price": 3.3405145944718696e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:50.338854+00:00"
+    },
+    "analysis_ts": "2025-10-22T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:50.624428+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7561227615679029,
+      "atr_norm_slope": 0.0038384004474535834,
+      "dsep_fast": -0.0032725136380204467,
+      "dsep_mid": -0.006325496801334457
+    },
+    "levels": {
+      "ema20": 3.8053441164073692e-06,
+      "ema60": 4.288359675050009e-06,
+      "ema144": 5.071147216208438e-06,
+      "ema250": 5.514653323767867e-06,
+      "ema333": 5.649586214217267e-06,
+      "current_price": 3.82574289732449e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:50.624444+00:00"
+    },
+    "analysis_ts": "2025-10-22T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:50.914087+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7861215169412581,
+      "atr_norm_slope": 0.004860240573300827,
+      "dsep_fast": -0.009073986131320114,
+      "dsep_mid": -0.007901960647621192
+    },
+    "levels": {
+      "ema20": 3.7600828153284195e-06,
+      "ema60": 4.256941339968972e-06,
+      "ema144": 5.047132778123886e-06,
+      "ema250": 5.497246528001417e-06,
+      "ema333": 5.635697077934998e-06,
+      "current_price": 3.330100455078396e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:50.914100+00:00"
+    },
+    "analysis_ts": "2025-10-22T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:51.187162+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7896112496843284,
+      "atr_norm_slope": 0.003864175243168784,
+      "dsep_fast": -0.013121829047542624,
+      "dsep_mid": -0.009126906107542604
+    },
+    "levels": {
+      "ema20": 3.7221426300765004e-06,
+      "ema60": 4.227589521287473e-06,
+      "ema144": 5.02388557939367e-06,
+      "ema250": 5.480230307620395e-06,
+      "ema333": 5.622080394056245e-06,
+      "current_price": 3.361710870183269e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:51.187174+00:00"
+    },
+    "analysis_ts": "2025-10-22T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:51.459805+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7870917871673343,
+      "atr_norm_slope": 0.0035155392876982253,
+      "dsep_fast": -0.007098865198558277,
+      "dsep_mid": -0.007715146495417269
+    },
+    "levels": {
+      "ema20": 3.7052460231329735e-06,
+      "ema60": 4.205200627381964e-06,
+      "ema144": 5.003483409431957e-06,
+      "ema250": 5.464807980525169e-06,
+      "ema333": 5.60964115970363e-06,
+      "current_price": 3.5447282571694642e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:51.459816+00:00"
+    },
+    "analysis_ts": "2025-10-22T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:51.747337+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7312689841844782,
+      "atr_norm_slope": 0.002425813030943586,
+      "dsep_fast": -0.0021175287692484362,
+      "dsep_mid": -0.006457938384446388
+    },
+    "levels": {
+      "ema20": 3.686951280877662e-06,
+      "ema60": 4.182510483187546e-06,
+      "ema144": 4.982927103501202e-06,
+      "ema250": 5.449256930715823e-06,
+      "ema333": 5.597087327785956e-06,
+      "current_price": 3.513151229452204e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:51.747347+00:00"
+    },
+    "analysis_ts": "2025-10-23T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:52.027997+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7870183640577145,
+      "atr_norm_slope": 0.001291909820071465,
+      "dsep_fast": -0.005833405584991139,
+      "dsep_mid": -0.0074399567870473415
+    },
+    "levels": {
+      "ema20": 3.6664847104328556e-06,
+      "ema60": 4.159216771975075e-06,
+      "ema144": 4.962087450917837e-06,
+      "ema250": 5.43350231207432e-06,
+      "ema333": 5.584362567087879e-06,
+      "current_price": 3.472052291207198e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:52.028012+00:00"
+    },
+    "analysis_ts": "2025-10-23T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:52.314345+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5090948399753654,
+      "atr_norm_slope": 0.0007670307975453663,
+      "dsep_fast": 0.003718011324700149,
+      "dsep_mid": -0.004930551055892907
+    },
+    "levels": {
+      "ema20": 3.6785975702381426e-06,
+      "ema60": 4.147231623332888e-06,
+      "ema144": 4.94597134453812e-06,
+      "ema250": 5.42043591706487e-06,
+      "ema333": 5.5736398555387804e-06,
+      "current_price": 3.7936697383883675e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:52.314353+00:00"
+    },
+    "analysis_ts": "2025-10-23T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:52.651390+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.46331577144573927,
+      "atr_norm_slope": -0.0001279151238009606,
+      "dsep_fast": 0.011049315216908454,
+      "dsep_mid": -0.0028134732985699296
+    },
+    "levels": {
+      "ema20": 3.6856975626505454e-06,
+      "ema60": 4.1343108320947075e-06,
+      "ema144": 4.929518601724744e-06,
+      "ema250": 5.4071507503198785e-06,
+      "ema333": 5.56273870365273e-06,
+      "current_price": 3.753147490568374e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:52.651404+00:00"
+    },
+    "analysis_ts": "2025-10-23T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:52.988955+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4179039850828101,
+      "atr_norm_slope": -0.0008982205476830421,
+      "dsep_fast": 0.015819185580840237,
+      "dsep_mid": -0.001225535134224548
+    },
+    "levels": {
+      "ema20": 3.6991455743351826e-06,
+      "ema60": 4.124231843676495e-06,
+      "ema144": 4.91431009253322e-06,
+      "ema250": 5.394559124304096e-06,
+      "ema333": 5.552344470010134e-06,
+      "current_price": 3.8269016853392365e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:52.988966+00:00"
+    },
+    "analysis_ts": "2025-10-23T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:53.346907+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.36334468224973454,
+      "atr_norm_slope": -0.0018260265665984282,
+      "dsep_fast": 0.018442365535027594,
+      "dsep_mid": -0.00011610066206854674
+    },
+    "levels": {
+      "ema20": 3.6990727988176478e-06,
+      "ema60": 4.1102695350773015e-06,
+      "ema144": 4.8975386627245e-06,
+      "ema250": 5.3810437642012836e-06,
+      "ema333": 5.5412428949286416e-06,
+      "current_price": 3.698381431401067e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:53.346915+00:00"
+    },
+    "analysis_ts": "2025-10-23T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:53.699424+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.26547930951189963,
+      "atr_norm_slope": -0.001437111579920633,
+      "dsep_fast": 0.026253629135014694,
+      "dsep_mid": 0.0024551228313972606
+    },
+    "levels": {
+      "ema20": 3.7280686648981567e-06,
+      "ema60": 4.106769858276832e-06,
+      "ema144": 4.8852075003788236e-06,
+      "ema250": 5.370067554069504e-06,
+      "ema333": 5.532035029645613e-06,
+      "current_price": 4.003529392662991e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:53.699440+00:00"
+    },
+    "analysis_ts": "2025-10-23T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:54.022165+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.242477256587673,
+      "atr_norm_slope": -0.00207738843384998,
+      "dsep_fast": 0.02581491595176942,
+      "dsep_mid": 0.0029734933211444103
+    },
+    "levels": {
+      "ema20": 3.741661471120954e-06,
+      "ema60": 4.099032916373904e-06,
+      "ema144": 4.871215578032047e-06,
+      "ema250": 5.358121144317854e-06,
+      "ema333": 5.522087473361732e-06,
+      "current_price": 3.870793130237529e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:54.022173+00:00"
+    },
+    "analysis_ts": "2025-10-23T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:54.380104+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2286575510568893,
+      "atr_norm_slope": -0.0031514328600293464,
+      "dsep_fast": 0.026449495096052975,
+      "dsep_mid": 0.003768713417083097
+    },
+    "levels": {
+      "ema20": 3.7566441009830343e-06,
+      "ema60": 4.092473774350917e-06,
+      "ema144": 4.8578054195029535e-06,
+      "ema250": 5.346494514360523e-06,
+      "ema333": 5.512368261453415e-06,
+      "current_price": 3.8989790846728e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:54.380113+00:00"
+    },
+    "analysis_ts": "2025-10-23T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:54.677719+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.21935051516214638,
+      "atr_norm_slope": -0.0031126570894624284,
+      "dsep_fast": 0.02668624599828283,
+      "dsep_mid": 0.00447079041409193
+    },
+    "levels": {
+      "ema20": 3.775792307215103e-06,
+      "ema60": 4.08805497081219e-06,
+      "ema144": 4.845390176012151e-06,
+      "ema250": 5.335428424735498e-06,
+      "ema333": 5.5030588722615966e-06,
+      "current_price": 3.957700266419753e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:54.677730+00:00"
+    },
+    "analysis_ts": "2025-10-23T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:54.952594+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.21409206239779388,
+      "atr_norm_slope": -0.004029106887947954,
+      "dsep_fast": 0.028887392266855327,
+      "dsep_mid": 0.005706732197955089
+    },
+    "levels": {
+      "ema20": 3.7932450118652114e-06,
+      "ema60": 4.083825158852487e-06,
+      "ema144": 4.833164735047034e-06,
+      "ema250": 5.324461231757854e-06,
+      "ema333": 5.493813284439918e-06,
+      "current_price": 3.95904570604124e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:54.952607+00:00"
+    },
+    "analysis_ts": "2025-10-23T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:55.216230+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.21115545056939858,
+      "atr_norm_slope": -0.003799242027401164,
+      "dsep_fast": 0.028954523909957286,
+      "dsep_mid": 0.006425117070157638
+    },
+    "levels": {
+      "ema20": 3.8276581785201616e-06,
+      "ema60": 4.086145096652149e-06,
+      "ema144": 4.823804990587657e-06,
+      "ema250": 5.31513949494498e-06,
+      "ema333": 5.485793942986638e-06,
+      "current_price": 4.154583261742193e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:55.216242+00:00"
+    },
+    "analysis_ts": "2025-10-23T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:55.524364+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.21095154479098935,
+      "atr_norm_slope": -0.004417792452489519,
+      "dsep_fast": 0.02894883732326728,
+      "dsep_mid": 0.007110935888693409
+    },
+    "levels": {
+      "ema20": 3.846224414695165e-06,
+      "ema60": 4.084061770806429e-06,
+      "ema144": 4.812753937729312e-06,
+      "ema250": 5.304840404613607e-06,
+      "ema333": 5.477032324515805e-06,
+      "current_price": 4.0226036583576975e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:55.524376+00:00"
+    },
+    "analysis_ts": "2025-10-23T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:55.798454+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.20942138295927828,
+      "atr_norm_slope": -0.003259732074405179,
+      "dsep_fast": 0.024224205885528073,
+      "dsep_mid": 0.006480504122687886
+    },
+    "levels": {
+      "ema20": 3.837764667142994e-06,
+      "ema60": 4.0733514525962954e-06,
+      "ema144": 4.798197291214389e-06,
+      "ema250": 5.2925101788031185e-06,
+      "ema333": 5.466735107395336e-06,
+      "current_price": 3.7573970653973703e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:55.798466+00:00"
+    },
+    "analysis_ts": "2025-10-23T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:56.125307+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2097565760592203,
+      "atr_norm_slope": -0.0018000113593844226,
+      "dsep_fast": 0.01781523770324242,
+      "dsep_mid": 0.005268055882240608
+    },
+    "levels": {
+      "ema20": 3.822589660005797e-06,
+      "ema60": 4.06040311291125e-06,
+      "ema144": 4.782752185021121e-06,
+      "ema250": 5.279648958989567e-06,
+      "ema333": 5.456026676166636e-06,
+      "current_price": 3.6784270922024263e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:56.125319+00:00"
+    },
+    "analysis_ts": "2025-10-23T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:56.420698+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2183028429933842,
+      "atr_norm_slope": -0.0021101453917055104,
+      "dsep_fast": 0.011687336356320424,
+      "dsep_mid": 0.003978314383577736
+    },
+    "levels": {
+      "ema20": 3.8063545823265984e-06,
+      "ema60": 4.047016825418232e-06,
+      "ema144": 4.767157276874266e-06,
+      "ema250": 5.266680611462751e-06,
+      "ema333": 5.445224847832549e-06,
+      "current_price": 3.6521213443742103e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:56.420710+00:00"
+    },
+    "analysis_ts": "2025-10-23T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:56.701528+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5058493831494189,
+      "atr_norm_slope": -0.001820723072405972,
+      "dsep_fast": -0.001479260079820896,
+      "dsep_mid": 0.0005913688796898298
+    },
+    "levels": {
+      "ema20": 3.7640024759880526e-06,
+      "ema60": 4.024546026741302e-06,
+      "ema144": 4.747771072583198e-06,
+      "ema250": 5.251501144166409e-06,
+      "ema333": 5.432748396442963e-06,
+      "current_price": 3.3616574657718686e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:56.701538+00:00"
+    },
+    "analysis_ts": "2025-10-23T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:56.988764+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.690754641393749,
+      "atr_norm_slope": -0.0008222145774700317,
+      "dsep_fast": -0.014689427107828473,
+      "dsep_mid": -0.0031078523355143883
+    },
+    "levels": {
+      "ema20": 3.703980402541507e-06,
+      "ema60": 3.995340278480909e-06,
+      "ema144": 4.7255089985447995e-06,
+      "ema250": 5.2346267980359945e-06,
+      "ema333": 5.418982062960067e-06,
+      "current_price": 3.1337707047993225e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:56.988777+00:00"
+    },
+    "analysis_ts": "2025-10-23T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:57.269041+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7292743715622075,
+      "atr_norm_slope": -0.0002810162368708046,
+      "dsep_fast": -0.0232028472590989,
+      "dsep_mid": -0.005790634310982673
+    },
+    "levels": {
+      "ema20": 3.6437189025931515e-06,
+      "ema60": 3.965041733385921e-06,
+      "ema144": 4.702691421366027e-06,
+      "ema250": 5.2173886136140645e-06,
+      "ema333": 5.404923695236257e-06,
+      "current_price": 3.0712346530837717e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:57.269050+00:00"
+    },
+    "analysis_ts": "2025-10-23T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:57.563569+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7529402519460747,
+      "atr_norm_slope": -0.00016644703439079613,
+      "dsep_fast": -0.03212392921840161,
+      "dsep_mid": -0.008752630953201113
+    },
+    "levels": {
+      "ema20": 3.574052765440076e-06,
+      "ema60": 3.930523134340017e-06,
+      "ema144": 4.677995325381473e-06,
+      "ema250": 5.199020771772405e-06,
+      "ema333": 5.389997352525176e-06,
+      "current_price": 2.9122244624858584e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:57.563582+00:00"
+    },
+    "analysis_ts": "2025-10-23T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:57.869281+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7622027672134896,
+      "atr_norm_slope": 0.00012316168815149013,
+      "dsep_fast": -0.03900727313850483,
+      "dsep_mid": -0.01133565319423871
+    },
+    "levels": {
+      "ema20": 3.5144273024637843e-06,
+      "ema60": 3.898308782531787e-06,
+      "ema144": 4.654133119571922e-06,
+      "ema250": 5.181084234978912e-06,
+      "ema333": 5.375374526487235e-06,
+      "current_price": 2.9479854041890145e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:57.869291+00:00"
+    },
+    "analysis_ts": "2025-10-23T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:58.184086+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7524304784775881,
+      "atr_norm_slope": 0.0012818931057028324,
+      "dsep_fast": -0.041756409774916584,
+      "dsep_mid": -0.012900753589345088
+    },
+    "levels": {
+      "ema20": 3.45302503319162e-06,
+      "ema60": 3.864584018353894e-06,
+      "ema144": 4.629520296889634e-06,
+      "ema250": 5.1626668584062205e-06,
+      "ema333": 5.360370508215491e-06,
+      "current_price": 2.869703475106056e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:58.184099+00:00"
+    },
+    "analysis_ts": "2025-10-23T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:58.464398+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7294847203381428,
+      "atr_norm_slope": 0.0007882037855606463,
+      "dsep_fast": -0.03905889512372021,
+      "dsep_mid": -0.013020686358052924
+    },
+    "levels": {
+      "ema20": 3.4052142292455674e-06,
+      "ema60": 3.8346308240392774e-06,
+      "ema144": 4.606368452680923e-06,
+      "ema250": 5.14504410727755e-06,
+      "ema333": 5.345943209314548e-06,
+      "current_price": 2.951011591758071e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:58.464410+00:00"
+    },
+    "analysis_ts": "2025-10-23T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:58.776264+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7123133617360755,
+      "atr_norm_slope": 0.0011365040195989457,
+      "dsep_fast": -0.032968933746529316,
+      "dsep_mid": -0.012163230694209937
+    },
+    "levels": {
+      "ema20": 3.3760976114804054e-06,
+      "ema60": 3.810527837766231e-06,
+      "ema144": 4.585583918750308e-06,
+      "ema250": 5.128744869312879e-06,
+      "ema333": 5.3324913921492585e-06,
+      "current_price": 3.0994897427113658e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:58.776272+00:00"
+    },
+    "analysis_ts": "2025-10-23T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:59.056701+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7070041901908036,
+      "atr_norm_slope": 0.0005051352477586805,
+      "dsep_fast": -0.02599010002495196,
+      "dsep_mid": -0.0109244070960757
+    },
+    "levels": {
+      "ema20": 3.343370472642608e-06,
+      "ema60": 3.78501750386188e-06,
+      "ema144": 4.564161556473525e-06,
+      "ema250": 5.1120414253636416e-06,
+      "ema333": 5.318718764972817e-06,
+      "current_price": 3.0324626536835324e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:59.056716+00:00"
+    },
+    "analysis_ts": "2025-10-24T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:59.339351+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7062251119708342,
+      "atr_norm_slope": 0.0003652472459846024,
+      "dsep_fast": -0.015618769849971265,
+      "dsep_mid": -0.00863863319275382
+    },
+    "levels": {
+      "ema20": 3.3390199499919094e-06,
+      "ema60": 3.769039552417565e-06,
+      "ema144": 4.546692983071272e-06,
+      "ema250": 5.097584441773575e-06,
+      "ema333": 5.306616796229328e-06,
+      "current_price": 3.2976899848102707e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:59.339359+00:00"
+    },
+    "analysis_ts": "2025-10-24T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:59.619262+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.71148444109393,
+      "atr_norm_slope": 0.0009342587342822249,
+      "dsep_fast": -0.009943751907526485,
+      "dsep_mid": -0.007387744387930106
+    },
+    "levels": {
+      "ema20": 3.308408582962988e-06,
+      "ema60": 3.7444022095903735e-06,
+      "ema144": 4.525602053597023e-06,
+      "ema250": 5.081010865314727e-06,
+      "ema333": 5.292910112396746e-06,
+      "current_price": 3.0176005961882338e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:59.619277+00:00"
+    },
+    "analysis_ts": "2025-10-24T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:24:59.938482+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7075311397149474,
+      "atr_norm_slope": 0.00031236684404389566,
+      "dsep_fast": -0.0038164917064019005,
+      "dsep_mid": -0.005904182053307755
+    },
+    "levels": {
+      "ema20": 3.2936748624799843e-06,
+      "ema60": 3.7250350721576215e-06,
+      "ema144": 4.506679328966601e-06,
+      "ema250": 5.065653842626096e-06,
+      "ema333": 5.280100498058391e-06,
+      "current_price": 3.153704517891449e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:24:59.938492+00:00"
+    },
+    "analysis_ts": "2025-10-24T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:00.270686+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6266554373757955,
+      "atr_norm_slope": -0.0003579357118772279,
+      "dsep_fast": -0.00035607775468586567,
+      "dsep_mid": -0.00500744535212988
+    },
+    "levels": {
+      "ema20": 3.28335262072298e-06,
+      "ema60": 3.7073385558256156e-06,
+      "ema144": 4.488453287519219e-06,
+      "ema250": 5.050670874350442e-06,
+      "ema333": 5.267556730549247e-06,
+      "current_price": 3.1852913240314407e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:00.270700+00:00"
+    },
+    "analysis_ts": "2025-10-24T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:00.622162+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4901761892911789,
+      "atr_norm_slope": -0.0008522469854873383,
+      "dsep_fast": 0.004274603792458573,
+      "dsep_mid": -0.003725068190430586
+    },
+    "levels": {
+      "ema20": 3.2760251556706345e-06,
+      "ema60": 3.6909148076894756e-06,
+      "ema144": 4.470769990279966e-06,
+      "ema250": 5.0359756023450464e-06,
+      "ema333": 5.255214559933224e-06,
+      "current_price": 3.20641423767335e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:00.622173+00:00"
+    },
+    "analysis_ts": "2025-10-24T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:00.936544+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5087522464284986,
+      "atr_norm_slope": -0.0009610373349342536,
+      "dsep_fast": 0.0035439184617913067,
+      "dsep_mid": -0.0037774002754464575
+    },
+    "levels": {
+      "ema20": 3.2684792076143456e-06,
+      "ema60": 3.674714082882594e-06,
+      "ema144": 4.453197889739271e-06,
+      "ema250": 5.021320758510263e-06,
+      "ema333": 5.242888680538891e-06,
+      "current_price": 3.196792701079601e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:00.936557+00:00"
+    },
+    "analysis_ts": "2025-10-24T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:01.393348+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4760655914542441,
+      "atr_norm_slope": -0.0010173933930700883,
+      "dsep_fast": 0.006835356207290366,
+      "dsep_mid": -0.002772231191580321
+    },
+    "levels": {
+      "ema20": 3.2563868031887392e-06,
+      "ema60": 3.6572319477436723e-06,
+      "ema144": 4.435105628655219e-06,
+      "ema250": 5.006342178451579e-06,
+      "ema333": 5.230305568446715e-06,
+      "current_price": 3.141508961145478e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:01.393365+00:00"
+    },
+    "analysis_ts": "2025-10-24T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:01.725049+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4771232595585305,
+      "atr_norm_slope": -0.0014709710534129925,
+      "dsep_fast": 0.006412781504590265,
+      "dsep_mid": -0.0026903790050395726
+    },
+    "levels": {
+      "ema20": 3.2406450628262134e-06,
+      "ema60": 3.638670196321985e-06,
+      "ema144": 4.416567599699729e-06,
+      "ema250": 4.991081272881305e-06,
+      "ema333": 5.2174959454583046e-06,
+      "current_price": 3.0910985293822185e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:01.725068+00:00"
+    },
+    "analysis_ts": "2025-10-24T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:02.208885+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5196899686008837,
+      "atr_norm_slope": -0.0012374540585378783,
+      "dsep_fast": 0.0029300089487526715,
+      "dsep_mid": -0.003436601626114283
+    },
+    "levels": {
+      "ema20": 3.2132108826916895e-06,
+      "ema60": 3.6161756381282714e-06,
+      "ema144": 4.396374752413026e-06,
+      "ema250": 4.97483828402499e-06,
+      "ema333": 5.203933611481989e-06,
+      "current_price": 2.952586171413713e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:02.208895+00:00"
+    },
+    "analysis_ts": "2025-10-24T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:02.550608+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5208683602198556,
+      "atr_norm_slope": -0.0017600830369123445,
+      "dsep_fast": 0.002831111644260295,
+      "dsep_mid": -0.0033561236594826793
+    },
+    "levels": {
+      "ema20": 3.2059285383936146e-06,
+      "ema60": 3.6004566423719967e-06,
+      "ema144": 4.37900056641508e-06,
+      "ema250": 4.960192132499387e-06,
+      "ema333": 5.191555244153127e-06,
+      "current_price": 3.1367462675619003e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:02.550620+00:00"
+    },
+    "analysis_ts": "2025-10-24T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:02.965954+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5052210000890276,
+      "atr_norm_slope": -0.0017744062986849523,
+      "dsep_fast": 0.003373309690881343,
+      "dsep_mid": -0.003107576199546963
+    },
+    "levels": {
+      "ema20": 3.201739820624699e-06,
+      "ema60": 3.5860792771079967e-06,
+      "ema144": 4.362213620696526e-06,
+      "ema250": 4.9458634860397905e-06,
+      "ema333": 5.179401901384665e-06,
+      "current_price": 3.1619470018199993e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:02.965965+00:00"
+    },
+    "analysis_ts": "2025-10-24T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:03.294783+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4346748644940929,
+      "atr_norm_slope": -0.0015040051876186367,
+      "dsep_fast": 0.010112586790753206,
+      "dsep_mid": -0.0011875301689937556
+    },
+    "levels": {
+      "ema20": 3.225232737250007e-06,
+      "ema60": 3.5815657088484046e-06,
+      "ema144": 4.349609507930925e-06,
+      "ema250": 4.933931629140592e-06,
+      "ema333": 5.16903671302422e-06,
+      "current_price": 3.4484154451904358e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:03.294800+00:00"
+    },
+    "analysis_ts": "2025-10-24T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:03.668156+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.33464268187756957,
+      "atr_norm_slope": -0.0012476396172862395,
+      "dsep_fast": 0.020979613443151912,
+      "dsep_mid": 0.00199885831726479
+    },
+    "levels": {
+      "ema20": 3.267560309698911e-06,
+      "ema60": 3.5844544478357845e-06,
+      "ema144": 4.340231062965857e-06,
+      "ema250": 4.923857849210894e-06,
+      "ema333": 5.160058482694514e-06,
+      "current_price": 3.669672247963501e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:03.668180+00:00"
+    },
+    "analysis_ts": "2025-10-24T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:03.962656+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.300164515437573,
+      "atr_norm_slope": -0.0007131953150656479,
+      "dsep_fast": 0.027441494628432705,
+      "dsep_mid": 0.004232640212402522
+    },
+    "levels": {
+      "ema20": 3.276776210496539e-06,
+      "ema60": 3.577237163253431e-06,
+      "ema144": 4.326770320967349e-06,
+      "ema250": 4.911431310715779e-06,
+      "ema333": 5.1493056011698406e-06,
+      "current_price": 3.3643272680740048e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:03.962665+00:00"
+    },
+    "analysis_ts": "2025-10-24T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:04.307639+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.298257610579791,
+      "atr_norm_slope": -0.0012628325140577302,
+      "dsep_fast": 0.027302679880850403,
+      "dsep_mid": 0.004830662878316239
+    },
+    "levels": {
+      "ema20": 3.2725436378036664e-06,
+      "ema60": 3.565928869285167e-06,
+      "ema144": 4.31167465029499e-06,
+      "ema250": 4.898052050847298e-06,
+      "ema333": 5.137826730487514e-06,
+      "current_price": 3.2323341972213736e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:04.307755+00:00"
+    },
+    "analysis_ts": "2025-10-24T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:04.596814+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.29777585015185837,
+      "atr_norm_slope": -0.0009172516599824159,
+      "dsep_fast": 0.028121160171620294,
+      "dsep_mid": 0.005683144826900133
+    },
+    "levels": {
+      "ema20": 3.2763868144311422e-06,
+      "ema60": 3.5576327421739204e-06,
+      "ema144": 4.297898406737709e-06,
+      "ema250": 4.885421333250046e-06,
+      "ema333": 5.126899007504907e-06,
+      "current_price": 3.312896992392161e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:04.596826+00:00"
+    },
+    "analysis_ts": "2025-10-24T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:04.948608+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2978172795940183,
+      "atr_norm_slope": 0.0003492381666062159,
+      "dsep_fast": 0.0254508370865542,
+      "dsep_mid": 0.005623167588466094
+    },
+    "levels": {
+      "ema20": 3.2900391770073395e-06,
+      "ema60": 3.5531115578889134e-06,
+      "ema144": 4.285785830389344e-06,
+      "ema250": 4.873742570606469e-06,
+      "ema333": 5.11667647824728e-06,
+      "current_price": 3.419736621481212e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:04.948637+00:00"
+    },
+    "analysis_ts": "2025-10-24T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:05.233528+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.31521587158490383,
+      "atr_norm_slope": 0.0005608468942097394,
+      "dsep_fast": 0.014645774620510435,
+      "dsep_mid": 0.003285225646424139
+    },
+    "levels": {
+      "ema20": 3.279759471700426e-06,
+      "ema60": 3.5409473189838586e-06,
+      "ema144": 4.2705626088844525e-06,
+      "ema250": 4.860263365034184e-06,
+      "ema333": 5.105092201558882e-06,
+      "current_price": 3.182102271284746e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:05.233620+00:00"
+    },
+    "analysis_ts": "2025-10-24T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:05.521381+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3332851291173839,
+      "atr_norm_slope": 0.0008679840901117836,
+      "dsep_fast": 0.009487389408817562,
+      "dsep_mid": 0.0022182401261909845
+    },
+    "levels": {
+      "ema20": 3.264267254654042e-06,
+      "ema60": 3.527050396811056e-06,
+      "ema144": 4.254652658316576e-06,
+      "ema250": 4.846373546928043e-06,
+      "ema333": 5.093188003901124e-06,
+      "current_price": 3.1170911927133936e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:05.521392+00:00"
+    },
+    "analysis_ts": "2025-10-24T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:05.816853+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.34267348236829154,
+      "atr_norm_slope": 0.0001151189830690835,
+      "dsep_fast": 0.0076555642131566765,
+      "dsep_mid": 0.0019352727205040055
+    },
+    "levels": {
+      "ema20": 3.2519772158025273e-06,
+      "ema60": 3.5142035591029277e-06,
+      "ema144": 4.239212233328942e-06,
+      "ema250": 4.832738872025932e-06,
+      "ema333": 5.081463655654489e-06,
+      "current_price": 3.1352218467131385e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:05.816884+00:00"
+    },
+    "analysis_ts": "2025-10-24T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:06.119645+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3616942369061355,
+      "atr_norm_slope": -0.00031991344511802226,
+      "dsep_fast": 0.0053316237869155125,
+      "dsep_mid": 0.0014764220760458135
+    },
+    "levels": {
+      "ema20": 3.2449099180498494e-06,
+      "ema60": 3.50317296993232e-06,
+      "ema144": 4.224571658929914e-06,
+      "ema250": 4.819551873757992e-06,
+      "ema333": 5.0700642959763145e-06,
+      "current_price": 3.177770589399409e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:06.119657+00:00"
+    },
+    "analysis_ts": "2025-10-24T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:06.399380+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4408539213220705,
+      "atr_norm_slope": -0.0008533287846828497,
+      "dsep_fast": 0.001989114235083564,
+      "dsep_mid": 0.000685498229414494
+    },
+    "levels": {
+      "ema20": 3.241969314244628e-06,
+      "ema60": 3.493692989872081e-06,
+      "ema144": 4.210633202642535e-06,
+      "ema250": 4.806758899290557e-06,
+      "ema333": 5.058950339581815e-06,
+      "current_price": 3.2140335780950224e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:06.399390+00:00"
+    },
+    "analysis_ts": "2025-10-24T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:06.701011+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3932965463754997,
+      "atr_norm_slope": -0.0011519111565740895,
+      "dsep_fast": 0.0034078883943217952,
+      "dsep_mid": 0.0011165188333536469
+    },
+    "levels": {
+      "ema20": 3.23940289026253e-06,
+      "ema60": 3.4845562315953767e-06,
+      "ema144": 4.1969006324327425e-06,
+      "ema250": 4.794075735650255e-06,
+      "ema333": 5.047908851694694e-06,
+      "current_price": 3.215021862432596e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:06.701026+00:00"
+    },
+    "analysis_ts": "2025-10-24T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:06.977365+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3462219490162599,
+      "atr_norm_slope": -0.001554297372274119,
+      "dsep_fast": 0.006488399259144476,
+      "dsep_mid": 0.0020335413829860594
+    },
+    "levels": {
+      "ema20": 3.240366314880261e-06,
+      "ema60": 3.4768500878954854e-06,
+      "ema144": 4.183833297485376e-06,
+      "ema250": 4.781768509459804e-06,
+      "ema333": 5.037140049281844e-06,
+      "current_price": 3.249518848748702e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:06.977374+00:00"
+    },
+    "analysis_ts": "2025-10-25T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:07.249864+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.33573445738548,
+      "atr_norm_slope": -0.0011709889596990526,
+      "dsep_fast": 0.007374192908108326,
+      "dsep_mid": 0.0024188730757971344
+    },
+    "levels": {
+      "ema20": 3.23366637211081e-06,
+      "ema60": 3.4667899838923884e-06,
+      "ema144": 4.169849623255247e-06,
+      "ema250": 4.768925867279256e-06,
+      "ema333": 5.025959671237049e-06,
+      "current_price": 3.170016915801025e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:07.249878+00:00"
+    },
+    "analysis_ts": "2025-10-25T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:07.538822+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3405810826856952,
+      "atr_norm_slope": -0.0008450031265865768,
+      "dsep_fast": 0.00615673515175047,
+      "dsep_mid": 0.002247466994726194
+    },
+    "levels": {
+      "ema20": 3.2215307738953237e-06,
+      "ema60": 3.4549687578909393e-06,
+      "ema144": 4.155179181428943e-06,
+      "ema250": 4.755677394957096e-06,
+      "ema333": 5.014464359378432e-06,
+      "current_price": 3.1062425908482024e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:07.538833+00:00"
+    },
+    "analysis_ts": "2025-10-25T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:07.816562+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.4377796518389746,
+      "atr_norm_slope": -0.0009236913722532879,
+      "dsep_fast": 0.0016052685341630263,
+      "dsep_mid": 0.001134583360546254
+    },
+    "levels": {
+      "ema20": 3.196436329257762e-06,
+      "ema60": 3.4386759823929057e-06,
+      "ema144": 4.138666904515453e-06,
+      "ema250": 4.741353583883343e-06,
+      "ema333": 5.0021504357007224e-06,
+      "current_price": 2.95803910520092e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:07.816573+00:00"
+    },
+    "analysis_ts": "2025-10-25T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:08.092762+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7152702202228824,
+      "atr_norm_slope": -0.0009257270200114308,
+      "dsep_fast": -0.006054412919012597,
+      "dsep_mid": -0.0009288489663126231
+    },
+    "levels": {
+      "ema20": 3.1556171523649787e-06,
+      "ema60": 3.41668119516309e-06,
+      "ema144": 4.11975887785846e-06,
+      "ema250": 4.725628335978962e-06,
+      "ema333": 4.988771301186847e-06,
+      "current_price": 2.767834971883539e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:08.092772+00:00"
+    },
+    "analysis_ts": "2025-10-25T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:08.385352+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7303137658397926,
+      "atr_norm_slope": -0.0008845533982581555,
+      "dsep_fast": -0.00964507216739266,
+      "dsep_mid": -0.002052856997182967
+    },
+    "levels": {
+      "ema20": 3.1377760081600554e-06,
+      "ema60": 3.401979685099162e-06,
+      "ema144": 4.103876481449561e-06,
+      "ema250": 4.711625601335411e-06,
+      "ema333": 4.976672581648083e-06,
+      "current_price": 2.9682851382132817e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:08.385364+00:00"
+    },
+    "analysis_ts": "2025-10-25T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:08.709871+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7104493227761575,
+      "atr_norm_slope": -0.0015687804170650991,
+      "dsep_fast": -0.010220939954384722,
+      "dsep_mid": -0.0024326175250092563
+    },
+    "levels": {
+      "ema20": 3.1270425419984557e-06,
+      "ema60": 3.389622141766837e-06,
+      "ema144": 4.088996455684233e-06,
+      "ema250": 4.698186948045593e-06,
+      "ema333": 4.9649863662697315e-06,
+      "current_price": 3.025074613463259e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:08.709880+00:00"
+    },
+    "analysis_ts": "2025-10-25T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:09.018274+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.7011148930646274,
+      "atr_norm_slope": -0.0014292179922824153,
+      "dsep_fast": -0.011340818870767141,
+      "dsep_mid": -0.002969208263184142
+    },
+    "levels": {
+      "ema20": 3.108278335234623e-06,
+      "ema60": 3.3745531656754064e-06,
+      "ema144": 4.073010551067598e-06,
+      "ema250": 4.684097955399639e-06,
+      "ema333": 4.952800929172177e-06,
+      "current_price": 2.9300183709782102e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:09.018285+00:00"
+    },
+    "analysis_ts": "2025-10-25T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:09.342936+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6889569822517336,
+      "atr_norm_slope": -0.0018336870543597397,
+      "dsep_fast": -0.009329171731881844,
+      "dsep_mid": -0.00267140136782279
+    },
+    "levels": {
+      "ema20": 3.0922313776911188e-06,
+      "ema60": 3.3602984809328626e-06,
+      "ema144": 4.0573798576877395e-06,
+      "ema250": 4.670199049627752e-06,
+      "ema333": 4.940746943255145e-06,
+      "current_price": 2.9397852810278315e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:09.342968+00:00"
+    },
+    "analysis_ts": "2025-10-25T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:09.624281+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.6091945648918252,
+      "atr_norm_slope": -0.002067874912326955,
+      "dsep_fast": -0.0027282874591473827,
+      "dsep_mid": -0.0010761600594012821
+    },
+    "levels": {
+      "ema20": 3.0835192599575177e-06,
+      "ema60": 3.3485101419346806e-06,
+      "ema144": 4.042805709878092e-06,
+      "ema250": 4.656896699762099e-06,
+      "ema333": 4.929130219891271e-06,
+      "current_price": 3.000754141488307e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:09.624291+00:00"
+    },
+    "analysis_ts": "2025-10-25T09:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:09.935413+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.5343805340605522,
+      "atr_norm_slope": -0.002235699360248168,
+      "dsep_fast": -0.0009304132916675006,
+      "dsep_mid": -0.0006437632786253644
+    },
+    "levels": {
+      "ema20": 3.07446652318494e-06,
+      "ema60": 3.3367054003579844e-06,
+      "ema144": 4.0282630866224694e-06,
+      "ema250": 4.643602427444038e-06,
+      "ema333": 4.917509473208362e-06,
+      "current_price": 2.988465523845454e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:09.935428+00:00"
+    },
+    "analysis_ts": "2025-10-25T10:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:10.339445+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.35518588328463635,
+      "atr_norm_slope": -0.002263131184441888,
+      "dsep_fast": 0.0028287838758489087,
+      "dsep_mid": 0.00036377467416925935
+    },
+    "levels": {
+      "ema20": 3.0821577672461267e-06,
+      "ema60": 3.3307552097176372e-06,
+      "ema144": 4.016221176266675e-06,
+      "ema250": 4.631742843048686e-06,
+      "ema333": 4.906956869092309e-06,
+      "current_price": 3.1552245858273987e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:10.339473+00:00"
+    },
+    "analysis_ts": "2025-10-25T11:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:10.653819+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.29634292359285686,
+      "atr_norm_slope": -0.0017450512769266817,
+      "dsep_fast": 0.0074594908374290975,
+      "dsep_mid": 0.0016942763910139103
+    },
+    "levels": {
+      "ema20": 3.0866495492856884e-06,
+      "ema60": 3.3241508250928464e-06,
+      "ema144": 4.003988076989363e-06,
+      "ema250": 4.61977135807349e-06,
+      "ema333": 4.896312345796316e-06,
+      "current_price": 3.129321478661524e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:10.653827+00:00"
+    },
+    "analysis_ts": "2025-10-25T12:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:10.962662+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.306456070356039,
+      "atr_norm_slope": -0.0013438600322084378,
+      "dsep_fast": 0.009081156068845228,
+      "dsep_mid": 0.0023062374764013516
+    },
+    "levels": {
+      "ema20": 3.0796922794705835e-06,
+      "ema60": 3.3139687723431493e-06,
+      "ema144": 3.990327527185745e-06,
+      "ema250": 4.606973165708181e-06,
+      "ema333": 4.885038608493506e-06,
+      "current_price": 3.0135982162270854e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:10.962700+00:00"
+    },
+    "analysis_ts": "2025-10-25T13:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:11.248862+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.3095247883892194,
+      "atr_norm_slope": -0.00011370581526329449,
+      "dsep_fast": 0.009796087265949535,
+      "dsep_mid": 0.0027071436610343336
+    },
+    "levels": {
+      "ema20": 3.0757701150260636e-06,
+      "ema60": 3.3049373225221644e-06,
+      "ema144": 3.977199003401157e-06,
+      "ema250": 4.594475447677065e-06,
+      "ema333": 4.873981548279791e-06,
+      "current_price": 3.0385095528031216e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:11.248875+00:00"
+    },
+    "analysis_ts": "2025-10-25T14:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:11.524255+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.30709813636483313,
+      "atr_norm_slope": -9.102430382342508e-05,
+      "dsep_fast": 0.010460907858439089,
+      "dsep_mid": 0.0031085605031851704
+    },
+    "levels": {
+      "ema20": 3.0713471205376893e-06,
+      "ema60": 3.2959009733541632e-06,
+      "ema144": 3.964124929876977e-06,
+      "ema250": 4.5820041586350015e-06,
+      "ema333": 4.862935722678702e-06,
+      "current_price": 3.029328672898134e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:11.524263+00:00"
+    },
+    "analysis_ts": "2025-10-25T15:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:11.947805+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.31631343105134063,
+      "atr_norm_slope": -8.178122255236468e-05,
+      "dsep_fast": 0.007734847044153587,
+      "dsep_mid": 0.0025991311117115057
+    },
+    "levels": {
+      "ema20": 3.067194392632948e-06,
+      "ema60": 3.2871089243110072e-06,
+      "ema144": 3.951209323637818e-06,
+      "ema250": 4.569619611375264e-06,
+      "ema333": 4.851946547558099e-06,
+      "current_price": 3.0277434775379056e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:11.947835+00:00"
+    },
+    "analysis_ts": "2025-10-25T16:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:12.257498+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.30495436548523214,
+      "atr_norm_slope": 0.0006677700089888711,
+      "dsep_fast": 0.009017156888372978,
+      "dsep_mid": 0.0031250076841317642
+    },
+    "levels": {
+      "ema20": 3.078918622749135e-06,
+      "ema60": 3.2839348221648397e-06,
+      "ema144": 3.940714006192509e-06,
+      "ema250": 4.558629007371102e-06,
+      "ema333": 4.841996561098786e-06,
+      "current_price": 3.190298808852907e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:12.257506+00:00"
+    },
+    "analysis_ts": "2025-10-25T17:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:12.558755+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.2921797169501432,
+      "atr_norm_slope": 0.0012688492736468594,
+      "dsep_fast": 0.011217298229119661,
+      "dsep_mid": 0.00392897121137134
+    },
+    "levels": {
+      "ema20": 3.0839137041851957e-06,
+      "ema60": 3.2789325977603455e-06,
+      "ema144": 3.9295505989047195e-06,
+      "ema250": 4.547256401558008e-06,
+      "ema333": 4.831753270180995e-06,
+      "current_price": 3.1313669778277733e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:12.558766+00:00"
+    },
+    "analysis_ts": "2025-10-25T18:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S1",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:12.966291+00:00",
+    "flag": {
+      "breakout_confirmed": true
+    },
+    "scores": {
+      "sr_flip_score": 0.549833997312478,
+      "breakout_strength": 0.6559679074993503,
+      "flow_flip_integrity": 0.7500001663758299,
+      "expansion_quality": 0.6564256468345995,
+      "volume_cluster": 1.0,
+      "momentum_drive": 0.5986470174883667
+    },
+    "levels": {
+      "ema20": 3.1304082003246154e-06,
+      "ema60": 3.2885448376255506e-06,
+      "ema144": 3.924620327383953e-06,
+      "ema250": 4.539486278148375e-06,
+      "ema333": 4.824210471638888e-06,
+      "base_sr_level": 3.331457173010958e-06,
+      "flipped_sr_levels": [
+        {
+          "id": "55a65ac72d253b88",
+          "level": 3.331457173010958e-06,
+          "score": 1.0,
+          "order": 1,
+          "flipped_at": "2025-11-01T16:25:12.850866+00:00"
+        }
+      ],
+      "current_price": 3.5721059136491023e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:12.966300+00:00"
+    },
+    "analysis_ts": "2025-10-25T19:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:13.504222+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.20873536660696113,
+      "atr_norm_slope": 0.0044929891845150415,
+      "dsep_fast": 0.032856044919722535,
+      "dsep_mid": 0.010673193466757935
+    },
+    "levels": {
+      "ema20": 3.1860028295748614e-06,
+      "ema60": 3.302499164505113e-06,
+      "ema144": 3.9217173133159286e-06,
+      "ema250": 4.532909907863943e-06,
+      "ema333": 4.817563413769507e-06,
+      "current_price": 3.7141518074521967e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:13.504236+00:00"
+    },
+    "analysis_ts": "2025-10-25T20:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:13.917734+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19465827678256492,
+      "atr_norm_slope": 0.0038424307819603164,
+      "dsep_fast": 0.04088618696387779,
+      "dsep_mid": 0.013679981753784237
+    },
+    "levels": {
+      "ema20": 3.226410263491945e-06,
+      "ema60": 3.3125903684788545e-06,
+      "ema144": 3.917421638452319e-06,
+      "ema250": 4.525558282189364e-06,
+      "ema333": 4.810334177074505e-06,
+      "current_price": 3.610280885704241e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:13.917746+00:00"
+    },
+    "analysis_ts": "2025-10-25T21:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:14.303098+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19327198489448869,
+      "atr_norm_slope": 0.0035111170363002773,
+      "dsep_fast": 0.04207722507862053,
+      "dsep_mid": 0.014976180519863158
+    },
+    "levels": {
+      "ema20": 3.250539445079426e-06,
+      "ema60": 3.3180715586979247e-06,
+      "ema144": 3.9113850182000175e-06,
+      "ema250": 4.517225281296704e-06,
+      "ema333": 4.802366706973223e-06,
+      "current_price": 3.479766670160498e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:14.303108+00:00"
+    },
+    "analysis_ts": "2025-10-25T22:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:14.737505+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19445038731501046,
+      "atr_norm_slope": 0.002802559191239386,
+      "dsep_fast": 0.04539275780428834,
+      "dsep_mid": 0.0168918705109381
+    },
+    "levels": {
+      "ema20": 3.2787247355036425e-06,
+      "ema60": 3.3255605238072944e-06,
+      "ema144": 3.906351914425309e-06,
+      "ema250": 4.509490298932059e-06,
+      "ema333": 4.794846457198136e-06,
+      "current_price": 3.5464849945336962e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:14.737516+00:00"
+    },
+    "analysis_ts": "2025-10-25T23:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:15.121169+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19525186632556046,
+      "atr_norm_slope": 0.0023823855766891937,
+      "dsep_fast": 0.03925734977936175,
+      "dsep_mid": 0.016261251556846767
+    },
+    "levels": {
+      "ema20": 3.3029359850157274e-06,
+      "ema60": 3.3323599445146136e-06,
+      "ema144": 3.90120144464538e-06,
+      "ema250": 4.501709044401768e-06,
+      "ema333": 4.787290148205216e-06,
+      "current_price": 3.53294285538053e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:15.121181+00:00"
+    },
+    "analysis_ts": "2025-10-26T00:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:15.494746+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.1963663753477876,
+      "atr_norm_slope": 0.0018227945153895103,
+      "dsep_fast": 0.0323927082691278,
+      "dsep_mid": 0.015268882867405409
+    },
+    "levels": {
+      "ema20": 3.331648702019995e-06,
+      "ema60": 3.3412799303849717e-06,
+      "ema144": 3.897107900768348e-06,
+      "ema250": 4.494559327024547e-06,
+      "ema333": 4.780207090512732e-06,
+      "current_price": 3.6044195135605348e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:15.494756+00:00"
+    },
+    "analysis_ts": "2025-10-26T01:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:15.921885+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19659324876030695,
+      "atr_norm_slope": 0.0017071882304867012,
+      "dsep_fast": 0.031723069988723464,
+      "dsep_mid": 0.015857757179950555
+    },
+    "levels": {
+      "ema20": 3.375062573404071e-06,
+      "ema60": 3.3559099114068676e-06,
+      "ema144": 3.8955959897446845e-06,
+      "ema250": 4.488925343156246e-06,
+      "ema333": 4.774262702854289e-06,
+      "current_price": 3.787494351552795e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:15.921896+00:00"
+    },
+    "analysis_ts": "2025-10-26T02:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:16.327638+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.1974375051655903,
+      "atr_norm_slope": 0.0012837870291652913,
+      "dsep_fast": 0.03244810578370371,
+      "dsep_mid": 0.01681123347250868
+    },
+    "levels": {
+      "ema20": 3.408939902415115e-06,
+      "ema60": 3.3682005545745123e-06,
+      "ema144": 3.89332259027262e-06,
+      "ema250": 4.482884300804564e-06,
+      "ema333": 4.768014270669653e-06,
+      "current_price": 3.7307745280200347e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:16.327648+00:00"
+    },
+    "analysis_ts": "2025-10-26T03:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:16.849386+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19699019110624652,
+      "atr_norm_slope": 0.0015105394548734804,
+      "dsep_fast": 0.02778257261944255,
+      "dsep_mid": 0.016215616597533677
+    },
+    "levels": {
+      "ema20": 3.4193168697777454e-06,
+      "ema60": 3.373108669497405e-06,
+      "ema144": 3.8881443208857245e-06,
+      "ema250": 4.4751951674094895e-06,
+      "ema333": 4.7605285448556e-06,
+      "current_price": 3.5178980597227318e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:16.849398+00:00"
+    },
+    "analysis_ts": "2025-10-26T04:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:17.216366+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.1975045954312352,
+      "atr_norm_slope": 0.0012607536254801745,
+      "dsep_fast": 0.025561676322614853,
+      "dsep_mid": 0.01620233685259373
+    },
+    "levels": {
+      "ema20": 3.4374262997070604e-06,
+      "ema60": 3.380858086367508e-06,
+      "ema144": 3.884300480377447e-06,
+      "ema250": 4.468296926107705e-06,
+      "ema333": 4.753635954072246e-06,
+      "current_price": 3.6094658840355553e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:17.216379+00:00"
+    },
+    "analysis_ts": "2025-10-26T05:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:17.618043+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19871661440900956,
+      "atr_norm_slope": 0.0006727725042810872,
+      "dsep_fast": 0.023881572973648676,
+      "dsep_mid": 0.016290732987192746
+    },
+    "levels": {
+      "ema20": 3.462592238991034e-06,
+      "ema60": 3.3913764659026317e-06,
+      "ema144": 3.881781420816224e-06,
+      "ema250": 4.462188334363331e-06,
+      "ema333": 4.7473367487316266e-06,
+      "current_price": 3.7016686621887847e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:17.618056+00:00"
+    },
+    "analysis_ts": "2025-10-26T06:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S0",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:18.049211+00:00",
+    "flag": {
+      "watch_only": true
+    },
+    "scores": {
+      "compression_index": 0.19964188993852586,
+      "atr_norm_slope": 0.00024486022711712004,
+      "dsep_fast": 0.019088810781630834,
+      "dsep_mid": 0.015430618241167829
+    },
+    "levels": {
+      "ema20": 3.4861853369139866e-06,
+      "ema60": 3.4018336233216284e-06,
+      "ema144": 3.879416432490235e-06,
+      "ema250": 4.456197349764276e-06,
+      "ema333": 4.741127066207377e-06,
+      "current_price": 3.710319767182035e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:18.049225+00:00"
+    },
+    "analysis_ts": "2025-10-26T07:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  },
+  {
+    "state": "S2",
+    "timeframe": "1h",
+    "t0": "2025-11-01T16:25:18.798414+00:00",
+    "flag": {
+      "uptrend_holding": true
+    },
+    "scores": {
+      "support_persistence": 0.5369776755459421,
+      "reaction_quality": 1.0,
+      "close_persistence": 0.15351827510938587,
+      "absorption_wicks": 0.0,
+      "trend_integrity": 0.46696623818771366,
+      "trend_strength": 0.46966503727149755,
+      "sr_reclaim_score": 0.0
+    },
+    "levels": {
+      "ema20": 3.4734298017469e-06,
+      "ema60": 3.400208003463856e-06,
+      "ema144": 3.872145201940846e-06,
+      "ema250": 4.447400974209657e-06,
+      "ema333": 4.73281045034781e-06,
+      "base_sr_level": 3.331457173010958e-06,
+      "flipped_sr_levels": [
+        {
+          "id": "55a65ac72d253b88",
+          "level": 3.331457173010958e-06,
+          "score": 1.0,
+          "order": 1,
+          "flipped_at": "2025-11-01T16:25:12.850866+00:00"
+        }
+      ],
+      "current_price": 3.3522522176595798e-06
+    },
+    "diagnostics": {},
+    "meta": {
+      "updated_at": "2025-11-01T16:25:18.798427+00:00"
+    },
+    "supports": {
+      "current_sr_level": 3.331457173010958e-06,
+      "halo": 1.0056756652978739e-07
+    },
+    "analysis_ts": "2025-10-26T08:00:00+00:00",
+    "contract": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump",
+    "chain": "solana"
+  }
+]

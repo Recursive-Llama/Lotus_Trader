@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeometryBuilder:
-    def __init__(self) -> None:
+    def __init__(self, generate_charts: bool = True) -> None:
         supabase_url = os.getenv("SUPABASE_URL", "")
         supabase_key = os.getenv("SUPABASE_KEY", "")
         if not supabase_url or not supabase_key:
@@ -38,26 +38,72 @@ class GeometryBuilder:
         self.sb: Client = create_client(supabase_url, supabase_key)
         self.persist = SpiralPersist()
         self.lookback_days = int(os.getenv("GEOM_LOOKBACK_DAYS", "14"))
+        self.generate_charts = generate_charts
 
     def _active_positions(self) -> List[Dict[str, Any]]:
         res = self.sb.table("lowcap_positions").select("id,token_contract,token_chain").eq("status", "active").limit(2000).execute()
         return res.data or []
 
-    def _fetch_bars(self, contract: str, chain: str, end: datetime, minutes: int) -> List[Dict[str, Any]]:
-        start = end - timedelta(minutes=minutes)
-        # Use OHLC data with 1h timeframe for geometry analysis (cleaner trendlines)
-        res = (
-            self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, high_native, low_native, close_native, volume")
-            .eq("token_contract", contract)
-            .eq("chain", chain)
-            .eq("timeframe", "1h")  # Use 1h timeframe for geometry (cleaner data)
-            .gte("timestamp", start.isoformat())
-            .lte("timestamp", end.isoformat())
-            .order("timestamp", desc=False)
-            .execute()
-        )
+    def _fetch_bars(self, contract: str, chain: str, end: datetime, minutes: int = None) -> List[Dict[str, Any]]:
+        # If minutes is None, fetch all available data
+        if minutes is not None:
+            start = end - timedelta(minutes=minutes)
+            # Use OHLC data with 1h timeframe for geometry analysis (cleaner trendlines)
+            res = (
+                self.sb.table("lowcap_price_data_ohlc")
+                .select("timestamp, high_native, low_native, close_native, volume")
+                .eq("token_contract", contract)
+                .eq("chain", chain)
+                .eq("timeframe", "1h")  # Use 1h timeframe for geometry (cleaner data)
+                .gte("timestamp", start.isoformat())
+                .lte("timestamp", end.isoformat())
+                .gt("close_native", 0)  # Filter out zero-price bars (no trading)
+                .order("timestamp", desc=False)
+                .execute()
+            )
+        else:
+            # Fetch all available data
+            res = (
+                self.sb.table("lowcap_price_data_ohlc")
+                .select("timestamp, high_native, low_native, close_native, volume")
+                .eq("token_contract", contract)
+                .eq("chain", chain)
+                .eq("timeframe", "1h")  # Use 1h timeframe for geometry (cleaner data)
+                .lte("timestamp", end.isoformat())
+                .gt("close_native", 0)  # Filter out zero-price bars (no trading)
+                .order("timestamp", desc=False)
+                .execute()
+            )
         return res.data or []
+
+    def _get_swing_points_with_coordinates(self, timestamps: List[datetime], highs_native: List[float], lows_native: List[float], closes: List[float]) -> List[Dict[str, Any]]:
+        """Get swing points with their coordinates (timestamps and prices)"""
+        if len(timestamps) < 3:
+            return []
+        
+        # Find all swing highs and lows first
+        swing_highs, swing_lows = self._swings_percentage_based(closes, prominence_threshold=0.5)
+        
+        # Extract swing points with their values
+        swing_points = []
+        for i in swing_highs:
+            swing_points.append({
+                'index': i,
+                'timestamp': timestamps[i].isoformat(),  # Convert datetime to ISO string
+                'price': highs_native[i],
+                'type': 'high'
+            })
+        for i in swing_lows:
+            swing_points.append({
+                'index': i,
+                'timestamp': timestamps[i].isoformat(),  # Convert datetime to ISO string
+                'price': lows_native[i],
+                'type': 'low'
+            })
+        
+        # Sort by timestamp
+        swing_points.sort(key=lambda x: x['timestamp'])
+        return swing_points
 
     def _swings_percentage_based(self, closes: List[float], prominence_threshold: float = 0.5) -> Tuple[List[int], List[int]]:
         """Find swing highs and lows using percentage-based prominence (more adaptive than ATR)"""
@@ -72,18 +118,20 @@ class GeometryBuilder:
                 # Calculate percentage prominence
                 window = closes[i - 2:i + 3]
                 min_in_window = min(window)
-                percentage_prominence = (c - min_in_window) / c * 100
-                if percentage_prominence >= prominence_threshold:
-                    highs.append(i)
+                if c > 0:  # Avoid division by zero
+                    percentage_prominence = (c - min_in_window) / c * 100
+                    if percentage_prominence >= prominence_threshold:
+                        highs.append(i)
             
             # Check for swing low (5-bar pattern)
             if c < closes[i - 1] and c < closes[i - 2] and c < closes[i + 1] and c < closes[i + 2]:
                 # Calculate percentage prominence
                 window = closes[i - 2:i + 3]
                 max_in_window = max(window)
-                percentage_prominence = (max_in_window - c) / c * 100
-                if percentage_prominence >= prominence_threshold:
-                    lows.append(i)
+                if c > 0:  # Avoid division by zero
+                    percentage_prominence = (max_in_window - c) / c * 100
+                    if percentage_prominence >= prominence_threshold:
+                        lows.append(i)
         
         return highs, lows
 
@@ -188,6 +236,194 @@ class GeometryBuilder:
                 })
         
         return segments
+
+    def _detect_trends_proper(self, timestamps: List[datetime], closes: List[float], 
+                              highs_native: List[float], lows_native: List[float]) -> List[Dict[str, Any]]:
+        """Proper trend detection: Find first trend using ATL/ATH, then detect subsequent trend changes"""
+        if len(timestamps) < 3:
+            return []
+        
+        # Find all swing highs and lows first
+        swing_highs, swing_lows = self._swings_percentage_based(closes, prominence_threshold=0.5)
+        
+        # Extract swing points with their values
+        swing_points = []
+        for i in swing_highs:
+            swing_points.append({
+                'index': i,
+                'timestamp': timestamps[i],
+                'price': highs_native[i],
+                'type': 'high'
+            })
+        for i in swing_lows:
+            swing_points.append({
+                'index': i,
+                'timestamp': timestamps[i],
+                'price': lows_native[i],
+                'type': 'low'
+            })
+        
+        # Sort by timestamp
+        swing_points.sort(key=lambda x: x['timestamp'])
+        
+        # Find ATH and ATL
+        ath = max(swing_points, key=lambda x: x['price'])
+        atl = min(swing_points, key=lambda x: x['price'])
+        
+        # Determine first trend based on which comes first
+        if ath['timestamp'] < atl['timestamp']:
+            # ATH comes first - first trend is downtrend
+            first_trend_type = 'downtrend'
+            first_trend_start = ath
+            first_trend_end = atl
+        else:
+            # ATL comes first - first trend is uptrend
+            first_trend_type = 'uptrend'
+            first_trend_start = atl
+            first_trend_end = ath
+        
+        # Initialize trend segments
+        trend_segments = [{
+            'start': first_trend_start,
+            'end': first_trend_end,
+            'type': first_trend_type,
+            'name': f'First {first_trend_type}'
+        }]
+        
+        # Now detect subsequent trend changes dynamically
+        current_trend_type = first_trend_type
+        current_trend_end = first_trend_end
+        
+        # Continue detecting trends until end of data
+        max_iterations = 10  # Prevent infinite loops
+        iteration = 0
+        
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # Generate trendlines for current trend
+            current_trendlines = self._generate_trendlines_for_segment(
+                timestamps, closes, swing_highs, swing_lows, current_trend_type
+            )
+            
+            if not current_trendlines:
+                break
+            
+            # Find the primary trendline for break detection
+            if current_trend_type == 'uptrend':
+                # Look for uptrend support line (lows)
+                primary_trendline = None
+                for tl in current_trendlines:
+                    if tl.get('type') == 'uptrend_lows':
+                        if primary_trendline is None or tl.get('r2_score', 0) > primary_trendline.get('r2_score', 0):
+                            primary_trendline = tl
+                
+                if not primary_trendline:
+                    break
+                
+                # Look for 3 swing highs below the uptrend support
+                swing_highs_after_end = [i for i in swing_highs if timestamps[i] > current_trend_end['timestamp']]
+                breaks_below = []
+                
+                for swing_idx in swing_highs_after_end:
+                    swing_time = timestamps[swing_idx]
+                    swing_price = closes[swing_idx]
+                    
+                    # Calculate trendline price at this time
+                    hours_diff = (swing_time - datetime.fromisoformat(primary_trendline['anchor_time_iso'].replace('Z', '+00:00'))).total_seconds() / 3600
+                    trendline_price = primary_trendline['intercept'] + primary_trendline['slope'] * hours_diff
+                    
+                    if swing_price < trendline_price:
+                        breaks_below.append(swing_idx)
+                
+                if len(breaks_below) >= 3:
+                    # Trend change: uptrend -> downtrend
+                    # Find the swing point corresponding to the first break
+                    first_break_idx = min(breaks_below)
+                    trend_change_point = None
+                    for sp in swing_points:
+                        if sp['index'] == first_break_idx:
+                            trend_change_point = sp
+                            break
+                    
+                    if trend_change_point:
+                        new_trend_type = 'downtrend'
+                        
+                        # Find end of new downtrend (next significant low)
+                        swing_lows_after_change = [sp for sp in swing_points if sp['timestamp'] > trend_change_point['timestamp'] and sp['type'] == 'low']
+                        if swing_lows_after_change:
+                            new_trend_end = min(swing_lows_after_change, key=lambda x: x['price'])
+                            
+                            trend_segments.append({
+                                'start': trend_change_point,
+                                'end': new_trend_end,
+                                'type': new_trend_type,
+                                'name': f'{current_trend_type} to {new_trend_type}'
+                            })
+                            
+                            current_trend_type = new_trend_type
+                            current_trend_end = new_trend_end
+                            continue
+            
+            else:  # current_trend_type == 'downtrend'
+                # Look for downtrend resistance line (highs)
+                primary_trendline = None
+                for tl in current_trendlines:
+                    if tl.get('type') == 'downtrend_highs':
+                        if primary_trendline is None or tl.get('r2_score', 0) > primary_trendline.get('r2_score', 0):
+                            primary_trendline = tl
+                
+                if not primary_trendline:
+                    break
+                
+                # Look for 3 swing lows above the downtrend resistance
+                swing_lows_after_end = [i for i in swing_lows if timestamps[i] > current_trend_end['timestamp']]
+                breaks_above = []
+                
+                for swing_idx in swing_lows_after_end:
+                    swing_time = timestamps[swing_idx]
+                    swing_price = closes[swing_idx]
+                    
+                    # Calculate trendline price at this time
+                    hours_diff = (swing_time - datetime.fromisoformat(primary_trendline['anchor_time_iso'].replace('Z', '+00:00'))).total_seconds() / 3600
+                    trendline_price = primary_trendline['intercept'] + primary_trendline['slope'] * hours_diff
+                    
+                    if swing_price > trendline_price:
+                        breaks_above.append(swing_idx)
+                
+                if len(breaks_above) >= 3:
+                    # Trend change: downtrend -> uptrend
+                    # Find the swing point corresponding to the first break
+                    first_break_idx = min(breaks_above)
+                    trend_change_point = None
+                    for sp in swing_points:
+                        if sp['index'] == first_break_idx:
+                            trend_change_point = sp
+                            break
+                    
+                    if trend_change_point:
+                        new_trend_type = 'uptrend'
+                        
+                        # Find end of new uptrend (next significant high)
+                        swing_highs_after_change = [sp for sp in swing_points if sp['timestamp'] > trend_change_point['timestamp'] and sp['type'] == 'high']
+                        if swing_highs_after_change:
+                            new_trend_end = max(swing_highs_after_change, key=lambda x: x['price'])
+                            
+                            trend_segments.append({
+                                'start': trend_change_point,
+                                'end': new_trend_end,
+                                'type': new_trend_type,
+                                'name': f'{current_trend_type} to {new_trend_type}'
+                            })
+                            
+                            current_trend_type = new_trend_type
+                            current_trend_end = new_trend_end
+                            continue
+            
+            # No trend change detected, break the loop
+            break
+        
+        return trend_segments
 
     def _detect_trend_changes(self, timestamps: List[datetime], closes: List[float], 
                              swing_highs: List[int], swing_lows: List[int], 
@@ -553,10 +789,113 @@ class GeometryBuilder:
         b = median(intercepts) if intercepts else (ys[-1] if ys else 0.0)
         return m, b
 
+    def _cluster_swing_points(self, timestamps: List[datetime], closes: List[float], 
+                             swing_indices: List[int], cluster_window_hours: int = 24, 
+                             price_threshold_pct: float = 10.0) -> List[List[int]]:
+        """Cluster swing points by both time and price proximity"""
+        if len(swing_indices) < 2:
+            return [swing_indices] if swing_indices else []
+        
+        # Sort swing points by timestamp
+        sorted_swings = sorted(swing_indices, key=lambda i: timestamps[i])
+        
+        clusters = []
+        current_cluster = [sorted_swings[0]]
+        
+        for i in range(1, len(sorted_swings)):
+            current_idx = sorted_swings[i]
+            prev_idx = sorted_swings[i-1]
+            
+            # Calculate time difference in hours
+            time_diff_hours = (timestamps[current_idx] - timestamps[prev_idx]).total_seconds() / 3600
+            
+            # Calculate price difference as percentage
+            current_price = closes[current_idx]
+            prev_price = closes[prev_idx]
+            price_diff_pct = abs(current_price - prev_price) / prev_price * 100 if prev_price > 0 else 0
+            
+            # Check both time AND price proximity
+            if time_diff_hours <= cluster_window_hours and price_diff_pct <= price_threshold_pct:
+                # Add to current cluster (close in both time and price)
+                current_cluster.append(current_idx)
+            else:
+                # Start new cluster
+                if len(current_cluster) >= 3:  # Only keep clusters with 3+ points
+                    clusters.append(current_cluster)
+                current_cluster = [current_idx]
+        
+        # Add the last cluster
+        if len(current_cluster) >= 3:
+            clusters.append(current_cluster)
+        
+        return clusters
+
+    def _calculate_ema(self, prices: List[float], period: int) -> List[float]:
+        """Calculate Exponential Moving Average"""
+        if len(prices) < period:
+            return []
+        
+        ema_values = []
+        multiplier = 2 / (period + 1)
+        
+        # Start with SMA for the first value
+        sma = sum(prices[:period]) / period
+        ema_values.append(sma)
+        
+        # Calculate EMA for remaining values
+        for i in range(period, len(prices)):
+            ema = (prices[i] * multiplier) + (ema_values[-1] * (1 - multiplier))
+            ema_values.append(ema)
+        
+        # Pad the beginning with None values to match original length
+        return [None] * (period - 1) + ema_values
+
+    def _calculate_avwap(self, prices: List[float], volumes: List[float], window: int = None) -> List[float]:
+        """Calculate Anchored Volume-Weighted Average Price (AVWAP)"""
+        if len(prices) < 2 or len(volumes) < 2:
+            return []
+        
+        avwap_values = []
+        
+        # If window is None, calculate cumulative AVWAP from start
+        # Otherwise use rolling window
+        if window is None:
+            # Cumulative AVWAP from beginning
+            cumulative_pv = 0.0
+            cumulative_v = 0.0
+            
+            for i in range(len(prices)):
+                if volumes[i] > 0:
+                    cumulative_pv += prices[i] * volumes[i]
+                    cumulative_v += volumes[i]
+                    avwap = cumulative_pv / cumulative_v if cumulative_v > 0 else prices[i]
+                else:
+                    # Use previous AVWAP if no volume
+                    avwap = avwap_values[-1] if avwap_values else prices[i]
+                avwap_values.append(avwap)
+        else:
+            # Rolling window AVWAP
+            for i in range(len(prices)):
+                start_idx = max(0, i - window + 1)
+                window_prices = prices[start_idx:i+1]
+                window_volumes = volumes[start_idx:i+1]
+                
+                pv_sum = sum(p * v for p, v in zip(window_prices, window_volumes) if v > 0)
+                v_sum = sum(v for v in window_volumes if v > 0)
+                
+                if v_sum > 0:
+                    avwap = pv_sum / v_sum
+                else:
+                    avwap = prices[i] if prices else 0.0
+                
+                avwap_values.append(avwap)
+        
+        return avwap_values
+
     def _generate_trendlines_for_segment(self, timestamps: List[datetime], closes: List[float], 
                                        swing_highs: List[int], swing_lows: List[int], 
                                        segment_name: str) -> List[Dict[str, Any]]:
-        """Generate trendlines for a specific trend segment using linear regression"""
+        """Generate trendlines for a specific trend segment using clustered swing points"""
         trendlines = []
         
         if len(swing_highs) < 2 and len(swing_lows) < 2:
@@ -565,69 +904,87 @@ class GeometryBuilder:
         # Convert timestamps to numeric for regression
         ts_numeric = [(t - timestamps[0]).total_seconds() / 3600 for t in timestamps]
         
-        # Generate trendlines for swing highs (resistance)
+        # Cluster swing highs and collect all "good" swing points
         if len(swing_highs) >= 2:
-            high_times = [ts_numeric[i] for i in swing_highs]
-            high_prices = [closes[i] for i in swing_highs]
+            high_clusters = self._cluster_swing_points(timestamps, closes, swing_highs, cluster_window_hours=24, price_threshold_pct=10.0)
             
-            # Linear regression for swing highs
-            n = len(high_times)
-            sum_x = sum(high_times)
-            sum_y = sum(high_prices)
-            sum_xy = sum(high_times[i] * high_prices[i] for i in range(n))
-            sum_x2 = sum(t * t for t in high_times)
+            # Collect all swing points that belong to clusters of 3+ points
+            good_high_indices = []
+            for cluster in high_clusters:
+                good_high_indices.extend(cluster)
             
-            if n * sum_x2 - sum_x * sum_x != 0:
-                slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
-                intercept = (sum_y - slope * sum_x) / n
+            # Draw ONE trendline through all good swing highs
+            if len(good_high_indices) >= 2:
+                high_times = [ts_numeric[i] for i in good_high_indices]
+                high_prices = [closes[i] for i in good_high_indices]
                 
-                # Calculate R² score
-                y_pred = [slope * t + intercept for t in high_times]
-                ss_res = sum((high_prices[i] - y_pred[i]) ** 2 for i in range(n))
-                ss_tot = sum((p - sum_y/n) ** 2 for p in high_prices)
-                r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                # Linear regression for all good swing highs
+                n = len(high_times)
+                sum_x = sum(high_times)
+                sum_y = sum(high_prices)
+                sum_xy = sum(high_times[i] * high_prices[i] for i in range(n))
+                sum_x2 = sum(t * t for t in high_times)
                 
-                trendlines.append({
-                    "type": f"{segment_name}_highs",
-                    "slope": slope,
-                    "intercept": intercept,
-                    "r2_score": r2,
-                    "points_count": len(swing_highs),
-                    "confidence": min(1.0, r2),
-                    "anchor_time_iso": timestamps[0].isoformat()
-                })
+                if n * sum_x2 - sum_x * sum_x != 0:
+                    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
+                    intercept = (sum_y - slope * sum_x) / n
+                    
+                    # Calculate R² score
+                    y_pred = [slope * t + intercept for t in high_times]
+                    ss_res = sum((high_prices[i] - y_pred[i]) ** 2 for i in range(n))
+                    ss_tot = sum((p - sum_y/n) ** 2 for p in high_prices)
+                    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                    
+                    trendlines.append({
+                        "type": f"{segment_name}_highs",
+                        "slope": slope,
+                        "intercept": intercept,
+                        "r2_score": r2,
+                        "points_count": len(good_high_indices),
+                        "confidence": min(1.0, r2),
+                        "anchor_time_iso": timestamps[0].isoformat()
+                    })
         
-        # Generate trendlines for swing lows (support)
+        # Cluster swing lows and collect all "good" swing points
         if len(swing_lows) >= 2:
-            low_times = [ts_numeric[i] for i in swing_lows]
-            low_prices = [closes[i] for i in swing_lows]
+            low_clusters = self._cluster_swing_points(timestamps, closes, swing_lows, cluster_window_hours=24, price_threshold_pct=10.0)
             
-            # Linear regression for swing lows
-            n = len(low_times)
-            sum_x = sum(low_times)
-            sum_y = sum(low_prices)
-            sum_xy = sum(low_times[i] * low_prices[i] for i in range(n))
-            sum_x2 = sum(t * t for t in low_times)
+            # Collect all swing points that belong to clusters of 3+ points
+            good_low_indices = []
+            for cluster in low_clusters:
+                good_low_indices.extend(cluster)
             
-            if n * sum_x2 - sum_x * sum_x != 0:
-                slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
-                intercept = (sum_y - slope * sum_x) / n
+            # Draw ONE trendline through all good swing lows
+            if len(good_low_indices) >= 2:
+                low_times = [ts_numeric[i] for i in good_low_indices]
+                low_prices = [closes[i] for i in good_low_indices]
                 
-                # Calculate R² score
-                y_pred = [slope * t + intercept for t in low_times]
-                ss_res = sum((low_prices[i] - y_pred[i]) ** 2 for i in range(n))
-                ss_tot = sum((p - sum_y/n) ** 2 for p in low_prices)
-                r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                # Linear regression for all good swing lows
+                n = len(low_times)
+                sum_x = sum(low_times)
+                sum_y = sum(low_prices)
+                sum_xy = sum(low_times[i] * low_prices[i] for i in range(n))
+                sum_x2 = sum(t * t for t in low_times)
                 
-                trendlines.append({
-                    "type": f"{segment_name}_lows",
-                    "slope": slope,
-                    "intercept": intercept,
-                    "r2_score": r2,
-                    "points_count": len(swing_lows),
-                    "confidence": min(1.0, r2),
-                    "anchor_time_iso": timestamps[0].isoformat()
-                })
+                if n * sum_x2 - sum_x * sum_x != 0:
+                    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
+                    intercept = (sum_y - slope * sum_x) / n
+                    
+                    # Calculate R² score
+                    y_pred = [slope * t + intercept for t in low_times]
+                    ss_res = sum((low_prices[i] - y_pred[i]) ** 2 for i in range(n))
+                    ss_tot = sum((p - sum_y/n) ** 2 for p in low_prices)
+                    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                    
+                    trendlines.append({
+                        "type": f"{segment_name}_lows",
+                        "slope": slope,
+                        "intercept": intercept,
+                        "r2_score": r2,
+                        "points_count": len(good_low_indices),
+                        "confidence": min(1.0, r2),
+                        "anchor_time_iso": timestamps[0].isoformat()
+                    })
         
         return trendlines
 
@@ -641,7 +998,7 @@ class GeometryBuilder:
             pid = p["id"]
             contract = p["token_contract"]
             chain = p["token_chain"]
-            bars = self._fetch_bars(contract, chain, now, minutes)
+            bars = self._fetch_bars(contract, chain, now, None)  # Use all available data
             
             if len(bars) < 50:  # Need sufficient data for analysis
                 continue
@@ -653,6 +1010,9 @@ class GeometryBuilder:
             
             # Use improved percentage-based swing detection
             swing_highs, swing_lows = self._swings_percentage_based(closes, prominence_threshold=0.5)
+            
+            # Get swing points with coordinates
+            swing_points = self._get_swing_points_with_coordinates(timestamps, highs_native, lows_native, closes)
             
             if len(swing_highs) < 3 and len(swing_lows) < 3:
                 continue  # Need sufficient swing points
@@ -695,8 +1055,8 @@ class GeometryBuilder:
                 sr_levels.sort(key=lambda x: (x["strength"], -abs(x["price"])), reverse=True)
                 sr_levels = sr_levels[:12]  # Keep top 12 levels (increased for Fib levels)
             
-            # Use ATH/ATL-based sustained trend segmentation (fallback for first trend)
-            trend_segments = self._find_ath_atl_pivots(timestamps, closes, highs_native, lows_native)
+            # Use proper trend detection instead of the broken ATH/ATL logic
+            trend_segments = self._detect_trends_proper(timestamps, closes, highs_native, lows_native)
             
             # Generate trendlines for each sustained trend segment
             all_trendlines = []
@@ -732,95 +1092,10 @@ class GeometryBuilder:
                 )
                 all_trendlines.extend(full_trendlines)
             
-            # Remove dynamic trend-detection: rely solely on ATH/ATL segments for trend context
-            trend_changes = []
-            current_trendlines = []
-            
-            # Determine current trend from last ATH/ATL segment (seed) and
-            # run confirm-only flip detection BEFORE rendering so annotations draw
+            # Determine current trend from last segment
             current_trend_type = trend_segments[-1].get('type') if trend_segments else None
             attempt: Dict[str, Any] | None = None
             last_change: Dict[str, Any] | None = None
-            confirmed_segments: List[Dict[str, Any]] = []
-
-            def project_price_at(trendline: Dict[str, Any], ts: datetime) -> float:
-                try:
-                    t0 = timestamps[0]
-                    hours = (ts - t0).total_seconds() / 3600
-                    return float(trendline["slope"]) * hours + float(trendline["intercept"])
-                except Exception:
-                    return float("nan")
-
-            # Replay confirmations across all boundaries
-            if trend_segments and segment_trendlines_list:
-                # Build confirmed segments starting with the seed
-                confirmed_segments.append(trend_segments[0])
-                for idx in range(len(trend_segments) - 1):
-                    seg = trend_segments[idx]
-                    seg_type = seg.get('type')
-                    seg_end_ts: datetime = seg['end']['timestamp']
-                    seg_trendlines = segment_trendlines_list[idx]
-                    prev_end_ts = seg_end_ts  # end timestamp of previous segment boundary
-
-                    # Choose primary diagonal per rules and confirmation logic
-                    if seg_type == 'uptrend':
-                        # Up -> Down: confirm with swing LOWS breaking below the uptrend-lows support
-                        candidates = [tl for tl in seg_trendlines if tl.get('type') == 'uptrend_lows']
-                        needed = 3
-                        comparator = lambda bar_idx, tl: closes[bar_idx] < project_price_at(tl, timestamps[bar_idx])
-                        conf_swings = [i for i in swing_lows if timestamps[i] > seg_end_ts]
-                    else:
-                        # Down -> Up: confirm with swing HIGHS breaking above the downtrend-highs resistance
-                        candidates = [tl for tl in seg_trendlines if tl.get('type') == 'downtrend_highs']
-                        needed = 3
-                        comparator = lambda bar_idx, tl: closes[bar_idx] > project_price_at(tl, timestamps[bar_idx])
-                        conf_swings = [i for i in swing_highs if timestamps[i] > seg_end_ts]
-
-                    if not candidates:
-                        continue
-
-                    primary = max(candidates, key=lambda x: x.get('r2_score', 0.0))
-                    conf_idxs = [i for i in conf_swings if comparator(i, primary)]
-
-                    if len(conf_idxs) >= needed:
-                        # Confirmed boundary
-                        if seg_type == 'uptrend':
-                            # Up→Down: next segment starts at ATH (seg end)
-                            confirmed_segments.append(trend_segments[idx + 1])
-                            last_change = {
-                                'direction': 'up_to_down',
-                                'confirmed_at': timestamps[conf_idxs[needed - 1]].isoformat(),
-                                'start_at': prev_end_ts.isoformat(),
-                                'end_at_previous': prev_end_ts.isoformat(),
-                            }
-                        else:
-                            # Down→Up: next segment starts at retro Break
-                            atl_ts = prev_end_ts
-                            break_ts = None
-                            for j in range(len(timestamps)):
-                                if timestamps[j] <= atl_ts:
-                                    continue
-                                if closes[j] > project_price_at(primary, timestamps[j]):
-                                    break_ts = timestamps[j]
-                                    break
-                            last_change = {
-                                'direction': 'down_to_up',
-                                'confirmed_at': timestamps[conf_idxs[needed - 1]].isoformat(),
-                                'start_at': (break_ts or timestamps[conf_idxs[needed - 1]]).isoformat(),
-                                'end_at_previous': atl_ts.isoformat(),
-                            }
-                            confirmed_segments.append(trend_segments[idx + 1])
-                    elif len(conf_idxs) > 0 and idx == len(trend_segments) - 2:
-                        # Only expose attempt on the last boundary
-                        attempt = {
-                            'direction': 'up_to_down' if seg_type == 'uptrend' else 'down_to_up',
-                            'confirms_so_far': len(conf_idxs),
-                            'started_at': timestamps[conf_idxs[0]].isoformat(),
-                        }
-
-                # Update current trend from the last confirmed segment
-                if confirmed_segments:
-                    current_trend_type = confirmed_segments[-1].get('type')
 
             # Convert trendlines to the expected format and build LLM payload
             diagonals: Dict[str, Any] = {}
@@ -876,182 +1151,300 @@ class GeometryBuilder:
                 })
 
             # Render diagonals-only chart (using our proven approach)
-            try:
-                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
-                
-                # Price chart
-                # Get token name if available, otherwise use contract
-                token_name = self._get_token_name(contract, chain) or f'Token_{contract[:8]}'
-                
-                ax1.plot(timestamps, closes, 'b-', linewidth=1, label=f'{token_name} Price (Native)', alpha=0.8)
-                ax1.set_ylabel('Price (Native)')
-                ax1.set_title(f'{token_name} Diagonals - LLM Analysis Chart')
-                ax1.grid(True, alpha=0.3)
-                
-                # Mark swing highs and lows
-                swing_high_times = [timestamps[i] for i in swing_highs]
-                swing_high_prices = [closes[i] for i in swing_highs]
-                ax1.scatter(swing_high_times, swing_high_prices, color='red', s=80, marker='^', 
-                           label=f'Swing Highs ({len(swing_highs)})', alpha=0.8, zorder=5)
-                
-                swing_low_times = [timestamps[i] for i in swing_lows]
-                swing_low_prices = [closes[i] for i in swing_lows]
-                ax1.scatter(swing_low_times, swing_low_prices, color='green', s=80, marker='v', 
-                           label=f'Swing Lows ({len(swing_lows)})', alpha=0.8, zorder=5)
-                
-                # Add ATH/ATL pivot lines and trend segments
-                if trend_segments:
-                    for i, segment in enumerate(trend_segments):
-                        # Mark segment start and end
-                        ax1.axvline(x=segment['start']['timestamp'], color='purple', linestyle=':', alpha=0.6, linewidth=1)
-                        ax1.axvline(x=segment['end']['timestamp'], color='red', linestyle=':', alpha=0.6, linewidth=1)
-                        
-                        # Add segment labels
-                        mid_time = segment['start']['timestamp'] + (segment['end']['timestamp'] - segment['start']['timestamp']) / 2
-                        ax1.text(mid_time, max(closes) * 0.9, f"{segment['name']}\n({segment['type']})", 
-                                ha='center', va='center', fontsize=8, alpha=0.8,
-                                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
-                
-                # Plot trendlines with specific colors for better visibility
-                def get_trendline_color(trendline_type: str) -> str:
-                    """Assign specific colors based on trendline type for better visibility"""
-                    if 'uptrend' in trendline_type.lower() and 'highs' in trendline_type.lower():
-                        return 'purple'  # Uptrend highs - purple
-                    elif 'uptrend' in trendline_type.lower() and 'lows' in trendline_type.lower():
-                        return 'green'  # Uptrend lows - green
-                    elif 'downtrend' in trendline_type.lower() and 'highs' in trendline_type.lower():
-                        return 'red'    # Downtrend highs - red
-                    elif 'downtrend' in trendline_type.lower() and 'lows' in trendline_type.lower():
-                        return 'orange' # Downtrend lows - orange
-                    else:
-                        return 'blue'  # Default - blue
-                
-                def get_trendline_style(trendline_type: str) -> str:
-                    """Assign specific line styles based on trendline type"""
-                    if 'highs' in trendline_type.lower():
-                        return '-'     # Solid for highs
-                    else:
-                        return '--'    # Dashed for lows
-                
-                for i, trendline in enumerate(all_trendlines):
-                    # Convert timestamps to numeric for regression
-                    ts_numeric = [(t - timestamps[0]).total_seconds() / 3600 for t in timestamps]
-                    
-                    # Extend line to chart edges
-                    time_start = (timestamps[0] - timestamps[0]).total_seconds() / 3600
-                    time_end = (timestamps[-1] - timestamps[0]).total_seconds() / 3600
-                    price_start = trendline["slope"] * time_start + trendline["intercept"]
-                    price_end = trendline["slope"] * time_end + trendline["intercept"]
-                    
-                    color = get_trendline_color(trendline["type"])
-                    style = get_trendline_style(trendline["type"])
-                    
-                    ax1.plot([timestamps[0], timestamps[-1]], [price_start, price_end], 
-                            color=color, linestyle=style, linewidth=2, 
-                            label=f'{trendline["type"].replace("_", " ").title()} (R²={trendline["r2_score"]:.3f})', alpha=0.8)
-                
-                # Add horizontal S/R levels to the chart (exclude Fib extensions for clarity)
-                for level in sr_levels:
-                    # Skip Fib extensions on chart (too cluttered) but keep in data
-                    if level.get('source') == 'fib_extension':
-                        continue
-                        
-                    ax1.axhline(y=level['price'], color='blue', linestyle='-', alpha=0.6, linewidth=1)
-                    source = level.get('source', 'clustered')
-                    label = f"{source}: {level['price']:.6f} ({level['strength']})"
-                    ax1.text(timestamps[0], level['price'], label, 
-                            fontsize=8, color='blue', alpha=0.8, va='bottom')
-
-                # Mark the most recent confirmed trend change on chart
-                try:
-                    if last_change:
-                        from datetime import datetime as _dt
-                        def _to_utc_dt(s: str) -> datetime:
-                            # Parse ISO string and normalize to UTC-aware
-                            try:
-                                dt = _dt.fromisoformat(s.replace('Z', '+00:00'))
-                                if dt.tzinfo is None:
-                                    return dt.replace(tzinfo=timezone.utc)
-                                return dt.astimezone(timezone.utc)
-                            except Exception:
-                                return timestamps[0]
-
-                        change_dir = last_change.get('direction')
-                        ts_prev_end = _to_utc_dt(last_change.get('end_at_previous')) if last_change.get('end_at_previous') else None
-                        ts_start = _to_utc_dt(last_change.get('start_at')) if last_change.get('start_at') else None
-                        ts_confirm = _to_utc_dt(last_change.get('confirmed_at')) if last_change.get('confirmed_at') else None
-
-                        ymax = max(closes) if closes else 0.0
-
-                        if ts_prev_end:
-                            ax1.axvline(ts_prev_end, color='purple', linestyle=':', linewidth=1.5, alpha=0.9, label='Prev trend end (ATH/ATL)')
-                        if ts_start and change_dir == 'down_to_up':
-                            ax1.axvline(ts_start, color='green', linestyle='--', linewidth=1.5, alpha=0.9, label='Break (Uptrend start)')
-                        # Only draw confirmation if it occurs after previous trend end
-                        if ts_confirm and (not ts_prev_end or ts_confirm > ts_prev_end):
-                            ax1.axvline(ts_confirm, color='black', linestyle='-', linewidth=1.2, alpha=0.9, label='Trend change confirmed')
-                        # Annotate ISO times for debugging/clarity
-                        y_annot = ymax * 1.02 if ymax else 0.0
-                        x0 = ts_prev_end or timestamps[0]
-                        lbl = []
-                        if ts_prev_end:
-                            lbl.append(f"prev_end={ts_prev_end.isoformat()}")
-                        if ts_start and change_dir == 'down_to_up':
-                            lbl.append(f"break={ts_start.isoformat()}")
-                        if ts_confirm:
-                            lbl.append(f"confirm={ts_confirm.isoformat()}")
-                        if lbl:
-                            ax1.text(x0, closes[-1] if closes else 0.0, " | ".join(lbl), fontsize=8, color='black', alpha=0.8, va='bottom')
-                except Exception:
-                    pass
-                
-                ax1.legend()
-                
-                # Set chart limits to focus on relevant data (reduce zoom out)
-                if len(timestamps) > 0:
-                    # Focus on the main data range, with some padding
-                    time_padding = (timestamps[-1] - timestamps[0]) * 0.05  # 5% padding
-                    ax1.set_xlim(timestamps[0] - time_padding, timestamps[-1] + time_padding)
-                    
-                    # Price limits with some padding
-                    price_padding = (max(closes) - min(closes)) * 0.1  # 10% padding
-                    ax1.set_ylim(min(closes) - price_padding, max(closes) + price_padding)
-                
-                # Volume chart - use appropriate width for 1h bars
-                volumes = [float(b["volume"]) for b in bars]
-                # Calculate appropriate width for 1h bars (1/24 of a day)
-                bar_width = 1/24  # 1 hour = 1/24 of a day
-                ax2.bar(timestamps, volumes, width=bar_width, alpha=0.7, color='gray')
-                ax2.set_ylabel('Volume (USD)')
-                ax2.set_xlabel('Time')
-                ax2.grid(True, alpha=0.3)
-                
-                # Format x-axis
-                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-                ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-                ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                
-                # Use token name for file naming
-                token_name = self._get_token_name(contract, chain) or f'Token_{contract[:8]}'
-                safe_name = token_name.replace(' ', '_').replace('/', '_')
-                out_png = f"diagonals_{safe_name}_{chain}_{now.strftime('%Y%m%d%H%M')}.png"
-                plt.savefig(out_png, dpi=300, bbox_inches='tight')
-                plt.close(fig)
-            except Exception as _e:
+            if not self.generate_charts:
                 out_png = ""
-                logger.warning("Failed to render diagonals chart: %s", _e)
+            else:
+                try:
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
+                    
+                    # Price chart
+                    # Get token name if available, otherwise use contract
+                    token_name = self._get_token_name(contract, chain) or f'Token_{contract[:8]}'
+                    
+                    ax1.plot(timestamps, closes, 'b-', linewidth=1, label=f'{token_name} Price (Native)', alpha=0.8)
+                    
+                    # Get volumes for AVWAP calculation
+                    volumes = [float(b["volume"]) for b in bars]
+                    
+                    # Calculate EMAs for bands
+                    ema20 = self._calculate_ema(closes, 20)
+                    ema60 = self._calculate_ema(closes, 60)
+                    ema144 = self._calculate_ema(closes, 144)
+                    ema250 = self._calculate_ema(closes, 250)
+                    ema333 = self._calculate_ema(closes, 333)
+                    
+                    # Calculate AVWAP (cumulative from start)
+                    avwap = self._calculate_avwap(closes, volumes, window=None)
+                    
+                    # Plot fast band: AVWAP + EMA 20
+                    if avwap and len(avwap) > 0:
+                        # Filter out None values for plotting
+                        avwap_valid = [(t, v) for t, v in zip(timestamps, avwap) if v is not None]
+                        if avwap_valid:
+                            avwap_times, avwap_values = zip(*avwap_valid)
+                            ax1.plot(avwap_times, avwap_values, 'cyan', linewidth=2, label='AVWAP', alpha=0.8, linestyle='--')
+                    if ema20:
+                        ax1.plot(timestamps, ema20, 'orange', linewidth=2, label='EMA 20', alpha=0.8)
+                    
+                    # Plot mid band: EMA 60 - EMA 144
+                    if ema60:
+                        ax1.plot(timestamps, ema60, 'purple', linewidth=2, label='EMA 60', alpha=0.8)
+                    if ema144:
+                        ax1.plot(timestamps, ema144, 'red', linewidth=2, label='EMA 144', alpha=0.8)
+                    
+                    # Plot slow band: EMA 250 - EMA 333
+                    if ema250:
+                        ax1.plot(timestamps, ema250, 'darkred', linewidth=2, label='EMA 250', alpha=0.8)
+                    if ema333:
+                        ax1.plot(timestamps, ema333, 'black', linewidth=3, label='EMA 333', alpha=0.9)
+                    
+                    # Determine band states at latest bar
+                    latest_idx = len(closes) - 1
+                    band_states = {}
+                    
+                    # Fast band: EMA 20 vs AVWAP
+                    if ema20 and avwap and latest_idx < len(ema20) and latest_idx < len(avwap):
+                        if ema20[latest_idx] is not None and avwap[latest_idx] is not None:
+                            fast_bullish = ema20[latest_idx] > avwap[latest_idx]
+                            band_states['fast'] = 'bullish' if fast_bullish else 'bearish'
+                    
+                    # Mid band: EMA 60 vs EMA 144
+                    if ema60 and ema144 and latest_idx < len(ema60) and latest_idx < len(ema144):
+                        if ema60[latest_idx] is not None and ema144[latest_idx] is not None:
+                            mid_bullish = ema60[latest_idx] > ema144[latest_idx]
+                            band_states['mid'] = 'bullish' if mid_bullish else 'bearish'
+                    
+                    # Slow band: EMA 250 vs EMA 333
+                    if ema250 and ema333 and latest_idx < len(ema250) and latest_idx < len(ema333):
+                        if ema250[latest_idx] is not None and ema333[latest_idx] is not None:
+                            slow_bullish = ema250[latest_idx] > ema333[latest_idx]
+                            band_states['slow'] = 'bullish' if slow_bullish else 'bearish'
+                    
+                    # Add band state annotation
+                    if band_states:
+                        band_text = []
+                        for band_name, state in band_states.items():
+                            symbol = 'UP' if state == 'bullish' else 'DOWN'
+                            color = 'green' if state == 'bullish' else 'red'
+                            band_text.append(f'{band_name.upper()}: {symbol}')
+                    
+                    if band_text:
+                        # Determine overall trend color
+                        all_bullish = all(s == 'bullish' for s in band_states.values())
+                        all_bearish = all(s == 'bearish' for s in band_states.values())
+                        bg_color = 'lightgreen' if all_bullish else ('lightcoral' if all_bearish else 'lightyellow')
+                        
+                        ax1.text(0.02, 0.98, ' | '.join(band_text), transform=ax1.transAxes,
+                                fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', 
+                                facecolor=bg_color, alpha=0.8))
+                    
+                    ax1.set_ylabel('Price (Native)')
+                    ax1.set_title(f'{token_name} Diagonals + EMAs - Analysis Chart')
+                    ax1.grid(True, alpha=0.3)
+                    
+                    # Mark swing highs and lows
+                    swing_high_times = [timestamps[i] for i in swing_highs]
+                    swing_high_prices = [closes[i] for i in swing_highs]
+                    ax1.scatter(swing_high_times, swing_high_prices, color='red', s=80, marker='^', 
+                           label=f'Swing Highs ({len(swing_highs)})', alpha=0.8, zorder=5)
+                    
+                    swing_low_times = [timestamps[i] for i in swing_lows]
+                    swing_low_prices = [closes[i] for i in swing_lows]
+                    ax1.scatter(swing_low_times, swing_low_prices, color='green', s=80, marker='v', 
+                           label=f'Swing Lows ({len(swing_lows)})', alpha=0.8, zorder=5)
+                    
+                    # Add ATH/ATL pivot lines and trend segments
+                    if trend_segments:
+                        for i, segment in enumerate(trend_segments):
+                            # Mark segment start and end
+                            ax1.axvline(x=segment['start']['timestamp'], color='purple', linestyle=':', alpha=0.6, linewidth=1)
+                            ax1.axvline(x=segment['end']['timestamp'], color='red', linestyle=':', alpha=0.6, linewidth=1)
+                            
+                            # Add segment labels
+                            mid_time = segment['start']['timestamp'] + (segment['end']['timestamp'] - segment['start']['timestamp']) / 2
+                            ax1.text(mid_time, max(closes) * 0.9, f"{segment['name']}\n({segment['type']})", 
+                                    ha='center', va='center', fontsize=8, alpha=0.8,
+                                    bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
+                    
+                    # Plot trendlines with specific colors for better visibility
+                    def get_trendline_color(trendline_type: str) -> str:
+                        """Assign specific colors based on trendline type for better visibility"""
+                        if 'uptrend' in trendline_type.lower() and 'highs' in trendline_type.lower():
+                            return 'purple'  # Uptrend highs - purple
+                        elif 'uptrend' in trendline_type.lower() and 'lows' in trendline_type.lower():
+                            return 'green'  # Uptrend lows - green
+                        elif 'downtrend' in trendline_type.lower() and 'highs' in trendline_type.lower():
+                            return 'red'    # Downtrend highs - red
+                        elif 'downtrend' in trendline_type.lower() and 'lows' in trendline_type.lower():
+                            return 'orange' # Downtrend lows - orange
+                        else:
+                            return 'blue'  # Default - blue
+                    
+                    def get_trendline_style(trendline_type: str) -> str:
+                        """Assign specific line styles based on trendline type"""
+                        if 'highs' in trendline_type.lower():
+                            return '-'     # Solid for highs
+                        else:
+                            return '--'    # Dashed for lows
+                    
+                    for i, trendline in enumerate(all_trendlines):
+                        # Convert timestamps to numeric for regression
+                        ts_numeric = [(t - timestamps[0]).total_seconds() / 3600 for t in timestamps]
+                        
+                        # Extend line to chart edges
+                        time_start = (timestamps[0] - timestamps[0]).total_seconds() / 3600
+                        time_end = (timestamps[-1] - timestamps[0]).total_seconds() / 3600
+                        price_start = trendline["slope"] * time_start + trendline["intercept"]
+                        price_end = trendline["slope"] * time_end + trendline["intercept"]
+                        
+                        color = get_trendline_color(trendline["type"])
+                        style = get_trendline_style(trendline["type"])
+                        
+                        ax1.plot([timestamps[0], timestamps[-1]], [price_start, price_end], 
+                                color=color, linestyle=style, linewidth=2, 
+                                label=f'{trendline["type"].replace("_", " ").title()} (R²={trendline["r2_score"]:.3f})', alpha=0.8)
+                    
+                    # Add horizontal S/R levels to the chart (exclude Fib extensions for clarity)
+                    for level in sr_levels:
+                        # Skip Fib extensions on chart (too cluttered) but keep in data
+                        if level.get('source') == 'fib_extension':
+                            continue
+                            
+                        ax1.axhline(y=level['price'], color='blue', linestyle='-', alpha=0.6, linewidth=1)
+                        source = level.get('source', 'clustered')
+                        label = f"{source}: {level['price']:.6f} ({level['strength']})"
+                        ax1.text(timestamps[0], level['price'], label, 
+                                fontsize=8, color='blue', alpha=0.8, va='bottom')
+
+                    # Mark the most recent confirmed trend change on chart
+                    try:
+                        if last_change:
+                            from datetime import datetime as _dt
+                            def _to_utc_dt(s: str) -> datetime:
+                                # Parse ISO string and normalize to UTC-aware
+                                try:
+                                    dt = _dt.fromisoformat(s.replace('Z', '+00:00'))
+                                    if dt.tzinfo is None:
+                                        return dt.replace(tzinfo=timezone.utc)
+                                    return dt.astimezone(timezone.utc)
+                                except Exception:
+                                    return timestamps[0]
+
+                            change_dir = last_change.get('direction')
+                            ts_prev_end = _to_utc_dt(last_change.get('end_at_previous')) if last_change.get('end_at_previous') else None
+                            ts_start = _to_utc_dt(last_change.get('start_at')) if last_change.get('start_at') else None
+                            ts_confirm = _to_utc_dt(last_change.get('confirmed_at')) if last_change.get('confirmed_at') else None
+
+                            ymax = max(closes) if closes else 0.0
+
+                            if ts_prev_end:
+                                ax1.axvline(ts_prev_end, color='purple', linestyle=':', linewidth=1.5, alpha=0.9, label='Prev trend end (ATH/ATL)')
+                            if ts_start and change_dir == 'down_to_up':
+                                ax1.axvline(ts_start, color='green', linestyle='--', linewidth=1.5, alpha=0.9, label='Break (Uptrend start)')
+                            # Only draw confirmation if it occurs after previous trend end
+                            if ts_confirm and (not ts_prev_end or ts_confirm > ts_prev_end):
+                                ax1.axvline(ts_confirm, color='black', linestyle='-', linewidth=1.2, alpha=0.9, label='Trend change confirmed')
+                            # Annotate ISO times for debugging/clarity
+                            y_annot = ymax * 1.02 if ymax else 0.0
+                            x0 = ts_prev_end or timestamps[0]
+                            lbl = []
+                            if ts_prev_end:
+                                lbl.append(f"prev_end={ts_prev_end.isoformat()}")
+                            if ts_start and change_dir == 'down_to_up':
+                                lbl.append(f"break={ts_start.isoformat()}")
+                            if ts_confirm:
+                                lbl.append(f"confirm={ts_confirm.isoformat()}")
+                            if lbl:
+                                ax1.text(x0, closes[-1] if closes else 0.0, " | ".join(lbl), fontsize=8, color='black', alpha=0.8, va='bottom')
+                    except Exception:
+                        pass
+                    
+                    ax1.legend()
+                    
+                    # Set chart limits to focus on relevant data (reduce zoom out)
+                    if len(timestamps) > 0:
+                        # Focus on the main data range, with some padding
+                        time_padding = (timestamps[-1] - timestamps[0]) * 0.05  # 5% padding
+                        ax1.set_xlim(timestamps[0] - time_padding, timestamps[-1] + time_padding)
+                        
+                        # Price limits with some padding
+                        price_padding = (max(closes) - min(closes)) * 0.1  # 10% padding
+                        ax1.set_ylim(min(closes) - price_padding, max(closes) + price_padding)
+                    
+                    # Volume chart - use appropriate width for 1h bars
+                    volumes = [float(b["volume"]) for b in bars]
+                    # Calculate appropriate width for 1h bars (1/24 of a day)
+                    bar_width = 1/24  # 1 hour = 1/24 of a day
+                    ax2.bar(timestamps, volumes, width=bar_width, alpha=0.7, color='gray')
+                    ax2.set_ylabel('Volume (USD)')
+                    ax2.set_xlabel('Time')
+                    ax2.grid(True, alpha=0.3)
+                    
+                    # Format x-axis
+                    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+                    ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+                    ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                    
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    
+                    # Use token name for file naming (token_name already defined above)
+                    safe_name = token_name.replace(' ', '_').replace('/', '_')
+                    out_png = f"diagonals_{safe_name}_{chain}_{now.strftime('%Y%m%d%H%M')}.png"
+                    plt.savefig(out_png, dpi=300, bbox_inches='tight')
+                    plt.close(fig)
+                except Exception as _e:
+                    out_png = ""
+                    logger.warning("Failed to render diagonals chart: %s", _e)
 
             # LLM call removed - algorithmic approach is now sufficient
+
+            # --- Normalize SR levels for SM consumption ---
+            def _round_native(px: float) -> Tuple[float, int]:
+                """Return (rounded_price, decimals_used) for stable IDs and comparisons."""
+                if px >= 1.0:
+                    n = 6
+                elif px >= 0.01:
+                    n = 8
+                else:
+                    n = 10
+                return (round(px, n), n)
+
+            def _stable_level_id(chain: str, contract: str, source: str, price_rounded: float, decimals: int) -> str:
+                base = f"{chain}:{contract}:{source}:{price_rounded:.{decimals}f}"
+                # Simple, deterministic short hash for ID stability
+                import hashlib
+                return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+            # Ensure levels list exists
+            sr_levels = sr_levels or []
+
+            # Sort by price descending for engine consumption
+            sr_levels.sort(key=lambda x: float(x.get("price", 0.0)), reverse=True)
+
+            # Enrich each level with id, native rounding, explicit order
+            for idx, lvl in enumerate(sr_levels):
+                try:
+                    price_native = float(lvl.get("price", 0.0))
+                except Exception:
+                    price_native = 0.0
+                price_rounded, decs = _round_native(price_native)
+                source = str(lvl.get("source") or lvl.get("type") or "clustered")
+                lvl["price_native_raw"] = price_native
+                lvl["price_rounded_native"] = price_rounded
+                lvl["order_desc"] = idx  # 0 = highest price
+                lvl["id"] = _stable_level_id(chain, contract, source, price_rounded, decs)
 
             geometry = {
                 "levels": {"sr_levels": sr_levels},
                 "diagonals": diagonals,
                 "trend_segments": len(trend_segments) if trend_segments else 0,
-                "swing_points": {"highs": len(swing_highs), "lows": len(swing_lows)},
+                "swing_points": {
+                    "highs": len(swing_highs),
+                    "lows": len(swing_lows),
+                    "coordinates": swing_points  # Store actual swing point coordinates
+                },
                 "current_trend": {
                     "has_current": current_trend_type is not None,
                     "trend_type": current_trend_type,

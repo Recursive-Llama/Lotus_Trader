@@ -7,113 +7,37 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from supabase import create_client, Client  # type: ignore
-from src.intelligence.lowcap_portfolio_manager.utils.resample import resample_15m_to_1h
 
+from src.intelligence.lowcap_portfolio_manager.jobs.ta_utils import (
+    ema_series,
+    lin_slope,
+    ema_slope_normalized,
+    ema_slope_delta,
+    atr_series_wilder,
+    adx_series_wilder,
+    rsi,
+    zscore,
+    wilder_ema,
+)
 
 logger = logging.getLogger(__name__)
 
-
-def _ema_series(vals: List[float], span: int) -> List[float]:
-    if not vals:
-        return []
-    alpha = 2.0 / (span + 1)
-    out = [vals[0]]
-    for v in vals[1:]:
-        out.append(alpha * v + (1 - alpha) * out[-1])
-    return out
-
-
-def _rsi(values: List[float], period: int = 14) -> float:
-    if len(values) <= period:
-        return 50.0
-    gains: List[float] = []
-    losses: List[float] = []
-    for i in range(len(values) - period, len(values)):
-        ch = values[i] - values[i - 1]
-        gains.append(max(0.0, ch))
-        losses.append(max(0.0, -ch))
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period or 1e-9
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+# Re-export for backwards compatibility (if anything imports these directly)
+_ema_series = ema_series
+_lin_slope = lin_slope
+_rsi = rsi
+_zscore = zscore
+_wilder_ema = wilder_ema
+_atr_series_wilder = atr_series_wilder
+_adx_series_wilder = adx_series_wilder
 
 
-def _zscore(window: List[float], value: float) -> float:
-    import statistics
-
-    if len(window) < 5:
-        return 0.0
-    mean = statistics.fmean(window)
-    sd = statistics.pstdev(window) or 1.0
-    return (value - mean) / sd
-
-
-def _wilder_ema(prev: float, new: float, period: int) -> float:
-    return (prev * (period - 1) + new) / period
-
-
+# Functions removed - now imported from ta_utils.py
+# Keeping _atr_wilder as it's a convenience wrapper
 def _atr_wilder(bars: List[Dict[str, Any]], period: int = 14) -> float:
-    if len(bars) < 2:
-        return 0.0
-    trs: List[float] = []
-    prev_c = bars[0]["c"]
-    for b in bars[1:]:
-        tr = max(b["h"] - b["l"], abs(b["h"] - prev_c), abs(prev_c - b["l"]))
-        trs.append(tr)
-        prev_c = b["c"]
-    if not trs:
-        return 0.0
-    atr = sum(trs[: period]) / max(1, min(period, len(trs)))
-    for tr in trs[period:]:
-        atr = _wilder_ema(atr, tr, period)
-    return atr
-
-
-def _adx_wilder(bars: List[Dict[str, Any]], period: int = 14) -> float:
-    # bars: list of dict with o,h,l,c
-    n = len(bars)
-    if n < period + 2:
-        return 0.0
-    # True range series
-    trs: List[float] = []
-    plus_dm: List[float] = []
-    minus_dm: List[float] = []
-    for i in range(1, n):
-        up_move = bars[i]["h"] - bars[i - 1]["h"]
-        down_move = bars[i - 1]["l"] - bars[i]["l"]
-        plus_dm.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
-        minus_dm.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
-        tr = max(
-            bars[i]["h"] - bars[i]["l"],
-            abs(bars[i]["h"] - bars[i - 1]["c"]),
-            abs(bars[i - 1]["c"] - bars[i]["l"]),
-        )
-        trs.append(tr)
-    # Wilder smoothing
-    atr = sum(trs[: period]) / period
-    pdi = 0.0
-    mdi = 0.0
-    pdm = sum(plus_dm[: period]) / period
-    mdm = sum(minus_dm[: period]) / period
-    if atr > 0:
-        pdi = 100.0 * (pdm / atr)
-        mdi = 100.0 * (mdm / atr)
-    dx_vals: List[float] = []
-    dx_vals.append(100.0 * (abs(pdi - mdi) / max(pdi + mdi, 1e-9)))
-    for i in range(period, len(trs)):
-        atr = _wilder_ema(atr, trs[i], period)
-        pdm = _wilder_ema(pdm, plus_dm[i], period)
-        mdm = _wilder_ema(mdm, minus_dm[i], period)
-        pdi = 100.0 * (pdm / max(atr, 1e-9))
-        mdi = 100.0 * (mdm / max(atr, 1e-9))
-        dx_vals.append(100.0 * (abs(pdi - mdi) / max(pdi + mdi, 1e-9)))
-    # ADX = Wilder EMA of DX
-    if not dx_vals:
-        return 0.0
-    adx = sum(dx_vals[: period]) / period if len(dx_vals) >= period else sum(dx_vals) / len(dx_vals)
-    for dx in dx_vals[period:]:
-        adx = _wilder_ema(adx, dx, period)
-    return adx
+    """Convenience wrapper for single ATR value."""
+    series = atr_series_wilder(bars, period)
+    return series[-1] if series else 0.0
 
 
 def _build_15m_from_1m(closes_1m: List[float], times_1m: List[str]) -> List[Dict[str, Any]]:
@@ -246,60 +170,7 @@ class TATracker:
                 contract = p.get("token_contract")
                 chain = p.get("token_chain")
                 features = p.get("features") or {}
-
-                # Pull 1m prices (72h window or more if available)
-                since_1m = (now - timedelta(hours=72)).isoformat()
-                rows_1m = (
-                    self.sb.table("lowcap_price_data_1m")
-                    .select("timestamp, price_native, price_usd")
-                    .eq("token_contract", contract)
-                    .eq("chain", chain)
-                    .gte("timestamp", since_1m)
-                    .order("timestamp", desc=False)
-                    .execute()
-                    .data
-                    or []
-                )
-                closes_1m: List[float] = []
-                times_1m: List[str] = []
-                for r in rows_1m:
-                    px = float(r.get("price_native") or r.get("price_usd") or 0.0)
-                    if px > 0:
-                        closes_1m.append(px)
-                        times_1m.append(str(r.get("timestamp")))
-                # Real 15m OHLC (for RSI/VO_z/ATR and EMA_mid)
-                rows_15m = (
-                    self.sb.table("lowcap_price_data_ohlc")
-                    .select("timestamp, open_native, high_native, low_native, close_native, volume")
-                    .eq("token_contract", contract)
-                    .eq("chain", chain)
-                    .eq("timeframe", "15m")
-                    .lte("timestamp", now.isoformat())
-                    .order("timestamp", desc=False)
-                    .limit(200)
-                    .execute()
-                    .data
-                    or []
-                )
-                if len(rows_15m) < 30:
-                    # Not enough 15m history to compute stable VO_z; skip position gracefully
-                    continue
-                closes_15m = [float(r.get("close_native") or 0.0) for r in rows_15m]
-                opens_15m = [float(r.get("open_native") or 0.0) for r in rows_15m]
-                highs_15m = [float(r.get("high_native") or 0.0) for r in rows_15m]
-                lows_15m = [float(r.get("low_native") or 0.0) for r in rows_15m]
-                vols_15m = [float(r.get("volume") or 0.0) for r in rows_15m]
-
-                # RSI(14) on 15m
-                rsi_val = _rsi(closes_15m, 14)
-
-                vo_z = _zscore(vols_15m[-30:] if len(vols_15m) >= 30 else vols_15m, vols_15m[-1] if vols_15m else 0.0)
-
-                # ATR(14) on 15m (from real OHLC)
-                bars_15m = [{"o": o, "h": h, "l": l, "c": c} for o, h, l, c in zip(opens_15m, highs_15m, lows_15m, closes_15m)]
-                atr_15m = _atr_15m(bars_15m, 14)
-
-                # Prefer real 1h OHLC; fallback to 15m→1h resample if missing
+                # Strict 1h-only OHLC
                 rows_1h = (
                     self.sb.table("lowcap_price_data_ohlc")
                     .select("timestamp, open_native, high_native, low_native, close_native, volume")
@@ -308,31 +179,37 @@ class TATracker:
                     .eq("timeframe", "1h")
                     .lte("timestamp", now.isoformat())
                     .order("timestamp", desc=False)
-                    .limit(200)
+                    .limit(400)
                     .execute()
                     .data
                     or []
                 )
-                if rows_1h:
-                    bars_1h = [
-                        {
-                            "t0": datetime.fromisoformat(str(r["timestamp"]).replace("Z", "+00:00")),
-                            "o": float(r.get("open_native") or 0.0),
-                            "h": float(r.get("high_native") or 0.0),
-                            "l": float(r.get("low_native") or 0.0),
-                            "c": float(r.get("close_native") or 0.0),
-                            "v": float(r.get("volume") or 0.0),
-                        }
-                        for r in rows_1h
-                    ]
-                else:
-                    bars_1h = resample_15m_to_1h(rows_15m)
-                ema20_1h = _ema_series([b["c"] for b in bars_1h], 20)
-                ema50_1h = _ema_series([b["c"] for b in bars_1h], 50)
-                ema20_1h_val = ema20_1h[-1] if ema20_1h else (closes_15m[-1] if closes_15m else 0.0)
-                ema50_1h_val = ema50_1h[-1] if ema50_1h else (closes_15m[-1] if closes_15m else 0.0)
-                atr_1h = _atr_wilder(bars_1h, 14) if bars_1h else 0.0
-                adx_1h = _adx_wilder(bars_1h, 14) if bars_1h else 0.0
+                if len(rows_1h) < 72:
+                    continue  # require at least 72 1h bars
+                bars_1h = [
+                    {
+                        "t0": datetime.fromisoformat(str(r["timestamp"]).replace("Z", "+00:00")),
+                        "o": float(r.get("open_native") or 0.0),
+                        "h": float(r.get("high_native") or 0.0),
+                        "l": float(r.get("low_native") or 0.0),
+                        "c": float(r.get("close_native") or 0.0),
+                        "v": float(r.get("volume") or 0.0),
+                    }
+                    for r in rows_1h
+                ]
+                ema20_1h = ema_series([b["c"] for b in bars_1h], 20)
+                ema50_1h = ema_series([b["c"] for b in bars_1h], 50)
+                ema60_1h = ema_series([b["c"] for b in bars_1h], 60)
+                ema144_1h = ema_series([b["c"] for b in bars_1h], 144)
+                ema250_1h = ema_series([b["c"] for b in bars_1h], 250)
+                ema333_1h = ema_series([b["c"] for b in bars_1h], 333)
+
+                ema20_1h_val = ema20_1h[-1] if ema20_1h else (bars_1h[-1]["c"] if bars_1h else 0.0)
+                ema50_1h_val = ema50_1h[-1] if ema50_1h else (bars_1h[-1]["c"] if bars_1h else 0.0)
+                atr_series_1h = atr_series_wilder(bars_1h, 14)
+                atr_1h = atr_series_1h[-1] if atr_series_1h else 0.0
+                adx_series_1h = adx_series_wilder(bars_1h, 14)
+                adx_1h = adx_series_1h[-1] if adx_series_1h else 0.0
 
                 # VO_z(1h) using log-volume EWMA (N=64), winsorize and cap [-4,+6]
                 import math, statistics
@@ -370,91 +247,88 @@ class TATracker:
                     vo_z_1h = 0.0
                     vo_z_cluster_1h = False
 
-                # EMA_long(1m) and consec_below (fallback to 15m proxy if 1m insufficient)
-                ema_long: float
-                consec_below: int
-                if len(closes_1m) >= 60:
-                    ema_long_series = _ema_series(closes_1m[-120:], 60)
-                    ema_long = ema_long_series[-1] if ema_long_series else closes_1m[-1]
-                    consec_below = 0
-                    for v in reversed(closes_1m[-120:]):
-                        if v < ema_long:
-                            consec_below += 1
-                        else:
-                            break
+                # RSI(1h) series and slopes
+                closes_1h = [b["c"] for b in bars_1h]
+                rsi_series_1h: List[float] = []
+                for k in range(max(15, len(closes_1h) - 60), len(closes_1h)):
+                    rsi_series_1h.append(rsi(closes_1h[: k + 1], 14))
+                rsi_1h = rsi_series_1h[-1] if rsi_series_1h else 50.0
+                rsi_slope_10 = lin_slope(rsi_series_1h, 10) if rsi_series_1h else 0.0
+
+                # EMA slopes (%/bar) and accelerations - using shared utilities
+                ema20_slope = ema_slope_normalized(ema20_1h, window=10)
+                ema60_slope = ema_slope_normalized(ema60_1h, window=10)
+                ema144_slope = ema_slope_normalized(ema144_1h, window=10)
+                ema250_slope = ema_slope_normalized(ema250_1h, window=10)
+                ema333_slope = ema_slope_normalized(ema333_1h, window=10)
+
+                # Slope deltas (acceleration)
+                d_ema60_slope = ema_slope_delta(ema60_1h, window=10, lag=10)
+                d_ema144_slope = ema_slope_delta(ema144_1h, window=10, lag=10)
+                d_ema250_slope = ema_slope_delta(ema250_1h, window=10, lag=10)
+                d_ema333_slope = ema_slope_delta(ema333_1h, window=10, lag=10)
+
+                # Separations and dsep
+                sep_fast = ( (ema20_1h[-1] if ema20_1h else 0.0) - (ema60_1h[-1] if ema60_1h else 1e-9) ) / max(ema60_1h[-1] if ema60_1h else 1e-9, 1e-9)
+                sep_mid = ( (ema60_1h[-1] if ema60_1h else 0.0) - (ema144_1h[-1] if ema144_1h else 1e-9) ) / max(ema144_1h[-1] if ema144_1h else 1e-9, 1e-9)
+                if len(ema60_1h) >= 6 and len(ema144_1h) >= 6 and len(ema20_1h) >= 6:
+                    sep_fast_prev = ( (ema20_1h[-6]) - (ema60_1h[-6]) ) / max(ema60_1h[-6], 1e-9)
+                    sep_mid_prev = ( (ema60_1h[-6]) - (ema144_1h[-6]) ) / max(ema144_1h[-6], 1e-9)
                 else:
-                    # 15m proxy for EMA_long ≈ 60m → span ≈ 4 on 15m
-                    ema_long_series_15 = _ema_series(closes_15m, 4)
-                    ema_long = ema_long_series_15[-1] if ema_long_series_15 else closes_15m[-1]
-                    consec_below = 0
-                    for v in reversed(closes_15m[-40:]):
-                        if v < ema_long:
-                            consec_below += 1
-                        else:
-                            break
+                    sep_fast_prev = sep_fast
+                    sep_mid_prev = sep_mid
+                dsep_fast_5 = sep_fast - sep_fast_prev
+                dsep_mid_5 = sep_mid - sep_mid_prev
 
-                # EMA_mid(15m) and break flag
-                ema_mid_series = _ema_series(closes_15m, 55)
-                ema_mid = ema_mid_series[-1] if ema_mid_series else closes_15m[-1]
-                ema_mid_break = closes_15m[-1] < ema_mid
+                # ATR helpers
+                atr_norm_1h = atr_1h / max(ema50_1h_val, 1e-9)
+                import statistics as _stats
+                atr_mean_20 = (_stats.fmean(atr_series_1h[-20:]) if len(atr_series_1h) >= 20 else atr_1h) if atr_series_1h else atr_1h
+                atr_peak_10 = (max(atr_series_1h[-10:]) if len(atr_series_1h) >= 10 else atr_1h) if atr_series_1h else atr_1h
 
-                # OBV (15m using true 15m volume) and slope z-per-bar over small window
-                # Build OBV
-                obv_series: List[float] = []
-                acc = 0.0
-                # Align closes_15m length to vols_15m if available
-                L = min(len(closes_15m), len(vols_15m)) if vols_15m else len(closes_15m)
-                pxs = closes_15m[-L:]
-                vxs = vols_15m[-L:] if vols_15m else [0.0] * L
-                for i in range(L):
-                    if i == 0:
-                        obv_series.append(0.0)
-                        continue
-                    if pxs[i] > pxs[i - 1]:
-                        acc += vxs[i]
-                    elif pxs[i] < pxs[i - 1]:
-                        acc -= vxs[i]
-                    obv_series.append(acc)
-                # slope over window (mode window default = 4)
-                win = min(6, len(obv_series))
-                if win >= 3:
-                    xs = list(range(win))
-                    ys = obv_series[-win:]
-                    xbar = sum(xs) / win
-                    ybar = sum(ys) / win
-                    num = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys))
-                    den = sum((x - xbar) ** 2 for x in xs) or 1.0
-                    slope = num / den
-                    slope_window = [obv_series[i] - obv_series[i - 1] for i in range(len(obv_series) - win + 1, len(obv_series))]
-                    slope_z_per_bar = _zscore(slope_window if slope_window else [0.0], slope) / max(1.0, float(win))
-                else:
-                    slope_z_per_bar = 0.0
-
-                # RSI divergence classification using pivots on price and RSI(14)
-                # Build RSI history from closes to match pivots
-                rsi_series: List[float] = []
-                for k in range(max(15, len(closes_15m) - 60), len(closes_15m)):
-                    rsi_series.append(_rsi(closes_15m[: k + 1], 14))
-                if len(rsi_series) >= 10:
-                    div = _divergence(closes_15m[-len(rsi_series):], rsi_series)
-                else:
-                    div = "none"
-
-                # Pillars
-                obv_rising = slope_z_per_bar >= 0.05
-                vo_moderate = vo_z >= 0.3
-                rsi_bull_div = div in ("bull", "hidden_bull")
-                pillars_cnt = int(obv_rising) + int(vo_moderate) + int(rsi_bull_div)
+                # ADX slope over last 10 bars
+                adx_slope_10 = lin_slope(adx_series_1h, 10) if adx_series_1h else 0.0
 
                 ta = {
-                    "rsi": {"value": rsi_val, "divergence": div, "lookback_bars": 14},
-                    "obv": {"value": obv_series[-1] if obv_series else 0.0, "slope_z_per_bar": slope_z_per_bar, "divergence": "none", "window_bars": win},
-                    "volume": {"vo_z_15m": vo_z, "vo_z_1h": vo_z_1h, "vo_z_cluster_1h": vo_z_cluster_1h, "window_bars": 30},
-                    "ema": {"ema_long_1m": ema_long, "consec_below_ema_long": consec_below, "ema_mid_15m": ema_mid, "ema_mid_15m_break": ema_mid_break, "ema20_1h": ema20_1h_val, "ema50_1h": ema50_1h_val},
-                    "atr": {"atr_15m": atr_15m, "atr_1h": atr_1h},
-                    "adx": {"adx_1h": adx_1h},
-                    "pillars": {"obv_rising": obv_rising, "vo_moderate": vo_moderate, "rsi_bull_div": rsi_bull_div, "count": pillars_cnt},
-                    "updated_at": now.isoformat(),
+                    "ema": {
+                        "ema20_1h": ema20_1h_val,
+                        "ema50_1h": ema50_1h_val,
+                        "ema60_1h": ema60_1h[-1] if ema60_1h else ema20_1h_val,
+                        "ema144_1h": ema144_1h[-1] if ema144_1h else ema20_1h_val,
+                        "ema250_1h": ema250_1h[-1] if ema250_1h else ema20_1h_val,
+                        "ema333_1h": ema333_1h[-1] if ema333_1h else ema20_1h_val,
+                    },
+                    "ema_slopes": {
+                        "ema20_slope": ema20_slope,
+                        "ema60_slope": ema60_slope,
+                        "ema144_slope": ema144_slope,
+                        "ema250_slope": ema250_slope,
+                        "ema333_slope": ema333_slope,
+                        "d_ema60_slope": d_ema60_slope,
+                        "d_ema144_slope": d_ema144_slope,
+                        "d_ema250_slope": d_ema250_slope,
+                        "d_ema333_slope": d_ema333_slope,
+                    },
+                    "separations": {
+                        "sep_fast": sep_fast,
+                        "sep_mid": sep_mid,
+                        "dsep_fast_5": dsep_fast_5,
+                        "dsep_mid_5": dsep_mid_5,
+                    },
+                    "atr": {
+                        "atr_1h": atr_1h,
+                        "atr_norm_1h": atr_norm_1h,
+                        "atr_mean_20": atr_mean_20,
+                        "atr_peak_10": atr_peak_10,
+                    },
+                    "momentum": {
+                        "rsi_1h": rsi_1h,
+                        "rsi_slope_10": rsi_slope_10,
+                        "adx_1h": adx_1h,
+                        "adx_slope_10": adx_slope_10,
+                    },
+                    "volume": {"vo_z_1h": vo_z_1h, "vo_z_cluster_1h": vo_z_cluster_1h},
+                    "meta": {"source_1h": "1h", "updated_at": now.isoformat()},
                 }
 
                 new_features = dict(features)

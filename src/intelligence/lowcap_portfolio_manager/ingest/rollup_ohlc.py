@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Union
 from enum import Enum
 
+from dotenv import load_dotenv
 from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,11 @@ class GenericOHLCRollup:
     
     def __init__(self):
         """Initialize the rollup system"""
+        # Load environment variables from the correct path
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+        env_path = os.path.join(project_root, '.env')
+        load_dotenv(env_path)
+        
         supabase_url = os.getenv("SUPABASE_URL", "")
         supabase_key = os.getenv("SUPABASE_KEY", "")
         
@@ -129,9 +135,32 @@ class GenericOHLCRollup:
     
     def _get_majors_1m_data(self, timeframe: Timeframe, when: datetime) -> List[Dict]:
         """Get majors 1m data for the timeframe window"""
-        # TODO: Implement majors data retrieval
-        # This will query majors_price_data_1m table
-        pass
+        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        start_time = when - timedelta(minutes=timeframe_minutes)
+        
+        result = self.sb.table("majors_price_data_1m").select(
+            "token,ts,open,high,low,close,volume"
+        ).gte("ts", start_time.isoformat()).lt("ts", when.isoformat()).order("ts", desc=False).execute()
+        
+        # Convert majors format to match lowcap format
+        converted_data = []
+        for bar in (result.data or []):
+            converted_data.append({
+                'token_contract': bar['token'],  # Use token as contract for majors
+                'chain': 'hyperliquid',  # Majors are from Hyperliquid
+                'timestamp': bar['ts'],
+                'open_usd': float(bar['open']),
+                'high_usd': float(bar['high']),
+                'low_usd': float(bar['low']),
+                'close_usd': float(bar['close']),
+                'open_native': float(bar['open']),  # Majors are already in USD
+                'high_native': float(bar['high']),
+                'low_native': float(bar['low']),
+                'close_native': float(bar['close']),
+                'volume_change_1m': float(bar['volume'])
+            })
+        
+        return converted_data
     
     def _get_lowcap_1m_data(self, timeframe: Timeframe, when: datetime) -> List[Dict]:
         """Get lowcap data for the timeframe window (prioritizes 15m OHLC data)"""
@@ -202,52 +231,99 @@ class GenericOHLCRollup:
         
         ohlc_bars = []
         
+        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        
         for (token_contract, chain), token_bars in grouped_bars.items():
             # Sort by timestamp
             token_bars.sort(key=lambda x: x['timestamp'])
             
-            # Calculate OHLCV
             if not token_bars:
                 continue
-                
-            # Properly aggregate OHLC data from 15m bars to 1h bars
-            # Group by hour and aggregate OHLCV
+            
+            # Group by timeframe boundary
             from collections import defaultdict
-            hourly_bars = defaultdict(list)
+            timeframe_bars = defaultdict(list)
             
             for bar in token_bars:
-                # Parse timestamp and group by hour
+                # Parse timestamp and group by timeframe boundary
                 ts = datetime.fromisoformat(bar['timestamp'].replace('Z', '+00:00'))
-                hour_key = ts.replace(minute=0, second=0, microsecond=0)
-                hourly_bars[hour_key].append(bar)
+                
+                # Calculate timeframe boundary based on timeframe_minutes
+                if timeframe_minutes == 5:
+                    # 5m boundaries: :00, :05, :10, :15, etc.
+                    minute_boundary = (ts.minute // 5) * 5
+                    timeframe_key = ts.replace(minute=minute_boundary, second=0, microsecond=0)
+                elif timeframe_minutes == 15:
+                    # 15m boundaries: :00, :15, :30, :45
+                    minute_boundary = (ts.minute // 15) * 15
+                    timeframe_key = ts.replace(minute=minute_boundary, second=0, microsecond=0)
+                elif timeframe_minutes == 60:
+                    # 1h boundaries: :00
+                    timeframe_key = ts.replace(minute=0, second=0, microsecond=0)
+                elif timeframe_minutes == 240:
+                    # 4h boundaries: :00, :04, :08, :12, :16, :20
+                    hour_boundary = (ts.hour // 4) * 4
+                    timeframe_key = ts.replace(hour=hour_boundary, minute=0, second=0, microsecond=0)
+                elif timeframe_minutes == 1440:
+                    # 1d boundaries: 00:00
+                    timeframe_key = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    # Generic: round down to nearest timeframe_minutes
+                    total_minutes = ts.hour * 60 + ts.minute
+                    boundary_minutes = (total_minutes // timeframe_minutes) * timeframe_minutes
+                    boundary_hour = boundary_minutes // 60
+                    boundary_minute = boundary_minutes % 60
+                    timeframe_key = ts.replace(hour=boundary_hour, minute=boundary_minute, second=0, microsecond=0)
+                
+                timeframe_bars[timeframe_key].append(bar)
             
-            # Create OHLC bars for each hour
-            for hour_ts, hour_bars in hourly_bars.items():
-                if not hour_bars:
+            # Create OHLC bars for each timeframe period
+            for timeframe_ts, period_bars in timeframe_bars.items():
+                if not period_bars:
                     continue
                     
                 # Sort by timestamp to get proper OHLC
-                hour_bars.sort(key=lambda x: x['timestamp'])
+                period_bars.sort(key=lambda x: x['timestamp'])
                 
-                # Calculate OHLC from actual OHLC data (not price points)
-                open_price_usd = float(hour_bars[0]['open_usd'])
-                close_price_usd = float(hour_bars[-1]['close_usd'])
-                high_price_usd = max(float(bar['high_usd']) for bar in hour_bars)
-                low_price_usd = min(float(bar['low_usd']) for bar in hour_bars)
+                # Check if we have OHLC data (from 15m backfill) or price points (from 1m data)
+                has_ohlc_data = 'open_usd' in period_bars[0]
                 
-                open_price_native = float(hour_bars[0]['open_native'])
-                close_price_native = float(hour_bars[-1]['close_native'])
-                high_price_native = max(float(bar['high_native']) for bar in hour_bars)
-                low_price_native = min(float(bar['low_native']) for bar in hour_bars)
-                
-                volume = sum(float(bar.get('volume_change_1m', 0) or 0) for bar in hour_bars)
+                if has_ohlc_data:
+                    # Calculate OHLC from actual OHLC data (15m bars)
+                    open_price_usd = float(period_bars[0]['open_usd'])
+                    close_price_usd = float(period_bars[-1]['close_usd'])
+                    high_price_usd = max(float(bar['high_usd']) for bar in period_bars)
+                    low_price_usd = min(float(bar['low_usd']) for bar in period_bars)
+                    
+                    open_price_native = float(period_bars[0]['open_native'])
+                    close_price_native = float(period_bars[-1]['close_native'])
+                    high_price_native = max(float(bar['high_native']) for bar in period_bars)
+                    low_price_native = min(float(bar['low_native']) for bar in period_bars)
+                    
+                    volume = sum(float(bar.get('volume_change_1m', bar.get('volume', 0)) or 0) for bar in period_bars)
+                else:
+                    # Calculate OHLC from price points (1m data)
+                    prices_usd = [float(bar['price_usd']) for bar in period_bars]
+                    prices_native = [float(bar['price_native']) for bar in period_bars]
+                    
+                    open_price_usd = prices_usd[0]
+                    close_price_usd = prices_usd[-1]
+                    high_price_usd = max(prices_usd)
+                    low_price_usd = min(prices_usd)
+                    
+                    open_price_native = prices_native[0]
+                    close_price_native = prices_native[-1]
+                    high_price_native = max(prices_native)
+                    low_price_native = min(prices_native)
+                    
+                    volume = sum(float(bar.get('volume_change_1m', 0) or 0) for bar in period_bars)
                 
                 # Create OHLC bar
                 ohlc_bar = OHLCBar(
                     token_contract=token_contract,
                     chain=chain,
                     timeframe=timeframe.value,
-                    timestamp=hour_ts,
+                    timestamp=timeframe_ts,
                     open_native=open_price_native,
                     high_native=high_price_native,
                     low_native=low_price_native,
@@ -315,9 +391,18 @@ def main():
     
     rollup = GenericOHLCRollup()
     
-    # Test lowcap rollup
-    written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M15)
-    logger.info(f"Lowcap 15m rollup wrote {written} bars")
+    # Test 5m rollup for both majors and lowcaps
+    logger.info("Testing 5m rollup...")
+    
+    # Test majors 5m rollup
+    majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.M5)
+    logger.info(f"Majors 5m rollup wrote {majors_written} bars")
+    
+    # Test lowcaps 5m rollup
+    lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M5)
+    logger.info(f"Lowcaps 5m rollup wrote {lowcaps_written} bars")
+    
+    logger.info(f"Total 5m rollup: {majors_written + lowcaps_written} bars")
 
 
 if __name__ == "__main__":

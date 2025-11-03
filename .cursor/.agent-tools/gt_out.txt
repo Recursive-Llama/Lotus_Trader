@@ -1,0 +1,1 @@
+{'token_contract': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', 'chain': 'solana', 'pool_address': '3ne4mWqdYuNiYrYZC9TrA3FcfuFdErghH97vNPbjicr1', 'dex_id': 'orca', 'inserted_rows': 10, 'window_start': '2025-10-20T13:32:00+00:00', 'window_end': '2025-10-20T13:42:00+00:00'}

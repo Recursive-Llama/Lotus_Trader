@@ -379,14 +379,27 @@ class SocialTradingSystem:
         from intelligence.lowcap_portfolio_manager.jobs.bands_calc import main as bands_main
         from intelligence.lowcap_portfolio_manager.jobs.geometry_build_daily import main as geom_daily_main
         from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import main as pm_core_main
+        from intelligence.lowcap_portfolio_manager.ingest.rollup_ohlc import GenericOHLCRollup, DataSource, Timeframe
+
+        # 5m rollup job function
+        def rollup_5m_job():
+            try:
+                rollup = GenericOHLCRollup()
+                # Roll up both majors and lowcaps to 5m
+                majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.M5)
+                lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M5)
+                print(f"5m rollup: {majors_written} majors + {lowcaps_written} lowcaps = {majors_written + lowcaps_written} total bars")
+            except Exception as e:
+                print(f"5m rollup error: {e}")
 
         # Fire background schedulers
         asyncio.create_task(schedule_hourly(2, nav_main))
         asyncio.create_task(schedule_hourly(3, dom_main))
         asyncio.create_task(schedule_5min(0, feat_main))  # Tracker every 5 minutes
+        asyncio.create_task(schedule_5min(1, rollup_5m_job))  # 5m rollup every 5 minutes (offset by 1 min)
         asyncio.create_task(schedule_hourly(5, bands_main))
         asyncio.create_task(schedule_hourly(6, pm_core_main))
-        # GeckoTerminal backfill is triggered only on new-position onboarding; no hourly scan.
+        # GeckoTerminal 15m backfill is triggered only on new-position onboarding (14 days); no hourly scan.
         # Daily geometry at :10 once per day
         async def schedule_daily(offset_min: int, func):
             from datetime import timedelta
