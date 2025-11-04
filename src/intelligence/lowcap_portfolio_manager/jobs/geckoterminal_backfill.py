@@ -582,6 +582,16 @@ def backfill_token_1h(token_contract: str, chain: str, lookback_minutes: int = 1
             'error': str(e)
         }
 
+    # Deduplicate rows across all chunks before upserting
+    # Unique constraint: (token_contract, chain, timeframe, timestamp)
+    if rows_to_insert:
+        seen_keys = {}
+        for row in rows_to_insert:
+            key = (row['token_contract'], row['chain'], row['timeframe'], row['timestamp'])
+            seen_keys[key] = row  # Keep last occurrence if duplicates exist
+        rows_to_insert = list(seen_keys.values())
+        logger.info(f"Deduplicated to {len(rows_to_insert)} unique rows (by token_contract,chain,timeframe,timestamp)")
+
     # Insert rows in batches
     inserted = 0
     if rows_to_insert:

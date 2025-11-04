@@ -18,11 +18,23 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 import statistics
+import math
 
 from supabase import create_client, Client  # type: ignore
+
+from src.intelligence.lowcap_portfolio_manager.jobs.ta_utils import (
+    ema_series,
+    lin_slope,
+    ema_slope_normalized,
+    avwap_series,
+    atr_series_wilder,
+    adx_series_wilder,
+    rsi,
+)
+from src.intelligence.lowcap_portfolio_manager.utils.zigzag import detect_swings
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +44,18 @@ def _now_iso() -> str:
 
 
 class Constants:
-    """v4 Constants - from spec and reused from v2 for OX/DX/EDX"""
+    """v4 Constants - from spec and reused from v2 for OX/DX/EDX
     
-    # TS gate for buy signals
-    TS_THRESHOLD = 0.58
+    All thresholds are easily tunable here for quick adjustments.
+    """
     
-    # S/R boost maximum
-    SR_BOOST_MAX = 0.15
+    # TS gate for buy signals (S1, S2 retest, S3 DX buys)
+    # Fixed at 0.60: requires TS base >= 0.35 with 0.25 S/R boost to pass
+    # This filters weak trends while still allowing entries when S/R aligns
+    TS_THRESHOLD = 0.60  # Fixed threshold (was 0.58, tried 0.50 but too lenient)
+    
+    # S/R boost maximum (applied when S/R level within halo of anchor EMA)
+    SR_BOOST_MAX = 0.25  # Increased from 0.15 (more aggressive when S/R aligns)
     
     # Entry zone (halo)
     ENTRY_HALO_ATR_MULTIPLIER = 1.0
@@ -49,8 +66,8 @@ class Constants:
     # OX trim threshold (S2 and S3)
     OX_SELL_THRESHOLD = 0.65
     
-    # DX buy threshold (S3)
-    DX_BUY_THRESHOLD = 0.65
+    # DX buy threshold (S3) - base threshold before EDX suppression and price position adjustments
+    DX_BUY_THRESHOLD = 0.60  # Lowered from 0.65 (was too strict, many near misses)
     
     # Emergency exit TI/TS thresholds for fakeout recovery
     EMERGENCY_EXIT_TI_MIN = 0.50
@@ -217,6 +234,74 @@ class UptrendEngineV4:
         )
         rows.reverse()
         return rows
+
+    def _fetch_ohlc_since(self, contract: str, chain: str, since_iso: str, limit: int = 500) -> List[Dict[str, Any]]:
+        """Fetch OHLC bars since a timestamp (for S3 window calculations)."""
+        rows = (
+            self.sb.table("lowcap_price_data_ohlc")
+            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .eq("token_contract", contract)
+            .eq("chain", chain)
+            .eq("timeframe", "1h")
+            .gte("timestamp", since_iso)
+            .order("timestamp", desc=False)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return rows
+
+    def _get_s3_start_ts(self, features: Dict[str, Any]) -> Optional[str]:
+        """Get S3 start timestamp from metadata."""
+        meta = features.get("uptrend_engine_v4_meta") or {}
+        return str(meta.get("s3_start_ts")) if meta.get("s3_start_ts") else None
+
+    def _set_s3_start_ts(self, pid: Any, features: Dict[str, Any], ts: str) -> None:
+        """Set S3 start timestamp in metadata."""
+        if "uptrend_engine_v4_meta" not in features:
+            features["uptrend_engine_v4_meta"] = {}
+        features["uptrend_engine_v4_meta"]["s3_start_ts"] = ts
+        self._write_features(pid, features)
+
+    def _clear_s3_start_ts(self, pid: Any, features: Dict[str, Any]) -> None:
+        """Clear S3 start timestamp from metadata."""
+        if "uptrend_engine_v4_meta" in features and "s3_start_ts" in features["uptrend_engine_v4_meta"]:
+            del features["uptrend_engine_v4_meta"]["s3_start_ts"]
+            self._write_features(pid, features)
+
+    def _calculate_window_boundaries(self, s3_start_ts: str, current_ts: str) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+        """Calculate window boundaries for 3-window EDX approach.
+        
+        Returns:
+            (window1_bars, window2_bars, window3_bars) - number of bars for each window
+            None if window is too small (< 10 bars minimum)
+        """
+        try:
+            start_dt = datetime.fromisoformat(s3_start_ts.replace("Z", "+00:00"))
+            current_dt = datetime.fromisoformat(current_ts.replace("Z", "+00:00"))
+            total_bars = int((current_dt - start_dt).total_seconds() / 3600)  # 1 hour per bar
+            
+            if total_bars < 10:
+                # Not enough bars for meaningful windows
+                return (None, None, None)
+            
+            # Window 1: Full duration (since S3 start)
+            window1_bars = total_bars
+            
+            # Window 2: Last 2/3
+            window2_bars = int(total_bars * 2 / 3)
+            if window2_bars < 10:
+                window2_bars = None
+            
+            # Window 3: Last 1/3 (must be > 9 bars per requirement)
+            window3_bars = int(total_bars / 3)
+            if window3_bars <= 9:
+                window3_bars = None
+            
+            return (window1_bars, window2_bars, window3_bars)
+        except Exception:
+            return (None, None, None)
 
     # --------------- EMA Order Checks (Band-based) ---------------
 
@@ -414,8 +499,405 @@ class UptrendEngineV4:
             "diagnostics": diagnostics,
         }
 
-    # --------------- OX/DX/EDX Calculations (from v2) ---------------
+    # --------------- OX/DX/EDX Calculations ---------------
 
+    def _compute_edx_3window(
+        self,
+        contract: str,
+        chain: str,
+        s3_start_ts: str,
+        current_ts: str,
+        price: float,
+        ema_vals: Dict[str, float],
+        ta: Dict[str, Any],
+    ) -> Tuple[float, Dict[str, Any]]:
+        """Compute EDX using 3-window S3-relative approach.
+        
+        Components:
+        1. Slow-Field Momentum (30%): EMA250/333 slopes, RSI trend, ADX trend (3 windows)
+        2. Structure Failure (25%): ZigZag HH/HL ratio (3 windows)
+        3. Participation Decay (20%): AVWAP slope (3 windows)
+        4. EMA Structure Compression (10%): EMA144-333, EMA250-333 separations (3 windows)
+        
+        Returns:
+            (edx_score, diagnostics_dict)
+        """
+        def sigmoid(x: float, k: float = 1.0) -> float:
+            return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
+        
+        # Calculate window boundaries
+        w1_bars, w2_bars, w3_bars = self._calculate_window_boundaries(s3_start_ts, current_ts)
+        
+        if w1_bars is None:
+            # Not enough bars, return neutral EDX
+            return (0.5, {"error": "insufficient_s3_bars", "s3_bars": 0})
+        
+        # Fetch all bars since S3 start
+        all_bars = self._fetch_ohlc_since(contract, chain, s3_start_ts, limit=500)
+        if len(all_bars) < 10:
+            return (0.5, {"error": "insufficient_data", "bars": len(all_bars)})
+        
+        # Extract data
+        closes = [float(b.get("close_native") or 0.0) for b in all_bars]
+        highs = [float(b.get("high_native") or 0.0) for b in all_bars]
+        lows = [float(b.get("low_native") or 0.0) for b in all_bars]
+        volumes = [float(b.get("volume") or 0.0) for b in all_bars]
+        
+        # Calculate ATR series for ZigZag
+        bars_for_atr = [
+            {"h": h, "l": l, "c": c}
+            for h, l, c in zip(highs, lows, closes)
+        ]
+        atr_series = atr_series_wilder(bars_for_atr, period=14)
+        if len(atr_series) != len(closes):
+            # Pad if needed
+            atr_series = [atr_series[0]] * (len(closes) - len(atr_series)) + atr_series
+        
+        # Helper to get window data
+        def get_window_data(bars_count: Optional[int]) -> Tuple[List[float], List[float], List[float], List[float], List[float]]:
+            """Get closes, highs, lows, volumes, atrs for a window."""
+            if bars_count is None:
+                return ([], [], [], [], [])
+            window_bars = all_bars[-bars_count:] if bars_count > 0 else []
+            return (
+                [float(b.get("close_native") or 0.0) for b in window_bars],
+                [float(b.get("high_native") or 0.0) for b in window_bars],
+                [float(b.get("low_native") or 0.0) for b in window_bars],
+                [float(b.get("volume") or 0.0) for b in window_bars],
+                atr_series[-bars_count:] if bars_count <= len(atr_series) else atr_series,
+            )
+        
+        # 1. SLOW-FIELD MOMENTUM (30%): EMA250/333 slopes, RSI trend, ADX trend
+        def compute_slow_field_momentum(window_closes: List[float], window_bars: List[Dict[str, Any]]) -> float:
+            """Compute slow-field momentum score for a window."""
+            if len(window_closes) < 10:
+                return 0.5  # Neutral
+            
+            # EMA250/333 slopes
+            ema250_series = ema_series(window_closes, 250)
+            ema333_series = ema_series(window_closes, 333)
+            
+            # Use last 20 bars for slope calculation if available
+            slope_window = min(20, len(ema250_series))
+            ema250_slope = ema_slope_normalized(ema250_series[-slope_window:], window=min(10, slope_window))
+            ema333_slope = ema_slope_normalized(ema333_series[-slope_window:], window=min(10, slope_window))
+            
+            # Average of normalized slopes (positive = good, negative = decay)
+            ema_slope_score = (ema250_slope + ema333_slope) / 2.0
+            ema_score = sigmoid(ema_slope_score * 1000.0, 1.0)  # Normalize to 0-1
+            
+            # RSI trend (slope of RSI series)
+            rsi_vals: List[float] = []
+            for i in range(14, len(window_closes)):
+                rsi_vals.append(rsi(window_closes[:i+1], 14))
+            if len(rsi_vals) >= 10:
+                rsi_slope = lin_slope(rsi_vals, 10)
+                rsi_score = sigmoid(rsi_slope / 5.0, 1.0)  # Normalize
+            else:
+                rsi_score = 0.5
+            
+            # ADX trend (slope of ADX series)
+            bars_dicts = [{"h": h, "l": l, "c": c} for h, l, c in 
+                         zip([float(b.get("high_native") or 0.0) for b in window_bars],
+                             [float(b.get("low_native") or 0.0) for b in window_bars],
+                             window_closes)]
+            adx_series_vals = adx_series_wilder(bars_dicts, period=14)
+            if len(adx_series_vals) >= 10:
+                adx_slope = lin_slope(adx_series_vals, 10)
+                adx_score = sigmoid(adx_slope / 2.0, 1.0)  # Normalize
+            else:
+                adx_score = 0.5
+            
+            # Combined score (average)
+            return (ema_score + rsi_score + adx_score) / 3.0
+        
+        # 2. STRUCTURE FAILURE (25%): ZigZag HH/HL ratio
+        def compute_structure_failure(window_closes: List[float], window_highs: List[float], 
+                                     window_lows: List[float], window_atrs: List[float]) -> float:
+            """Compute structure failure score using ZigZag HH/HL ratio."""
+            if len(window_closes) < 10:
+                return 0.5  # Neutral
+            
+            try:
+                swings = detect_swings(window_closes, window_atrs, highs=window_highs, lows=window_lows,
+                                      lambda_mult=1.2, backstep=3, min_leg_bars=4)
+                pivots = swings.get("pivots", [])
+                
+                if len(pivots) < 4:
+                    return 0.5  # Not enough pivots
+                
+                # Count HH vs LH and HL vs LL
+                hh_count = 0
+                lh_count = 0
+                hl_count = 0
+                ll_count = 0
+                
+                highs_only = [(i, p) for i, p in pivots if p == 'H']
+                lows_only = [(i, p) for i, p in pivots if p == 'L']
+                
+                # Higher Highs / Lower Highs
+                for k in range(1, len(highs_only)):
+                    prev_idx, _ = highs_only[k-1]
+                    curr_idx, _ = highs_only[k]
+                    if curr_idx < len(window_closes) and prev_idx < len(window_closes):
+                        if window_closes[curr_idx] > window_closes[prev_idx]:
+                            hh_count += 1
+                        else:
+                            lh_count += 1
+                
+                # Higher Lows / Lower Lows
+                for k in range(1, len(lows_only)):
+                    prev_idx, _ = lows_only[k-1]
+                    curr_idx, _ = lows_only[k]
+                    if curr_idx < len(window_closes) and prev_idx < len(window_closes):
+                        if window_closes[curr_idx] > window_closes[prev_idx]:
+                            hl_count += 1
+                        else:
+                            ll_count += 1
+                
+                total_swings = hh_count + lh_count + hl_count + ll_count
+                if total_swings == 0:
+                    return 0.5
+                
+                # HH/HL ratio (higher = better structure)
+                hh_hl_ratio = (hh_count + hl_count) / total_swings
+                
+                # Invert for decay score (lower ratio = higher decay)
+                return 1.0 - hh_hl_ratio
+            except Exception:
+                return 0.5
+        
+        # 3. PARTICIPATION DECAY (20%): AVWAP slope
+        def compute_participation_decay(window_closes: List[float], window_volumes: List[float]) -> float:
+            """Compute participation decay score using AVWAP slope."""
+            if len(window_closes) < 10 or not window_closes or not window_volumes:
+                return 0.5  # Neutral
+            
+            # Calculate AVWAP series
+            avwap_vals = avwap_series(window_closes, window_volumes)
+            if len(avwap_vals) < 10:
+                return 0.5
+            
+            # Calculate AVWAP slope (last 10 bars)
+            slope_window = min(10, len(avwap_vals))
+            avwap_slope = lin_slope(avwap_vals[-slope_window:], slope_window)
+            
+            # Normalize by latest AVWAP value
+            latest_avwap = avwap_vals[-1] if avwap_vals else 1.0
+            avwap_slope_pct = avwap_slope / max(latest_avwap, 1e-9)
+            
+            # Positive slope = good participation, negative = decay
+            return sigmoid(-avwap_slope_pct * 1000.0, 1.0)  # Invert (decay = high score)
+        
+        # 4. EMA STRUCTURE COMPRESSION (10%): EMA144-333, EMA250-333 separations
+        def compute_structure_compression(window_closes: List[float]) -> float:
+            """Compute EMA structure compression score."""
+            if len(window_closes) < 144:
+                return 0.5  # Need at least 144 bars for EMA144
+            
+            # Calculate EMAs
+            ema144_series = ema_series(window_closes, 144)
+            ema250_series = ema_series(window_closes, 250)
+            ema333_series = ema_series(window_closes, 333)
+            
+            if len(ema144_series) < 10 or len(ema250_series) < 10 or len(ema333_series) < 10:
+                return 0.5
+            
+            # Calculate separations over last 10 bars
+            sep_window = min(10, len(ema144_series))
+            sep144_333 = [(ema144_series[i] - ema333_series[i]) / max(ema333_series[i], 1e-9) 
+                         for i in range(len(ema144_series)-sep_window, len(ema144_series))]
+            sep250_333 = [(ema250_series[i] - ema333_series[i]) / max(ema333_series[i], 1e-9)
+                         for i in range(len(ema250_series)-sep_window, len(ema250_series))]
+            
+            # Calculate separation trends (slopes)
+            sep144_333_slope = lin_slope(sep144_333, len(sep144_333))
+            sep250_333_slope = lin_slope(sep250_333, len(sep250_333))
+            
+            # Negative slope = compression = decay
+            avg_compression = (sep144_333_slope + sep250_333_slope) / 2.0
+            return sigmoid(-avg_compression * 100.0, 1.0)  # Invert (compression = high score)
+        
+        # Compute scores for each window
+        w1_closes, w1_highs, w1_lows, w1_vols, w1_atrs = get_window_data(w1_bars)
+        w1_bars_list = all_bars[-w1_bars:] if w1_bars else []
+        
+        slow1 = compute_slow_field_momentum(w1_closes, w1_bars_list) if w1_closes else 0.5
+        struct1 = compute_structure_failure(w1_closes, w1_highs, w1_lows, w1_atrs) if w1_closes else 0.5
+        part1 = compute_participation_decay(w1_closes, w1_vols) if w1_closes else 0.5
+        comp1 = compute_structure_compression(w1_closes) if w1_closes else 0.5
+        
+        slow2, struct2, part2, comp2 = 0.5, 0.5, 0.5, 0.5
+        if w2_bars:
+            w2_closes, w2_highs, w2_lows, w2_vols, w2_atrs = get_window_data(w2_bars)
+            w2_bars_list = all_bars[-w2_bars:] if w2_bars else []
+            slow2 = compute_slow_field_momentum(w2_closes, w2_bars_list) if w2_closes else 0.5
+            struct2 = compute_structure_failure(w2_closes, w2_highs, w2_lows, w2_atrs) if w2_closes else 0.5
+            part2 = compute_participation_decay(w2_closes, w2_vols) if w2_closes else 0.5
+            comp2 = compute_structure_compression(w2_closes) if w2_closes else 0.5
+        
+        slow3, struct3, part3, comp3 = 0.5, 0.5, 0.5, 0.5
+        if w3_bars:
+            w3_closes, w3_highs, w3_lows, w3_vols, w3_atrs = get_window_data(w3_bars)
+            w3_bars_list = all_bars[-w3_bars:] if w3_bars else []
+            slow3 = compute_slow_field_momentum(w3_closes, w3_bars_list) if w3_closes else 0.5
+            struct3 = compute_structure_failure(w3_closes, w3_highs, w3_lows, w3_atrs) if w3_closes else 0.5
+            part3 = compute_participation_decay(w3_closes, w3_vols) if w3_closes else 0.5
+            comp3 = compute_structure_compression(w3_closes) if w3_closes else 0.5
+        
+        # Compare windows: decay = w3 > w2 > w1 (declining trend health)
+        # If w3 score > w2 > w1, trend is weakening
+        def decay_score(score1: float, score2: Optional[float], score3: Optional[float]) -> float:
+            """Calculate decay score from 3-window comparison."""
+            if score2 is None:
+                # Only window 1 available
+                return score1
+            if score3 is None:
+                # Only windows 1 and 2 available
+                if score2 > score1:
+                    return (score1 * 0.3) + (score2 * 0.7)  # Recent weakening
+                else:
+                    return (score1 + score2) / 2.0  # Stable or improving
+            
+            # All 3 windows available
+            # Decay pattern: w3 > w2 > w1 (all increasing = decay accelerating)
+            if score3 > score2 > score1:
+                return (score1 * 0.2) + (score2 * 0.3) + (score3 * 0.5)  # Weight recent more
+            elif score2 > score1:
+                # Recent weakening
+                return (score1 * 0.3) + (score2 * 0.7)
+            else:
+                # Stable or improving
+                return (score1 + score2) / 2.0
+        
+        slow_decay = decay_score(slow1, slow2 if w2_bars else None, slow3 if w3_bars else None)
+        struct_decay = decay_score(struct1, struct2 if w2_bars else None, struct3 if w3_bars else None)
+        part_decay = decay_score(part1, part2 if w2_bars else None, part3 if w3_bars else None)
+        comp_decay = decay_score(comp1, comp2 if w2_bars else None, comp3 if w3_bars else None)
+        
+        # Weighted composite (volatility disorder removed)
+        edx_score = (
+            0.30 * slow_decay +
+            0.25 * struct_decay +
+            0.20 * part_decay +
+            0.10 * comp_decay
+        )
+        edx_score = max(0.0, min(1.0, edx_score))
+        
+        diagnostics = {
+            "edx_slow": slow_decay,
+            "edx_struct": struct_decay,
+            "edx_part": part_decay,
+            "edx_geom": comp_decay,
+            "window1_bars": w1_bars,
+            "window2_bars": w2_bars,
+            "window3_bars": w3_bars,
+            "w1_slow": slow1,
+            "w1_struct": struct1,
+            "w1_part": part1,
+            "w1_comp": comp1,
+            "w2_slow": slow2 if w2_bars else None,
+            "w2_struct": struct2 if w2_bars else None,
+            "w2_part": part2 if w2_bars else None,
+            "w2_comp": comp2 if w2_bars else None,
+            "w3_slow": slow3 if w3_bars else None,
+            "w3_struct": struct3 if w3_bars else None,
+            "w3_part": part3 if w3_bars else None,
+            "w3_comp": comp3 if w3_bars else None,
+        }
+        
+        return (edx_score, diagnostics)
+    
+    def _compute_edx_fallback(self, ta: Dict[str, Any], ema_vals: Dict[str, float], 
+                              contract: str, chain: str) -> Tuple[float, Dict[str, Any]]:
+        """Fallback EDX calculation (old method) if S3 start timestamp not available."""
+        def sigmoid(x: float, k: float = 1.0) -> float:
+            return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
+        
+        slopes = ta.get("ema_slopes") or {}
+        ema250_slope = float(slopes.get("ema250_slope") or 0.0)
+        ema333_slope = float(slopes.get("ema333_slope") or 0.0)
+        slow_down = sigmoid(-(ema250_slope) / Constants.S3_EDX_SLOW_K, 1.0) * 0.5 + sigmoid(-(ema333_slope) / Constants.S3_EDX_SLOW_333_K, 1.0) * 0.5
+        
+        rows = self._fetch_recent_ohlc(contract, chain, limit=50)
+        closes = [float(r.get("close_native") or 0.0) for r in rows]
+        lows = [float(r.get("low_native") or 0.0) for r in rows]
+        ema60 = ema_vals.get("ema60", 0.0)
+        below_mid_ratio = 0.0
+        if ema60 > 0.0 and closes:
+            below_mid_ratio = sum(1 for c in closes if c < ema60) / float(len(closes) or 1)
+        ll_ratio = 0.0
+        if len(lows) >= 2:
+            ll_ratio = sum(1 for i in range(1, len(lows)) if lows[i] < lows[i - 1]) / float(len(lows) - 1)
+        struct = 0.5 * sigmoid((ll_ratio - 0.5) / 0.2, 1.0) + 0.5 * sigmoid((below_mid_ratio - 0.4) / 0.2, 1.0)
+        
+        vol = ta.get("volume") or {}
+        vo_z_1h = float(vol.get("vo_z_1h") or 0.0)
+        part_decay = sigmoid(-(vo_z_1h) / 1.0, 1.0)
+        
+        sep = ta.get("separations") or {}
+        dsep_fast = float(sep.get("dsep_fast_5") or 0.0)
+        dsep_mid = float(sep.get("dsep_mid_5") or 0.0)
+        geom_roll = 0.6 * sigmoid(-(dsep_mid) / Constants.S3_EXP_MID_K, 1.0) + 0.4 * sigmoid(-(dsep_fast) / Constants.S3_EXP_FAST_K, 1.0)
+        
+        edx_score = 0.30 * slow_down + 0.25 * struct + 0.20 * part_decay + 0.10 * geom_roll
+        edx_score = max(0.0, min(1.0, edx_score))
+        
+        return (edx_score, {
+            "edx_slow": slow_down,
+            "edx_struct": struct,
+            "edx_part": part_decay,
+            "edx_geom": geom_roll,
+            "fallback": True,
+        })
+
+    def _compute_ox_only(
+        self,
+        price: float,
+        ema_vals: Dict[str, float],
+        ta: Dict[str, Any],
+    ) -> float:
+        """Compute OX (Overextension) score only - no EDX, no database calls.
+        
+        Used in S2 for trim flags. Does not require S3 context or database access.
+        """
+        ema = ta.get("ema") or {}
+        sep = ta.get("separations") or {}
+        atr = ta.get("atr") or {}
+        mom = ta.get("momentum") or {}
+        
+        px = price
+        atr_1h = float(atr.get("atr_1h") or 0.0)
+        atr_mean_20 = float(atr.get("atr_mean_20") or (atr_1h if atr_1h else 1.0))
+        ema20 = ema_vals.get("ema20", 0.0)
+        ema60 = ema_vals.get("ema60", 0.0)
+        ema144 = ema_vals.get("ema144", 0.0)
+        ema250 = ema_vals.get("ema250", 0.0)
+        dsep_fast = float(sep.get("dsep_fast_5") or 0.0)
+        dsep_mid = float(sep.get("dsep_mid_5") or 0.0)
+        slopes = ta.get("ema_slopes") or {}
+        ema20_slope = float(slopes.get("ema20_slope") or 0.0)
+        
+        def sigmoid(x: float, k: float = 1.0) -> float:
+            return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
+        
+        # OX: rails distance + expansion + ATR surge + fragility (same as S3)
+        rail_fast = sigmoid(((px - ema20) / max(atr_1h * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        rail_mid = sigmoid(((px - ema60) / max(atr_1h * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        rail_144 = sigmoid(((px - ema144) / max(atr_1h * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        rail_250 = sigmoid(((px - ema250) / max(atr_1h * Constants.S3_RAIL_250_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        exp_fast = sigmoid(dsep_fast / Constants.S3_EXP_FAST_K, 1.0)
+        exp_mid = sigmoid(dsep_mid / Constants.S3_EXP_MID_K, 1.0)
+        atr_surge = sigmoid((atr_1h / max(atr_mean_20, 1e-9)) - 1.0, 1.0)
+        fragility = sigmoid(-ema20_slope / Constants.S1_CURVATURE_K, 1.0)
+        ox_base = (
+            0.35 * rail_fast + 0.20 * rail_mid + 0.10 * rail_144 + 0.10 * rail_250 +
+            0.10 * exp_fast + 0.05 * exp_mid + 0.05 * atr_surge + 0.05 * fragility
+        )
+        # No EDX boost in S2 (EDX only makes sense in S3 context)
+        ox = max(0.0, min(1.0, ox_base))
+        return ox
+    
     def _compute_s3_scores(
         self,
         contract: str,
@@ -423,19 +905,24 @@ class UptrendEngineV4:
         price: float,
         ema_vals: Dict[str, float],
         ta: Dict[str, Any],
+        features: Dict[str, Any],
+        current_ts: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Compute OX/DX/EDX scores for S3 regime (from v2, reused as-is).
+        """Compute OX/DX/EDX scores for S3 regime.
+        
+        EDX now uses 3-window S3-relative approach:
+        - Window 1: Since S3 start (full duration)
+        - Window 2: Last 2/3 of S3
+        - Window 3: Last 1/3 of S3
         
         Returns scores and diagnostics.
         """
-        import math
-        
         ema = ta.get("ema") or {}
         sep = ta.get("separations") or {}
         atr = ta.get("atr") or {}
         mom = ta.get("momentum") or {}
         vol = ta.get("volume") or {}
-        slopes = ta.get("ema_slopes") or {}
+        vo_z_1h = float(vol.get("vo_z_1h") or 0.0)
         
         px = price
         atr_1h = float(atr.get("atr_1h") or 0.0)
@@ -447,71 +934,38 @@ class UptrendEngineV4:
         ema333 = ema_vals.get("ema333", 0.0)
         dsep_fast = float(sep.get("dsep_fast_5") or 0.0)
         dsep_mid = float(sep.get("dsep_mid_5") or 0.0)
-        vo_z_1h = float(vol.get("vo_z_1h") or 0.0)
+        slopes = ta.get("ema_slopes") or {}
         ema20_slope = float(slopes.get("ema20_slope") or 0.0)
         d_ema144_slope = float(slopes.get("d_ema144_slope") or 0.0)
         
         def sigmoid(x: float, k: float = 1.0) -> float:
             return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
         
-        # EDX (expanded composite)
-        ema250_slope = float(slopes.get("ema250_slope") or 0.0)
-        ema333_slope = float(slopes.get("ema333_slope") or 0.0)
-        slow_down = sigmoid(-(ema250_slope) / Constants.S3_EDX_SLOW_K, 1.0) * 0.5 + sigmoid(-(ema333_slope) / Constants.S3_EDX_SLOW_333_K, 1.0) * 0.5
+        # Get current timestamp (prefer passed parameter, fallback to database, then now)
+        if current_ts:
+            pass  # Use provided timestamp (from backtester context)
+        else:
+            last_bar = self._latest_close_1h(contract, chain)
+            current_ts = last_bar.get("ts") or _now_iso()
         
-        # Structure failure approximations
-        rows = self._fetch_recent_ohlc(contract, chain, limit=50)
-        closes = [float(r.get("close_native") or 0.0) for r in rows]
-        lows = [float(r.get("low_native") or 0.0) for r in rows]
-        below_mid_ratio = 0.0
-        if ema60 > 0.0 and closes:
-            below_mid_ratio = sum(1 for c in closes if c < ema60) / float(len(closes) or 1)
-        ll_ratio = 0.0
-        if len(lows) >= 2:
-            ll_ratio = sum(1 for i in range(1, len(lows)) if lows[i] < lows[i - 1]) / float(len(lows) - 1)
-        struct = 0.5 * sigmoid((ll_ratio - 0.5) / 0.2, 1.0) + 0.5 * sigmoid((below_mid_ratio - 0.4) / 0.2, 1.0)
+        # Get S3 start timestamp
+        s3_start_ts = self._get_s3_start_ts(features)
         
-        # Participation decay
-        part_decay = sigmoid(-(vo_z_1h) / 1.0, 1.0)
+        # Compute EDX using 3-window approach if we have S3 start timestamp
+        if s3_start_ts:
+            edx, edx_diagnostics = self._compute_edx_3window(
+                contract, chain, s3_start_ts, current_ts, price, ema_vals, ta
+            )
+        else:
+            # Fallback: use old method if no S3 start timestamp (shouldn't happen in S3, but safety)
+            edx, edx_diagnostics = self._compute_edx_fallback(ta, ema_vals, contract, chain)
         
-        # Volatility disorder
-        trs: List[float] = []
-        ups: List[float] = []
-        downs: List[float] = []
-        prev_close = None
-        for r in rows:
-            h = float(r.get("high_native") or 0.0)
-            l = float(r.get("low_native") or 0.0)
-            c = float(r.get("close_native") or 0.0)
-            if prev_close is None:
-                prev_close = c
-                continue
-            tr = max(h - l, abs(h - prev_close), abs(prev_close - l))
-            trs.append(tr)
-            if c >= prev_close:
-                ups.append(tr)
-            else:
-                downs.append(tr)
-            prev_close = c
-        up_avg = statistics.fmean(ups) if ups else (sum(trs) / len(trs) if trs else 0.0)
-        down_avg = statistics.fmean(downs) if downs else (sum(trs) / len(trs) if trs else 0.0)
-        asym = 0.0
-        if up_avg > 0.0:
-            asym = sigmoid(((down_avg / up_avg) - 1.0) / 0.2, 1.0)
+        edx_raw = edx  # For now, EDX is raw (can add smoothing later if needed)
         
-        # Geometry rollover
-        geom_roll = 0.6 * sigmoid(-(dsep_mid) / Constants.S3_EXP_MID_K, 1.0) + 0.4 * sigmoid(-(dsep_fast) / Constants.S3_EXP_FAST_K, 1.0)
+        # Merge EDX diagnostics into main diagnostics
+        diagnostics_dict = {**edx_diagnostics}
         
-        # Weighted composite
-        edx_raw = 0.30 * slow_down + 0.25 * struct + 0.20 * part_decay + 0.15 * asym + 0.10 * geom_roll
-        edx_raw = max(0.0, min(1.0, edx_raw))
-        
-        # Smooth EDX with EMA
-        # Note: v4 doesn't have meta tracking yet, so we'll use raw for now
-        # Can be enhanced later if needed
-        edx = edx_raw
-        
-        # OX: rails distance + expansion + ATR surge + fragility
+        # OX: rails distance + expansion + ATR surge + fragility (unchanged from v2)
         rail_fast = sigmoid(((px - ema20) / max(atr_1h * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
         rail_mid = sigmoid(((px - ema60) / max(atr_1h * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
         rail_144 = sigmoid(((px - ema144) / max(atr_1h * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
@@ -565,29 +1019,27 @@ class UptrendEngineV4:
         supp = max(0.0, min(0.4, edx - 0.6))
         dx = max(0.0, min(1.0, dx_base * (1.0 - 0.5 * supp)))
         
+        # Update diagnostics with EDX components (removed old edx_vol_dis)
+        diagnostics_dict.update({
+            "rail_fast": rail_fast,
+            "rail_mid": rail_mid,
+            "rail_144": rail_144,
+            "rail_250": rail_250,
+            "exp_fast": exp_fast,
+            "exp_mid": exp_mid,
+            "atr_surge": atr_surge,
+            "fragility": fragility,
+            "dx_location": dx_location,
+            "exhaustion": exhaustion,
+            "relief": relief,
+            "edx_raw": edx_raw,
+        })
+        
         return {
             "ox": ox,
             "dx": dx,
             "edx": edx,
-            "diagnostics": {
-                "rail_fast": rail_fast,
-                "rail_mid": rail_mid,
-                "rail_144": rail_144,
-                "rail_250": rail_250,
-                "exp_fast": exp_fast,
-                "exp_mid": exp_mid,
-                "atr_surge": atr_surge,
-                "fragility": fragility,
-                "dx_location": dx_location,
-                "exhaustion": exhaustion,
-                "relief": relief,
-                "edx_raw": edx_raw,
-                "edx_slow": slow_down,
-                "edx_struct": struct,
-                "edx_part": part_decay,
-                "edx_vol_dis": asym,
-                "edx_geom": geom_roll,
-            },
+            "diagnostics": diagnostics_dict,
         }
 
     # --------------- State Machine Logic ---------------
@@ -647,7 +1099,34 @@ class UptrendEngineV4:
                 # Bootstrap logic: only S0 or S3, otherwise no state
                 if not prev_state or prev_state == "":
                     if self._check_s3_order(ema_vals):
-                        prev_state = "S3"
+                        # Bootstrap to S3: Record S3 start timestamp
+                        current_ts = last.get("ts") or _now_iso()
+                        self._set_s3_start_ts(pid, features, current_ts)
+                        
+                        # Compute S3 scores for bootstrap
+                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
+                        
+                        payload = self._build_payload(
+                            "S3",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            {
+                                "trending": True,
+                                "scores": {
+                                    "ox": s3_scores.get("ox", 0.0),
+                                    "dx": s3_scores.get("dx", 0.0),
+                                    "edx": s3_scores.get("edx", 0.0),
+                                },
+                                "diagnostics": s3_scores.get("diagnostics", {}),
+                            },
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        updated += 1
+                        continue
                     elif self._check_s0_order(ema_vals):
                         prev_state = "S0"
                     else:
@@ -791,6 +1270,10 @@ class UptrendEngineV4:
                         updated += 1
                     # S2 → S3: Full bullish alignment (band-based)
                     elif self._check_s3_order(ema_vals):
+                        # Record S3 start timestamp
+                        current_ts = last.get("ts") or _now_iso()
+                        self._set_s3_start_ts(pid, features, current_ts)
+                        
                         payload = self._build_payload(
                             "S3",
                             contract,
@@ -808,11 +1291,20 @@ class UptrendEngineV4:
                         updated += 1
                     else:
                         # Stay in S2: Check trims and retest buys
-                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta)
-                        ox = s3_scores.get("ox", 0.0)
+                        # S2 only needs OX, not EDX (EDX requires S3 context)
+                        ox = self._compute_ox_only(price, ema_vals, ta)
                         
-                        # Trim flag on pumps
-                        trim_flag = ox >= Constants.OX_SELL_THRESHOLD
+                        # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
+                        atr_val = self._get_atr(ta)
+                        sr_halo = 1.0 * atr_val
+                        near_sr = False
+                        if sr_levels and atr_val > 0:
+                            for level in sr_levels:
+                                level_price = float(level.get("price") or 0.0)
+                                if level_price > 0 and abs(price - level_price) <= sr_halo:
+                                    near_sr = True
+                                    break
+                        trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
                         
                         # Retest buy at EMA333
                         retest_check = self._check_buy_signal_conditions(
@@ -851,6 +1343,9 @@ class UptrendEngineV4:
                     )
                     
                     if all_below_333:
+                        # Clear S3 start timestamp on exit
+                        self._clear_s3_start_ts(pid, features)
+                        
                         payload = self._build_payload(
                             "S0",
                             contract,
@@ -866,17 +1361,20 @@ class UptrendEngineV4:
                         updated += 1
                     else:
                         # Stay in S3: Compute scores, check emergency exit
-                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta)
+                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
+                        
+                        ema333_val = ema_vals.get("ema333", 0.0)
                         
                         # Emergency exit: price < EMA333 (flag only, no state change)
-                        emergency_exit = price < ema_vals.get("ema333", 0.0)
+                        emergency_exit = price < ema333_val
                         
-                        # Fakeout recovery: price reclaims EMA333 + TI/TS thresholds
-                        fakeout_recovery = False
-                        if emergency_exit:
-                            # Check if price reclaimed (would need to track previous emergency exit)
-                            # For now, just flag emergency exit
-                            pass
+                        # Reclaimed EMA333: price transitions from < EMA333 to >= EMA333 (in S3)
+                        # Check if previous bar had emergency_exit flag
+                        prev_emergency_exit = bool(prev_payload.get("emergency_exit", False))
+                        reclaimed_ema333 = False
+                        if prev_emergency_exit and price >= ema333_val:
+                            # Price was below EMA333 (emergency exit active), now reclaimed
+                            reclaimed_ema333 = True
                         
                         ox = s3_scores.get("ox", 0.0)
                         dx = s3_scores.get("dx", 0.0)
@@ -940,6 +1438,18 @@ class UptrendEngineV4:
                         
                         # Note: ts_score, sr_boost, ts_with_boost already computed above for buy check
                         
+                        # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
+                        atr_val = self._get_atr(ta)
+                        sr_halo = 1.0 * atr_val
+                        near_sr = False
+                        if sr_levels and atr_val > 0:
+                            for level in sr_levels:
+                                level_price = float(level.get("price") or 0.0)
+                                if level_price > 0 and abs(price - level_price) <= sr_halo:
+                                    near_sr = True
+                                    break
+                        trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                        
                         payload = self._build_payload(
                             "S3",
                             contract,
@@ -948,9 +1458,10 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {
-                                "trim_flag": ox >= Constants.OX_SELL_THRESHOLD,
+                                "trim_flag": trim_flag,
                                 "buy_flag": dx_buy_ok,
                                 "emergency_exit": emergency_exit,
+                                "reclaimed_ema333": reclaimed_ema333,
                                 "scores": {
                                     "ox": ox,
                                     "dx": dx,

@@ -322,6 +322,24 @@ class BacktestEngine(UptrendEngineV4):
         rows.reverse()
         return _forward_fill_prices(rows)
 
+    def _fetch_ohlc_since(self, contract: str, chain: str, since_iso: str, limit: int = 500) -> List[Dict[str, Any]]:
+        """Override to respect backtester time filter - CRITICAL for EDX calculation."""
+        rows = (
+            self.sb.table("lowcap_price_data_ohlc")
+            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .eq("token_contract", contract)
+            .eq("chain", chain)
+            .eq("timeframe", "1h")
+            .gte("timestamp", since_iso)
+            .lte("timestamp", self.target_ts.isoformat())  # CRITICAL: respect backtester time filter
+            .order("timestamp", desc=False)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return rows
+
     def analyze_single(self, contract: str, chain: str, features: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze one position at target_ts without DB writes - calls engine methods directly."""
         ta = self._read_ta(features)
@@ -346,6 +364,12 @@ class BacktestEngine(UptrendEngineV4):
         if not prev_state or prev_state == "":
             if self._check_s3_order(ema_vals):
                 prev_state = "S3"
+                # Set S3 start timestamp for bootstrap (backtester doesn't write to DB, just store in features)
+                current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
+                if current_ts_iso:
+                    if "uptrend_engine_v4_meta" not in features:
+                        features["uptrend_engine_v4_meta"] = {}
+                    features["uptrend_engine_v4_meta"]["s3_start_ts"] = current_ts_iso
             elif self._check_s0_order(ema_vals):
                 prev_state = "S0"
             else:
@@ -446,12 +470,31 @@ class BacktestEngine(UptrendEngineV4):
                 )
             elif self._check_s3_order(ema_vals):
                 # S2 → S3
+                # Set S3 start timestamp for EDX calculation (backtester doesn't write to DB, just store in features)
+                current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
+                if current_ts_iso:
+                    if "uptrend_engine_v4_meta" not in features:
+                        features["uptrend_engine_v4_meta"] = {}
+                    features["uptrend_engine_v4_meta"]["s3_start_ts"] = current_ts_iso
+                
                 payload = self._build_payload("S3", contract, chain, price, ema_vals, features, {})
             else:
                 # Stay in S2
-                s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta)
-                ox = s3_scores.get("ox", 0.0)
-                trim_flag = ox >= Constants.OX_SELL_THRESHOLD
+                # S2 only needs OX, not EDX (EDX requires S3 context)
+                ox = self._compute_ox_only(price, ema_vals, ta)
+                
+                # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
+                atr_val = self._get_atr(ta)
+                sr_halo = 1.0 * atr_val
+                near_sr = False
+                if sr_levels and atr_val > 0:
+                    for level in sr_levels:
+                        level_price = float(level.get("price") or 0.0)
+                        if level_price > 0 and abs(price - level_price) <= sr_halo:
+                            near_sr = True
+                            break
+                trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                
                 retest_check = self._check_buy_signal_conditions(
                     price, ema_vals.get("ema333", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=True
                 )
@@ -474,6 +517,14 @@ class BacktestEngine(UptrendEngineV4):
         
         # S3: Trending
         elif prev_state == "S3":
+            # Ensure S3 start timestamp is set (for bootstrap case or if missing)
+            current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
+            if current_ts_iso:
+                if "uptrend_engine_v4_meta" not in features:
+                    features["uptrend_engine_v4_meta"] = {}
+                # Only set if not already set (don't overwrite)
+                if "s3_start_ts" not in features["uptrend_engine_v4_meta"]:
+                    features["uptrend_engine_v4_meta"]["s3_start_ts"] = current_ts_iso
             all_below_333 = (
                 ema_vals.get("ema20", 0.0) < ema_vals.get("ema333", 0.0) and
                 ema_vals.get("ema30", 0.0) < ema_vals.get("ema333", 0.0) and
@@ -496,15 +547,29 @@ class BacktestEngine(UptrendEngineV4):
                 # Stay in S3: Use engine's full S3 logic (includes price <= EMA144 check and EDX sliding scale)
                 # Call the engine's run method logic for S3 state
                 ta_local = self._read_ta(features)
-                s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta_local)
-                emergency_exit = price < ema_vals.get("ema333", 0.0)
+                # Pass current timestamp from backtester context
+                current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
+                s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta_local, features, current_ts=current_ts_iso)
+                ema333_val = ema_vals.get("ema333", 0.0)
+                
+                # Emergency exit: price < EMA333 (flag only, no state change)
+                emergency_exit = price < ema333_val
+                
+                # Reclaimed EMA333: price transitions from < EMA333 to >= EMA333 (in S3)
+                # Check if previous bar had emergency_exit flag
+                prev_emergency_exit = bool(prev_payload.get("emergency_exit", False))
+                reclaimed_ema333 = False
+                if prev_emergency_exit and price >= ema333_val:
+                    # Price was below EMA333 (emergency exit active), now reclaimed
+                    reclaimed_ema333 = True
+                
                 ox = s3_scores.get("ox", 0.0)
                 dx = s3_scores.get("dx", 0.0)
                 edx = s3_scores.get("edx", 0.0)
                 
                 # Use engine's S3 buy logic (includes price <= EMA144 + slope + TS gates + EDX sliding scale)
                 ema144_val = ema_vals.get("ema144", 0.0)
-                ema333_val = ema_vals.get("ema333", 0.0)
+                # ema333_val already defined above
                 price_in_discount_zone = price <= ema144_val if ema144_val > 0 else False
                 
                 # 1. Slope OK: EMA250_slope > 0.0 OR EMA333_slope >= 0.0 (same as S2 retest)
@@ -541,6 +606,18 @@ class BacktestEngine(UptrendEngineV4):
                 dx_ok = dx >= dx_threshold_final
                 dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok
                 
+                # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
+                atr_val = self._get_atr(ta_local)
+                sr_halo = 1.0 * atr_val
+                near_sr = False
+                if sr_levels and atr_val > 0:
+                    for level in sr_levels:
+                        level_price = float(level.get("price") or 0.0)
+                        if level_price > 0 and abs(price - level_price) <= sr_halo:
+                            near_sr = True
+                            break
+                trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                
                 payload = self._build_payload(
                     "S3",
                     contract,
@@ -549,9 +626,10 @@ class BacktestEngine(UptrendEngineV4):
                     ema_vals,
                     features,
                     {
-                        "trim_flag": ox >= Constants.OX_SELL_THRESHOLD,
+                        "trim_flag": trim_flag,
                         "buy_flag": dx_buy_ok,
                         "emergency_exit": emergency_exit,
+                        "reclaimed_ema333": reclaimed_ema333,
                         "scores": {"ox": ox, "dx": dx, "edx": edx},
                         "diagnostics": {
                             **s3_scores.get("diagnostics", {}),
@@ -742,21 +820,14 @@ def generate_results_chart(
             ax.text(chart_times[-1], price, f' S/R:{int(score)}', verticalalignment='center', 
                    fontsize=7, color=color, alpha=0.6)
     
-    # Collect state transitions and condition markers
+    # Collect condition markers (state transitions removed - colored bands show states)
     prev_state = None
-    state_transitions: List[Tuple[datetime, float, str, str]] = []
-    
-    # Condition markers
-    s0_to_s1: List[Tuple[datetime, float]] = []
-    s1_to_s2: List[Tuple[datetime, float]] = []
-    s2_to_s3: List[Tuple[datetime, float]] = []
-    s1_to_s0: List[Tuple[datetime, float]] = []
-    s2_to_s1: List[Tuple[datetime, float]] = []
-    s2_to_s0: List[Tuple[datetime, float]] = []
-    s3_to_s0: List[Tuple[datetime, float]] = []
     
     buy_signals: List[Tuple[datetime, float, str]] = []  # (time, price, state)
     trim_flags: List[Tuple[datetime, float]] = []
+    emergency_exits: List[Tuple[datetime, float]] = []  # Emergency exit markers (S3: price < EMA333)
+    position_exits: List[Tuple[datetime, float, str]] = []  # Position exits (S1/S2/S3 → S0 with exit_position: true)
+    reclaimed_ema333: List[Tuple[datetime, float]] = []  # Reclaimed EMA333 (auto rebuy)
     
     ts_threshold_0: List[Tuple[datetime, float]] = []
     ts_threshold_0_3: List[Tuple[datetime, float]] = []
@@ -769,6 +840,7 @@ def generate_results_chart(
     edx_values: List[float] = []
     
     # Process results
+    prev_state_for_exit = None  # Track previous state to detect transitions to S0
     for res in results:
         ts_str = res.get("ts")
         if not ts_str:
@@ -783,12 +855,6 @@ def generate_results_chart(
             state = payload.get("state", "")
             price = float(payload.get("price", 0.0))
             
-            # Track state transitions
-            if prev_state is not None and state != prev_state:
-                state_transitions.append((res_ts, price, prev_state, state))
-            
-            prev_state = state
-            
             # Buy signals with state context (redundant state markers removed - using vertical bands instead)
             if payload.get("buy_signal"):  # S1 buy
                 buy_signals.append((res_ts, price, "S1"))
@@ -800,6 +866,25 @@ def generate_results_chart(
             # Trim flags
             if payload.get("trim_flag"):
                 trim_flags.append((res_ts, price))
+            
+            # Emergency exit (S3 only - price < EMA333)
+            if payload.get("emergency_exit") and state == "S3":
+                emergency_exits.append((res_ts, price))
+            
+            # Position exits: Only mark on transition TO S0, not when already in S0
+            # This includes S1→S0 exits when fast band at bottom, or S3→S0 when all EMAs below 333
+            exit_reason = payload.get("exit_reason", "")
+            if (payload.get("exit_position") and state == "S0" and exit_reason and 
+                prev_state_for_exit and prev_state_for_exit != "S0"):
+                # Only mark if transitioning from a non-S0 state to S0
+                position_exits.append((res_ts, price, exit_reason))
+            
+            # Update previous state for next iteration
+            prev_state_for_exit = state
+            
+            # Reclaimed EMA333 (S3 only - auto rebuy after emergency exit)
+            if payload.get("reclaimed_ema333") and state == "S3":
+                reclaimed_ema333.append((res_ts, price))
             
             # TS threshold markers (from diagnostics)
             diagnostics = payload.get("diagnostics", {})
@@ -834,53 +919,7 @@ def generate_results_chart(
         except Exception:
             continue
     
-    # Plot state transitions
-    transition_colors = {
-        ('S0', 'S1'): 'green',
-        ('S1', 'S2'): 'blue',
-        ('S2', 'S3'): 'orange',
-        ('S1', 'S0'): 'red',
-        ('S2', 'S1'): 'gray',
-        ('S2', 'S0'): 'red',
-        ('S3', 'S0'): 'darkred',
-    }
-    transition_markers = {
-        ('S0', 'S1'): 'o',
-        ('S1', 'S2'): 's',
-        ('S2', 'S3'): 'D',
-        ('S1', 'S0'): 'X',
-        ('S2', 'S1'): 's',
-        ('S2', 'S0'): 'X',
-        ('S3', 'S0'): 'X',
-    }
-    
-    labeled_transitions = set()
-    for ts, price, from_state, to_state in state_transitions:
-        key = (from_state, to_state)
-        color = transition_colors.get(key, 'gray')
-        marker = transition_markers.get(key, 'o')
-        label = f'{from_state}→{to_state}' if key not in labeled_transitions else ''
-        if key not in labeled_transitions:
-            labeled_transitions.add(key)
-            # Update condition lists for legend
-            if key == ('S0', 'S1'):
-                s0_to_s1.append((ts, price))
-            elif key == ('S1', 'S2'):
-                s1_to_s2.append((ts, price))
-            elif key == ('S2', 'S3'):
-                s2_to_s3.append((ts, price))
-            elif key == ('S1', 'S0'):
-                s1_to_s0.append((ts, price))
-            elif key == ('S2', 'S1'):
-                s2_to_s1.append((ts, price))
-            elif key == ('S2', 'S0'):
-                s2_to_s0.append((ts, price))
-            elif key == ('S3', 'S0'):
-                s3_to_s0.append((ts, price))
-        
-        ax.scatter(ts, price, color=color, s=300, marker=marker, 
-                   edgecolors='black', linewidths=2, alpha=0.9, 
-                   label=label, zorder=12)
+    # State transitions removed - colored vertical bands show states clearly
     
     # Plot buy signals with colored outlines by state
     if buy_signals:
@@ -906,6 +945,24 @@ def generate_results_chart(
         times, prices_vals = zip(*trim_flags)
         ax.scatter(times, prices_vals, c="yellow", marker="x", s=200, alpha=0.9, 
                    zorder=7, linewidths=3, label=f"Trim Flag ({len(trim_flags)})")
+    
+    # Plot position exits (S1/S2/S3 → S0 with exit_position: true)
+    if position_exits:
+        times, prices_vals, reasons = zip(*position_exits)
+        ax.scatter(times, prices_vals, c="red", marker="s", s=250, alpha=0.9, 
+                   zorder=9, edgecolors="darkred", linewidths=2, label=f"Position Exit ({len(position_exits)})")
+    
+    # Plot emergency exits (S3 - price < EMA333, flag only, no state change)
+    if emergency_exits:
+        times, prices_vals = zip(*emergency_exits)
+        ax.scatter(times, prices_vals, c="orange", marker="X", s=300, alpha=0.9, 
+                   zorder=9, edgecolors="darkred", linewidths=2, label=f"Emergency Exit ({len(emergency_exits)})")
+    
+    # Plot reclaimed EMA333 (S3 - auto rebuy after emergency exit)
+    if reclaimed_ema333:
+        times, prices_vals = zip(*reclaimed_ema333)
+        ax.scatter(times, prices_vals, c="lime", marker="*", s=400, alpha=0.9, 
+                   zorder=9, edgecolors="darkgreen", linewidths=3, label=f"Reclaimed EMA333 (Rebuy) ({len(reclaimed_ema333)})")
     
     # Plot TS threshold markers
     if ts_threshold_0:
@@ -968,25 +1025,11 @@ def generate_results_chart(
     legend_handles.append(plt.Line2D([0], [0], color='blue', linestyle='--', alpha=0.4, linewidth=0.8))
     legend_labels.append("Geometry S/R Levels")
     
-    # State markers
-    legend_handles.append(plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='red', markersize=8, alpha=0.5))
-    legend_labels.append("S0 State")
-    legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, alpha=0.5))
-    legend_labels.append("S1 State")
-    legend_handles.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='orange', markersize=8, alpha=0.5))
-    legend_labels.append("S2 State")
-    legend_handles.append(plt.Line2D([0], [0], marker='*', color='w', markerfacecolor='green', markersize=10, alpha=0.6))
-    legend_labels.append("S3 State")
-    
-    # State transitions
-    for handle, label in zip(handles, labels):
-        if '→' in label:
-            legend_handles.append(handle)
-            legend_labels.append(label)
+    # State bands (transitions removed - bands show states clearly)
     
     # Signals
     for handle, label in zip(handles, labels):
-        if "BUY Signal" in label or "Trim Flag" in label:
+        if "BUY" in label or "Trim Flag" in label or "Emergency Exit" in label or "Position Exit" in label or "Reclaimed EMA333" in label:
             legend_handles.append(handle)
             legend_labels.append(label)
     
@@ -1129,6 +1172,14 @@ def main() -> None:
     # Load initial position features
     pos = sbx.load_position_features(contract, chain)
     features = pos.get("features") or {}
+    
+    # PM Simulation State (for future implementation):
+    # - Track "in_position" flag (true when holding, false when exited)
+    # - Track "emergency_exit_active" flag (true after emergency_exit: true, false after reclaim)
+    # - When emergency_exit: true → Exit position, set emergency_exit_active = true
+    # - When reclaimed_ema333: true AND emergency_exit_active → Auto rebuy position, clear emergency_exit_active
+    # - When exit_position: true → Exit position, clear emergency_exit_active
+    # - When buy_flag/buy_signal: true AND not in emergency_exit_active → Buy/add position
     
     print(f"Analyzing from {start_ts.isoformat()} to {end_ts.isoformat()}...")
     

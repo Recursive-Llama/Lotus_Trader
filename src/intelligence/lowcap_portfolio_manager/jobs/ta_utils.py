@@ -331,3 +331,47 @@ def adx_series_wilder(bars: List[Dict[str, Any]], period: int = 14) -> List[floa
     
     return adx_vals
 
+
+def avwap_series(prices: List[float], volumes: List[float]) -> List[float]:
+    """
+    Compute cumulative AVWAP (Anchored Volume-Weighted Average Price) series.
+    
+    For each bar i, AVWAP_i = Σ(j=0 to i)[Price_j × Volume_j] / Σ(j=0 to i)[Volume_j]
+    
+    This is an anchored/cumulative VWAP, not a rolling window VWAP.
+    Used for measuring participation since a specific anchor point (e.g., S3 start).
+    
+    Args:
+        prices: List of price values (typically closes)
+        volumes: List of volume values (same length as prices)
+        
+    Returns:
+        List of AVWAP values (same length as input)
+        - For zero volume bars, uses previous AVWAP (maintains continuity)
+        - For first bar with zero volume, uses current price
+    """
+    if not prices or not volumes:
+        return []
+    if len(prices) != len(volumes):
+        raise ValueError("prices and volumes must have same length")
+    
+    cumulative_pv = 0.0
+    cumulative_v = 0.0
+    avwap_values: List[float] = []
+    
+    for i in range(len(prices)):
+        price = prices[i]
+        volume = max(0.0, volumes[i])
+        
+        if volume > 0:
+            cumulative_pv += price * volume
+            cumulative_v += volume
+            avwap = cumulative_pv / cumulative_v if cumulative_v > 0 else price
+        else:
+            # Zero volume: use previous AVWAP for continuity, or current price if first bar
+            avwap = avwap_values[-1] if avwap_values else price
+        
+        avwap_values.append(avwap)
+    
+    return avwap_values
+
