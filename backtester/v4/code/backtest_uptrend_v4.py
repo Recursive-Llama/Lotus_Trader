@@ -534,6 +534,9 @@ class BacktestEngine(UptrendEngineV4):
             )
             
             if all_below_333:
+                # Clear first dip buy flag on S3 exit
+                if "uptrend_engine_v4_meta" in features and "first_dip_buy_taken" in features["uptrend_engine_v4_meta"]:
+                    del features["uptrend_engine_v4_meta"]["first_dip_buy_taken"]
                 payload = self._build_payload(
                     "S0",
                     contract,
@@ -550,6 +553,19 @@ class BacktestEngine(UptrendEngineV4):
                 # Pass current timestamp from backtester context
                 current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
                 s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta_local, features, current_ts=current_ts_iso)
+                
+                # Check first dip buy (only if not already taken)
+                first_dip_check = self._check_first_dip_buy(
+                    contract, chain, price, ema_vals, ta_local, features, current_ts_iso or ""
+                )
+                first_dip_buy_flag = first_dip_check.get("first_dip_buy_flag", False)
+                
+                # Set flag if first dip buy triggered
+                if first_dip_buy_flag:
+                    if "uptrend_engine_v4_meta" not in features:
+                        features["uptrend_engine_v4_meta"] = {}
+                    features["uptrend_engine_v4_meta"]["first_dip_buy_taken"] = True
+                
                 ema333_val = ema_vals.get("ema333", 0.0)
                 
                 # Emergency exit: price < EMA333 (flag only, no state change)
@@ -603,8 +619,10 @@ class BacktestEngine(UptrendEngineV4):
                 dx_threshold_final = max(0.0, dx_threshold_adjusted - price_position_boost)
                 
                 # Final check: ALL conditions must be met
+                # Emergency exit: Block DX buys when price < EMA333 (too risky)
+                # Once EMA333 is reclaimed, DX buys can resume if all other conditions are met
                 dx_ok = dx >= dx_threshold_final
-                dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok
+                dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok and not emergency_exit
                 
                 # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
                 atr_val = self._get_atr(ta_local)
@@ -628,6 +646,7 @@ class BacktestEngine(UptrendEngineV4):
                     {
                         "trim_flag": trim_flag,
                         "buy_flag": dx_buy_ok,
+                        "first_dip_buy_flag": first_dip_buy_flag,
                         "emergency_exit": emergency_exit,
                         "reclaimed_ema333": reclaimed_ema333,
                         "scores": {"ox": ox, "dx": dx, "edx": edx},
@@ -652,8 +671,10 @@ class BacktestEngine(UptrendEngineV4):
                                 "ts_score": ts_score,
                                 "ts_with_boost": ts_with_boost,
                                 "sr_boost": sr_boost,
+                                "emergency_exit": emergency_exit,
                                 "buy_flag": dx_buy_ok,
                             },
+                            "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
                         },
                     },
                 )
@@ -824,6 +845,7 @@ def generate_results_chart(
     prev_state = None
     
     buy_signals: List[Tuple[datetime, float, str]] = []  # (time, price, state)
+    first_dip_buys: List[Tuple[datetime, float]] = []  # First dip buy markers (S3: near EMA20/30 or EMA60)
     trim_flags: List[Tuple[datetime, float]] = []
     emergency_exits: List[Tuple[datetime, float]] = []  # Emergency exit markers (S3: price < EMA333)
     position_exits: List[Tuple[datetime, float, str]] = []  # Position exits (S1/S2/S3 → S0 with exit_position: true)
@@ -841,6 +863,7 @@ def generate_results_chart(
     
     # Process results
     prev_state_for_exit = None  # Track previous state to detect transitions to S0
+    prev_emergency_exit = False  # Track previous emergency_exit state to detect transitions
     for res in results:
         ts_str = res.get("ts")
         if not ts_str:
@@ -863,13 +886,20 @@ def generate_results_chart(
             elif payload.get("buy_flag") and state == "S3":  # S3 DX buy
                 buy_signals.append((res_ts, price, "S3"))
             
+            # First dip buy (S3 only)
+            if payload.get("first_dip_buy_flag") and state == "S3":
+                first_dip_buys.append((res_ts, price))
+            
             # Trim flags
             if payload.get("trim_flag"):
                 trim_flags.append((res_ts, price))
             
-            # Emergency exit (S3 only - price < EMA333)
-            if payload.get("emergency_exit") and state == "S3":
+            # Emergency exit (S3 only - mark only on transition: price crosses from >= EMA333 to < EMA333)
+            current_emergency_exit = payload.get("emergency_exit", False) and state == "S3"
+            if current_emergency_exit and not prev_emergency_exit:
+                # Transition: was above EMA333, now below - mark it once
                 emergency_exits.append((res_ts, price))
+            prev_emergency_exit = current_emergency_exit
             
             # Position exits: Only mark on transition TO S0, not when already in S0
             # This includes S1→S0 exits when fast band at bottom, or S3→S0 when all EMAs below 333
@@ -964,6 +994,12 @@ def generate_results_chart(
         ax.scatter(times, prices_vals, c="lime", marker="*", s=400, alpha=0.9, 
                    zorder=9, edgecolors="darkgreen", linewidths=3, label=f"Reclaimed EMA333 (Rebuy) ({len(reclaimed_ema333)})")
     
+    # Plot first dip buys (S3 - green diamond with colored border)
+    if first_dip_buys:
+        times, prices_vals = zip(*first_dip_buys)
+        ax.scatter(times, prices_vals, c="lime", marker="D", s=250, alpha=0.9, 
+                   zorder=8, edgecolors="green", linewidths=3, label=f"First Dip Buy ({len(first_dip_buys)})")
+    
     # Plot TS threshold markers
     if ts_threshold_0:
         times, prices_vals = zip(*ts_threshold_0)
@@ -1029,7 +1065,7 @@ def generate_results_chart(
     
     # Signals
     for handle, label in zip(handles, labels):
-        if "BUY" in label or "Trim Flag" in label or "Emergency Exit" in label or "Position Exit" in label or "Reclaimed EMA333" in label:
+        if "BUY" in label or "First Dip Buy" in label or "Trim Flag" in label or "Emergency Exit" in label or "Position Exit" in label or "Reclaimed EMA333" in label:
             legend_handles.append(handle)
             legend_labels.append(label)
     

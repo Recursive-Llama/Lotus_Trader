@@ -303,6 +303,159 @@ class UptrendEngineV4:
         except Exception:
             return (None, None, None)
 
+    def _calculate_bars_since_s3_entry(self, s3_start_ts: Optional[str], current_ts: str) -> Optional[int]:
+        """Calculate number of bars since S3 entry.
+        
+        Returns:
+            Number of bars (1 hour per bar) or None if S3 start timestamp not available
+        """
+        if not s3_start_ts:
+            return None
+        try:
+            start_dt = datetime.fromisoformat(s3_start_ts.replace("Z", "+00:00"))
+            current_dt = datetime.fromisoformat(current_ts.replace("Z", "+00:00"))
+            bars = int((current_dt - start_dt).total_seconds() / 3600)  # 1 hour per bar
+            return max(0, bars)
+        except Exception:
+            return None
+
+    def _check_first_dip_buy(
+        self,
+        contract: str,
+        chain: str,
+        price: float,
+        ema_vals: Dict[str, float],
+        ta: Dict[str, Any],
+        features: Dict[str, Any],
+        current_ts: str,
+    ) -> Dict[str, Any]:
+        """Check first dip buy conditions.
+        
+        Two options:
+        1. Price within 0.5*ATR of EMA20/30, within first 6 bars of S3
+        2. Price within 0.5*ATR of EMA60, within first 12 bars of S3
+        
+        Both require:
+        - TS + S/R boost >= 0.50 (lower threshold than normal 0.60)
+        - Slope OK: EMA144_slope > 0.0 OR EMA250_slope >= 0.0
+        - First dip buy not already taken (one-time flag)
+        - Price >= EMA333 (emergency exit blocks first dip buys)
+        
+        Note: If price dips below EMA333 and then reclaims, first dip buy can still trigger
+        if still within the time window (bars 0-6 for EMA20/30, or bars 0-12 for EMA60).
+        
+        Returns:
+            Dict with first_dip_buy_flag and diagnostics
+        """
+        # Check if first dip buy already taken
+        meta = features.get("uptrend_engine_v4_meta") or {}
+        if meta.get("first_dip_buy_taken", False):
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "already_taken"},
+            }
+        
+        # Get S3 start timestamp
+        s3_start_ts = self._get_s3_start_ts(features)
+        if not s3_start_ts:
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "no_s3_start_ts"},
+            }
+        
+        # Calculate bars since S3 entry
+        bars_since_entry = self._calculate_bars_since_s3_entry(s3_start_ts, current_ts)
+        if bars_since_entry is None:
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "cannot_calculate_bars"},
+            }
+        
+        # Get EMAs
+        ema20 = ema_vals.get("ema20", 0.0)
+        ema30 = ema_vals.get("ema30", 0.0)
+        ema60 = ema_vals.get("ema60", 0.0)
+        ema333 = ema_vals.get("ema333", 0.0)
+        
+        if ema20 <= 0 or ema30 <= 0 or ema60 <= 0 or ema333 <= 0:
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "invalid_emas"},
+            }
+        
+        # Emergency exit check: Block first dip buy if price < EMA333
+        # Rationale: Below EMA333 is emergency exit territory - too risky for first dip buys
+        # Once EMA333 is reclaimed (price >= EMA333), first dip buys can resume if still within time window
+        emergency_exit = price < ema333
+        if emergency_exit:
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "emergency_exit_below_333"},
+            }
+        
+        # Get ATR
+        atr_val = self._get_atr(ta)
+        if atr_val <= 0:
+            return {
+                "first_dip_buy_flag": False,
+                "diagnostics": {"reason": "invalid_atr"},
+            }
+        
+        # Check slope: EMA144/250 (not 250/333)
+        ema_slopes = ta.get("ema_slopes") or {}
+        ema144_slope = float(ema_slopes.get("ema144_slope", 0.0))
+        ema250_slope = float(ema_slopes.get("ema250_slope", 0.0))
+        slope_ok = (ema144_slope > 0.0) or (ema250_slope >= 0.0)
+        
+        # Check TS + S/R boost >= 0.50 (lower threshold for first dip)
+        ts_score = self._compute_ts(ta)
+        sr_levels = self._read_sr_levels(features)
+        # S/R boost anchored to EMA333 for consistency
+        sr_boost = self._compute_sr_boost(price, ema333, atr_val, sr_levels)
+        ts_with_boost = ts_score + sr_boost
+        ts_ok = ts_with_boost >= 0.50  # Lower threshold for first dip
+        
+        # Check option 1: EMA20/30 within first 6 bars
+        halo_20_30 = 0.5 * atr_val
+        dist_20 = abs(price - ema20)
+        dist_30 = abs(price - ema30)
+        near_20_30 = (dist_20 <= halo_20_30) or (dist_30 <= halo_20_30)
+        option1_ok = (bars_since_entry <= 6) and near_20_30
+        
+        # Check option 2: EMA60 within first 12 bars
+        halo_60 = 0.5 * atr_val
+        dist_60 = abs(price - ema60)
+        near_60 = dist_60 <= halo_60
+        option2_ok = (bars_since_entry <= 12) and near_60
+        
+        # First dip buy if either option is met AND slope + TS OK
+        first_dip_buy_flag = (option1_ok or option2_ok) and slope_ok and ts_ok
+        
+        diagnostics = {
+            "bars_since_entry": bars_since_entry,
+            "option1_ema20_30": option1_ok,
+            "option2_ema60": option2_ok,
+            "dist_ema20": dist_20,
+            "dist_ema30": dist_30,
+            "dist_ema60": dist_60,
+            "halo_20_30": halo_20_30,
+            "halo_60": halo_60,
+            "slope_ok": slope_ok,
+            "ema144_slope": ema144_slope,
+            "ema250_slope": ema250_slope,
+            "ts_ok": ts_ok,
+            "ts_score": ts_score,
+            "ts_with_boost": ts_with_boost,
+            "sr_boost": sr_boost,
+            "emergency_exit": False,  # Already checked above, but include for diagnostics
+            "first_dip_buy_flag": first_dip_buy_flag,
+        }
+        
+        return {
+            "first_dip_buy_flag": first_dip_buy_flag,
+            "diagnostics": diagnostics,
+        }
+
     # --------------- EMA Order Checks (Band-based) ---------------
 
     def _check_s0_order(self, ema_vals: Dict[str, float]) -> bool:
@@ -1343,8 +1496,11 @@ class UptrendEngineV4:
                     )
                     
                     if all_below_333:
-                        # Clear S3 start timestamp on exit
+                        # Clear S3 start timestamp and first dip buy flag on exit
                         self._clear_s3_start_ts(pid, features)
+                        if "uptrend_engine_v4_meta" in features and "first_dip_buy_taken" in features["uptrend_engine_v4_meta"]:
+                            del features["uptrend_engine_v4_meta"]["first_dip_buy_taken"]
+                            self._write_features(pid, features)
                         
                         payload = self._build_payload(
                             "S0",
@@ -1364,6 +1520,21 @@ class UptrendEngineV4:
                         s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
                         
                         ema333_val = ema_vals.get("ema333", 0.0)
+                        
+                        # Get current timestamp for first dip buy check
+                        current_ts = last.get("ts") or _now_iso()
+                        
+                        # Check first dip buy (only if not already taken)
+                        first_dip_check = self._check_first_dip_buy(
+                            contract, chain, price, ema_vals, ta, features, current_ts
+                        )
+                        first_dip_buy_flag = first_dip_check.get("first_dip_buy_flag", False)
+                        
+                        # Set flag if first dip buy triggered
+                        if first_dip_buy_flag:
+                            if "uptrend_engine_v4_meta" not in features:
+                                features["uptrend_engine_v4_meta"] = {}
+                            features["uptrend_engine_v4_meta"]["first_dip_buy_taken"] = True
                         
                         # Emergency exit: price < EMA333 (flag only, no state change)
                         emergency_exit = price < ema333_val
@@ -1433,8 +1604,10 @@ class UptrendEngineV4:
                         dx_threshold_final = max(0.0, dx_threshold_adjusted - price_position_boost)
                         
                         # Final check: ALL conditions must be met
+                        # Emergency exit: Block DX buys when price < EMA333 (too risky)
+                        # Once EMA333 is reclaimed, DX buys can resume if all other conditions are met
                         dx_ok = dx >= dx_threshold_final
-                        dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok
+                        dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok and not emergency_exit
                         
                         # Note: ts_score, sr_boost, ts_with_boost already computed above for buy check
                         
@@ -1460,6 +1633,7 @@ class UptrendEngineV4:
                             {
                                 "trim_flag": trim_flag,
                                 "buy_flag": dx_buy_ok,
+                                "first_dip_buy_flag": first_dip_buy_flag,
                                 "emergency_exit": emergency_exit,
                                 "reclaimed_ema333": reclaimed_ema333,
                                 "scores": {
@@ -1491,8 +1665,10 @@ class UptrendEngineV4:
                                         "ts_score": ts_score,
                                         "ts_with_boost": ts_with_boost,
                                         "sr_boost": sr_boost,
+                                        "emergency_exit": emergency_exit,
                                         "buy_flag": dx_buy_ok,
                                     },
+                                    "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
                                 },
                             },
                         )
