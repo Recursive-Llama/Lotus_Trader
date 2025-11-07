@@ -1,0 +1,366 @@
+{
+  "extracted_at": "2025-11-06T08:06:08.598864",
+  "total_tokens": 72,
+  "tokens": [
+    {
+      "token_id": "UMBRA_solana_1760981363",
+      "chain_id": "solana",
+      "contract_address": "PRVT6TB7uss3FrUd2D9xs2zqDBsa3GbMJMwCQsgmeta"
+    },
+    {
+      "token_id": "ZORA_base_1759424819",
+      "chain_id": "base",
+      "contract_address": "0x1111111111166b7FE7bd91427724B487980aFc69"
+    },
+    {
+      "token_id": "KARMA_solana_1760274045",
+      "chain_id": "solana",
+      "contract_address": "CmUnSFZCKUFGs2L8eZGQukAj833Y8r2SiJav55Nnrihd"
+    },
+    {
+      "token_id": "OPTIM_solana_1762238658",
+      "chain_id": "solana",
+      "contract_address": "86BMwo29TgobuYTCFU7tf3DBhgNvgeCkNTQXbAvUpump"
+    },
+    {
+      "token_id": "LUMEN_solana_1762238659",
+      "chain_id": "solana",
+      "contract_address": "BkpaxHhE6snExazrPkVAjxDyZa8Nq3oDEzm5GQm2pump"
+    },
+    {
+      "token_id": "1024b900-59d1-42f6-b69b-781c256a2270",
+      "chain_id": "solana",
+      "contract_address": "GMzuntWYJLpNuCizrSR7ZXggiMdDzTNiEmSNHHunpump"
+    },
+    {
+      "token_id": "DARK_solana_1762238660",
+      "chain_id": "solana",
+      "contract_address": "8BtoThi2ZoXnF7QQK1Wjmh2JuBw9FjVvhnGMVZ2vpump"
+    },
+    {
+      "token_id": "ZERITH_solana_1762238659",
+      "chain_id": "solana",
+      "contract_address": "59yQZzHvGvdM3DvMXuDHWsYdbqzERoD8QfT1Y25Npump"
+    },
+    {
+      "token_id": "FLIPR_solana_1760996694",
+      "chain_id": "solana",
+      "contract_address": "JCBKQBPvnjr7emdQGCNM8wtE8AZjyvJgh7JMvkfYxypm"
+    },
+    {
+      "token_id": "PIK_solana_1760458244",
+      "chain_id": "solana",
+      "contract_address": "Gfvayte2S8QofiRsSXhdX1XX1CbcXvZP9jJkAU5Ypump"
+    },
+    {
+      "token_id": "BREW_solana_1760446535",
+      "chain_id": "solana",
+      "contract_address": "2hXQn7nJbh2XFTxvtyKb5mKfnScuoiC1Sm8rnWydpump"
+    },
+    {
+      "token_id": "Cake_bsc_1759435623",
+      "chain_id": "bsc",
+      "contract_address": "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82"
+    },
+    {
+      "token_id": "CODEC_solana_1760899345",
+      "chain_id": "solana",
+      "contract_address": "69LjZUUzxj3Cb3Fxeo1X4QpYEQTboApkhXTysPpbpump"
+    },
+    {
+      "token_id": "URA_solana_1760022822",
+      "chain_id": "solana",
+      "contract_address": "BwTu5zJqEyLYawwYoGTWT7UxC85eLYQWRcta1GiEbonk"
+    },
+    {
+      "token_id": "POLYTREND_solana_1760697546",
+      "chain_id": "solana",
+      "contract_address": "7KK1qVc4L5qGfKHapfTtnoyhLqES7PKKirD9QmQLpump"
+    },
+    {
+      "token_id": "shaft_solana_1758208443",
+      "chain_id": "solana",
+      "contract_address": "R6jVVLcdfpZ7tPLHQXZ4uZRFhBcE2L6aQoPgiJuV7j9"
+    },
+    {
+      "token_id": "POLYTALE_solana_1760223624",
+      "chain_id": "solana",
+      "contract_address": "B8bFLQUZg9exegB1RWV9D7eRsQw1EjyfKU22jf1fpump"
+    },
+    {
+      "token_id": "NULLA_solana_1760874264",
+      "chain_id": "solana",
+      "contract_address": "HthQKKW6M9Q8pb27r9xoqjfviiJ3kzdojP8TKqjJpump"
+    },
+    {
+      "token_id": "TROLL_solana_1760384871",
+      "chain_id": "solana",
+      "contract_address": "5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2"
+    },
+    {
+      "token_id": "WAGER_solana_1760105457",
+      "chain_id": "solana",
+      "contract_address": "3MLpX3VviXDhzZzQwFMHXSRSdXvWWsycLEt3xcTapump"
+    },
+    {
+      "token_id": "ICM_solana_1759853585",
+      "chain_id": "solana",
+      "contract_address": "G5bStqnKXv11fmPvMaagUbZi86BGnpf9zZtyPQtAdaos"
+    },
+    {
+      "token_id": "ZFI_base_1759858350",
+      "chain_id": "base",
+      "contract_address": "0xD080eD3c74a20250a2c9821885203034ACD2D5ae"
+    },
+    {
+      "token_id": "ALCH_solana_1758107014",
+      "chain_id": "solana",
+      "contract_address": "HNg5PYJmtqcmzXrv6S9zP1CDKk5BgDuyFBxbvNApump"
+    },
+    {
+      "token_id": "PUMP_solana_1759300461",
+      "chain_id": "solana",
+      "contract_address": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
+    },
+    {
+      "token_id": "QUANT_solana_1760385591",
+      "chain_id": "solana",
+      "contract_address": "2rMgbkuu9ULmd1cPaJP25KA47XjccNyHEm6Xq1AYpump"
+    },
+    {
+      "token_id": "ICM_solana_1760079170",
+      "chain_id": "solana",
+      "contract_address": "HRwo5GY87abyVy5tzW3g1RtgjrnxUEtWfDL7ftpjpump"
+    },
+    {
+      "token_id": "URANUS_solana_1760822297",
+      "chain_id": "solana",
+      "contract_address": "BFgdzMkTPdKKJeTipv2njtDEwhKxkgFueJQfJGt1jups"
+    },
+    {
+      "token_id": "RETAKE_base_1760005653",
+      "chain_id": "base",
+      "contract_address": "0x5eeB2662615782b58251b6f0c3E107571ae1AB07"
+    },
+    {
+      "token_id": "SWIPE_solana_1760603341",
+      "chain_id": "solana",
+      "contract_address": "BuWe9Wd5XqCUUV1xZMtcpCPg7iqdYoyC8dBdSbEUpump"
+    },
+    {
+      "token_id": "ARTI_solana_1760613788",
+      "chain_id": "solana",
+      "contract_address": "5RDjKNvXqs9Y5gkrThtCfpicZYYHs9MK7HhdXdUeaBLV"
+    },
+    {
+      "token_id": "zKSL_solana_1761016848",
+      "chain_id": "solana",
+      "contract_address": "9Yn6bnF3eKLqocUVMxduh7WWqgQZ8DvWQDYTX9Ncpump"
+    },
+    {
+      "token_id": "PREDICT_solana_1760061600",
+      "chain_id": "solana",
+      "contract_address": "Hod59o9CMW38h2wqBRobAMEZZfCvQE4oGuPEJMjJtBLV"
+    },
+    {
+      "token_id": "OK_solana_1760831299",
+      "chain_id": "solana",
+      "contract_address": "8biqsLDiRPaPM11S42zKtNaC3WWKF64PNoPG9htzy99n"
+    },
+    {
+      "token_id": "OPAN_solana_1760852831",
+      "chain_id": "solana",
+      "contract_address": "3Ydb2n8vAFdBJYpdiZEoDxRXLmiGDY1fuizVmMPMpump"
+    },
+    {
+      "token_id": "POLYFACTS_solana_1760103200",
+      "chain_id": "solana",
+      "contract_address": "FfixAeHevSKBZWoXPTbLk4U4X9piqvzGKvQaFo3cpump"
+    },
+    {
+      "token_id": "ZC_solana_1759593339",
+      "chain_id": "solana",
+      "contract_address": "GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC"
+    },
+    {
+      "token_id": "META_solana_1759916432",
+      "chain_id": "solana",
+      "contract_address": "METAwkXcqyXKy1AtsSgJ8JiUHwGCafnZL38n3vYmeta"
+    },
+    {
+      "token_id": "Tokabu_solana_1758186230",
+      "chain_id": "solana",
+      "contract_address": "H8xQ6poBjB9DTPMDTKWzWPrnxu4bDEhybxiouF8Ppump"
+    },
+    {
+      "token_id": "LAUNCHCOIN_solana_1758187677",
+      "chain_id": "solana",
+      "contract_address": "Ey59PH7Z4BFU4HjyKnyMdWt5GGN76KazTAwQihoUXRnk"
+    },
+    {
+      "token_id": "\u5e01\u5b89\u4eba\u751f_bsc_1760994902",
+      "chain_id": "bsc",
+      "contract_address": "0x924fa68a0FC644485b8df8AbfA0A41C2e7744444"
+    },
+    {
+      "token_id": "PRDN_solana_1760143332",
+      "chain_id": "solana",
+      "contract_address": "8b1o3XPCsEiWpcBKPq7fA3y1UDzBmDvupxt754v1BAGS"
+    },
+    {
+      "token_id": "AERO_base_1759424764",
+      "chain_id": "base",
+      "contract_address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
+    },
+    {
+      "token_id": "ASTER_bsc_1759267877",
+      "chain_id": "bsc",
+      "contract_address": "0x000Ae314E2A2172a039B26378814C252734f556A"
+    },
+    {
+      "token_id": "HEDGEMONY_solana_1759364921",
+      "chain_id": "solana",
+      "contract_address": "KounQV6YhTgWFHbs4wNjyRp2VoY4ghoysveNQeGuBLV"
+    },
+    {
+      "token_id": "OVPP_ethereum_1760116788",
+      "chain_id": "ethereum",
+      "contract_address": "0xB4C6fedD984bC983b1a758d0875f1Ea34F81A6af"
+    },
+    {
+      "token_id": "POLYPORT_solana_1760587872",
+      "chain_id": "solana",
+      "contract_address": "2k5o37XM59vQRmnnVnJAEspqfEG9VfoFNTywH49Jpump"
+    },
+    {
+      "token_id": "HABITAT_solana_1758212597",
+      "chain_id": "solana",
+      "contract_address": "2Bwbeh361ywi1PpypDHabDb8VphNKCQt9ht2CRzFsYAE"
+    },
+    {
+      "token_id": "PMX_solana_1760269296",
+      "chain_id": "solana",
+      "contract_address": "J27UYHX5oeaG1YbUGQc8BmJySXDjNWChdGB2Pi2TMDAq"
+    },
+    {
+      "token_id": "AVNT_base_1758812345",
+      "chain_id": "base",
+      "contract_address": "0x696F9436B67233384889472Cd7cD58A6fB5DF4f1"
+    },
+    {
+      "token_id": "DLMM_solana_1760143131",
+      "chain_id": "solana",
+      "contract_address": "DLMmRN9rbZspAAC3a1HgDHMC893Y2Ca9GjoNh9StwnYG"
+    },
+    {
+      "token_id": "EDU_ethereum_1760521940",
+      "chain_id": "ethereum",
+      "contract_address": "0xf8173a39c56a554837C4C7f104153A005D284D11"
+    },
+    {
+      "token_id": "GIGGLE_bsc_1759483616",
+      "chain_id": "bsc",
+      "contract_address": "0x20d6015660b3fe52e6690a889b5C51F69902cE0e"
+    },
+    {
+      "token_id": "PM_solana_1760496320",
+      "chain_id": "solana",
+      "contract_address": "3BWA5RBXyPXuMGZmVL8Snefu573FMJNGpsVi79baiBLV"
+    },
+    {
+      "token_id": "ORE_solana_1760871234",
+      "chain_id": "solana",
+      "contract_address": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp"
+    },
+    {
+      "token_id": "priceless_bsc_1758839920",
+      "chain_id": "bsc",
+      "contract_address": "0x7d03759E5B41E36899833cb2E008455d69A24444"
+    },
+    {
+      "token_id": "QACE_ethereum_1758322712",
+      "chain_id": "ethereum",
+      "contract_address": "0x696025Fab2f3E2ADE78E57A3f553e993D2996615"
+    },
+    {
+      "token_id": "HYDX_base_1759488298",
+      "chain_id": "base",
+      "contract_address": "0x00000e7efa313F4E11Bfff432471eD9423AC6B30"
+    },
+    {
+      "token_id": "Poly_solana_1760875454",
+      "chain_id": "solana",
+      "contract_address": "5eMfXSYdssCpnu63WtPprjbbR5YBJmSEnZGRvtuppump"
+    },
+    {
+      "token_id": "SWTCH_solana_1760741951",
+      "chain_id": "solana",
+      "contract_address": "SW1TCHLmRGTfW5xZknqQdpdarB8PD95sJYWpNp9TbFx"
+    },
+    {
+      "token_id": "BLOXWAP_solana_1760910283",
+      "chain_id": "solana",
+      "contract_address": "2u3ufZ5defxwPXMixvvQpSs68PDNzHTdE52t9Crspump"
+    },
+    {
+      "token_id": "STBL_bsc_1758362992",
+      "chain_id": "bsc",
+      "contract_address": "0x8dEdf84656fa932157e27C060D8613824e7979e3"
+    },
+    {
+      "token_id": "RAIN_solana_1759964458",
+      "chain_id": "solana",
+      "contract_address": "4W7cM6SUuqhv9jp2t3jfmonXzNbDsJt5PCWqt7w1Axa2"
+    },
+    {
+      "token_id": "BETLY_solana_1760101631",
+      "chain_id": "solana",
+      "contract_address": "5XgpGK83mxVdcGuZxv7My99ZmuSzdJo4noLaaD4bpump"
+    },
+    {
+      "token_id": "AVICI_solana_1760809585",
+      "chain_id": "solana",
+      "contract_address": "BANKJmvhT8tiJRsBSS1n2HryMBPvT5Ze4HU95DUAmeta"
+    },
+    {
+      "token_id": "FACY_base_1760190743",
+      "chain_id": "base",
+      "contract_address": "0xFAC77f01957ed1B3DD1cbEa992199B8f85B6E886"
+    },
+    {
+      "token_id": "USELESS_solana_1759836940",
+      "chain_id": "solana",
+      "contract_address": "Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk"
+    },
+    {
+      "token_id": "SERV_ethereum_1758895709",
+      "chain_id": "ethereum",
+      "contract_address": "0x40e3d1A4B2C47d9AA61261F5606136ef73E28042"
+    },
+    {
+      "token_id": "UFD_solana_1760718047",
+      "chain_id": "solana",
+      "contract_address": "eL5fUxj2J4CiQsmW85k5FG9DvuQjjUoBHoQBi2Kpump"
+    },
+    {
+      "token_id": "ANYONE_ethereum_1759348062",
+      "chain_id": "ethereum",
+      "contract_address": "0xFeAc2Eae96899709a43E252B6B92971D32F9C0F9"
+    },
+    {
+      "token_id": "PNP_solana_1760363806",
+      "chain_id": "solana",
+      "contract_address": "ArQNTJtmxuWQ77KB7a1PmoZc5Zd25jXmXPDWBX8qVoux"
+    },
+    {
+      "token_id": "neet_solana_1760093700",
+      "chain_id": "solana",
+      "contract_address": "Ce2gx9KGXJ6C9Mp5b5x1sn9Mg87JwEbrQby4Zqo3pump"
+    },
+    {
+      "token_id": "PPW_solana_1760015543",
+      "chain_id": "solana",
+      "contract_address": "FCPMdpvwxtWBvgDDsPuBb6wyf41ik2gtPqNN9jWSBAGS"
+    }
+  ]
+}

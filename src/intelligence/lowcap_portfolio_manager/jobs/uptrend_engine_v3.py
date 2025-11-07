@@ -1,3 +1,10 @@
+"""
+⚠️ DEPRECATED - Kept for reference during v4 implementation only
+This file will be archived after v4 is fully implemented and tested.
+
+Replaced by: uptrend_engine_v4.py
+"""
+
 from __future__ import annotations
 
 import logging

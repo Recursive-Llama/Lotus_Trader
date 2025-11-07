@@ -2,6 +2,25 @@
 
 **Status**: Consolidated plan combining Architecture Plan, Token Flow Trace, and Timeframe Strategy
 
+**Related Documents**:
+- **Learning System Design**: See [`LEARNING_SYSTEM_V4.md`](./LEARNING_SYSTEM_V4.md) for detailed learning system architecture, schema changes, and implementation checklist
+- **Database Schema Details**: See [`LEARNING_SYSTEM_V4.md`](./LEARNING_SYSTEM_V4.md) section "Database Schema Changes" for `learning_configs`, `learning_coefficients`, `entry_context`, and `completed_trades` schemas
+
+---
+
+## Build Order (Quick Reference)
+
+**Step 1: Database Schema** (Start Here)
+1. Update `lowcap_positions_v4_schema.sql`: Add `entry_context` and `completed_trades` JSONB columns
+2. Create `learning_configs_schema.sql` (new table)
+3. Create `learning_coefficients_schema.sql` (new table)
+4. Update `curators_schema.sql`: Add `chain_counts` JSONB column
+5. Verify `ad_strands` supports `kind='position_closed'` (already supported)
+
+**Step 2: Code Implementation**
+- Follow [Implementation Priority](#implementation-priority) section below
+- See [`LEARNING_SYSTEM_V4.md`](./LEARNING_SYSTEM_V4.md) for learning system implementation details
+
 ---
 
 ## Table of Contents
@@ -24,7 +43,7 @@
 3. **TA Tracker** (runs every 5 min, but only 1h timeframe)
 4. **Geometry Builder** (runs daily, but only 1h timeframe)
 5. **Price Tracking** (5m OHLCV continuous collection)
-6. **PM Core Tick** (runs hourly at :06 UTC)
+6. **PM Core Tick** (runs timeframe-specifically: 1m=1min, 15m=15min, 1h=1hr, 4h=4hr)
 7. **PM Executor** (event-driven, registered)
 
 ### ❌ Critical Issues
@@ -55,10 +74,15 @@
 - **Issue**: `plan_actions()` uses geometry-based logic, not Uptrend Engine v4 signals
 - **Fix**: Create `plan_actions_v4()` using Uptrend Engine signals
 
-#### 6. **PM Frequency Too Low** ⚠️ **FOR LOWER TIMEFRAMES**
-- **Current**: Hourly at :06 UTC
-- **Issue**: If trading on 5m/15m timeframes, hourly PM misses signals
-- **Fix**: Run PM every 5 minutes (or at least more frequently)
+#### 6. **PM Frequency Must Match Timeframe** ⚠️ **CRITICAL**
+- **Current**: Hourly at :06 UTC (wrong - doesn't match timeframes)
+- **Issue**: PM must run at same rate as timeframe being checked, otherwise misses signals
+- **Fix**: Run PM timeframe-specifically:
+  - **1m timeframe**: Every 1 minute
+  - **15m timeframe**: Every 15 minutes
+  - **1h timeframe**: Every 1 hour
+  - **4h timeframe**: Every 4 hours
+- **Implementation**: Run PM separately per timeframe, grouped by timeframe (processes all positions of that timeframe)
 
 #### 7. **Decision Maker Duplication** ⚠️ **CLEANUP NEEDED**
 - **Active**: `DecisionMakerLowcapSimple` (used in `run_social_trading.py`)
@@ -102,7 +126,7 @@
    ├─> Backfill Gap Scan (hourly) - fills missing 1h bars ⚠️
    └─> OHLC Rollup (every 5 min) - rolls up 1m to 5m/15m/1h ✅
 
-7. PM Core Tick (hourly at :06 UTC, should be 5 min) ⚠️
+7. PM Core Tick (timeframe-specific: 1m=1min, 15m=15min, 1h=1hr, 4h=4hr) ⚠️
    └─> Reads features (expects uptrend_engine_v4) ❌
        └─> Computes A/E scores
            └─> Calls plan_actions() (OLD logic, not v4) ⚠️
@@ -120,7 +144,7 @@
 | **Uptrend Engine v4** | **NOT SCHEDULED** | ❌ **MISSING** |
 | Price Tracking | Every 1 min | ✅ Working |
 | OHLC Rollup | Every 5 min | ✅ Working |
-| PM Core Tick | Hourly at :06 UTC | ⚠️ Too infrequent |
+| PM Core Tick | Timeframe-specific (1m=1min, 15m=15min, 1h=1hr, 4h=4hr) | ⚠️ Must match timeframe |
 | Backfill Gap Scan | Hourly | ⚠️ 1h only |
 
 ---
@@ -169,30 +193,36 @@
 
 **Purpose**: Enable multi-timeframe trading from day one with zero schema churn later. Each timeframe trades independently based on its own cycle analysis.
 
-### 1m Timeframe Data Source (VERIFICATION NEEDED)
+### 1m Timeframe Data Source (CRITICAL - Different from Rollup)
 
-**Question**: Can we use 1m price data (tick/price points) instead of OHLC?
+**Key Point**: 1m OHLC conversion is **different** from rolling up to higher timeframes.
 
-**Current Understanding**: We have infrastructure, but **needs verification**:
+**Data Flow**:
+1. **Price Collection**: `scheduled_price_collector.py` collects 1m price points → stores in `lowcap_price_data_1m` (raw price data)
+2. **1m OHLC Conversion** (special case - not a rollup):
+   - Convert 1m price points → 1m OHLC bars
+   - **Open**: Previous candle's close price (from previous 1m OHLC bar)
+   - **Close**: Current candle's price (from `lowcap_price_data_1m`)
+   - **High**: `max(open, close)` (highest of the two prices)
+   - **Low**: `min(open, close)` (lowest of the two prices)
+   - **Volume**: Sum of volumes for the 1-minute window (if available)
+   - **Why different**: We're creating OHLC from price points, not aggregating multiple bars
+3. **OHLC Rollup** (standard aggregation):
+   - Roll up 1m OHLC → 15m OHLC (aggregate 15 bars)
+   - Roll up 1m OHLC → 1h OHLC (aggregate 60 bars)
+   - Roll up 1m OHLC → 4h OHLC (aggregate 240 bars)
+   - Standard logic: Open=first bar's open, Close=last bar's close, High=max(highs), Low=min(lows), Volume=sum(volumes)
 
-1. **Data Source**: `lowcap_price_data_1m` table exists with `price_native` and `price_usd`
-2. **Rollup System**: `GenericOHLCRollup` should convert 1m price points to OHLC:
-   - **Open**: Previous bar's close (or first price in window)
-   - **Close**: Last price in window
-   - **High**: `max(open, close)` (or actual high if available)
-   - **Low**: `min(open, close)` (or actual low if available)
-   - **Volume**: Sum of volumes (if available) or use 1m volume data
+**Storage**: All timeframes (1m, 15m, 1h, 4h) stored in `lowcap_price_data_ohlc` with `timeframe` column
 
-3. **Current Rollup**: `rollup_ohlc.py` handles this conversion
-4. **Usage**: Needed for 1m timeframe positions (one of our 4 timeframes)
+**Usage**: PM and Uptrend Engine read from `lowcap_price_data_ohlc` (filtered by `timeframe`), NOT from `lowcap_price_data_1m`
 
 **⚠️ CRITICAL VERIFICATION NEEDED**:
-- **Action Item**: Verify 1m price data → 1m OHLC conversion works correctly
-- **Test**: Ensure rollup produces valid OHLC bars that engine can process
-- **Edge Cases**: Handle gaps, missing data, volume calculation
-- **This is different from other timeframes** - must verify before Phase 0 implementation
-
-**Implementation**: Use existing rollup system to convert 1m price data to 1m OHLC bars, then use normally. **But verify first!**
+- **Action Item**: Verify 1m price data → 1m OHLC conversion uses correct logic (Open=previous close, Close=current price)
+- **Test**: Ensure 1m OHLC conversion produces valid bars that engine can process
+- **Test**: Ensure rollup from 1m → 15m → 1h → 4h works correctly
+- **Edge Cases**: Handle gaps, missing data, volume calculation, first bar (no previous close)
+- **Must verify before Phase 0 implementation**
 
 ### Timeframe Implementation Requirements
 
@@ -200,8 +230,9 @@
 
 1. **Backfill** (`geckoterminal_backfill.py`):
    - Add `timeframe` parameter (default '1h' for backward compat)
-   - Map timeframe to GeckoTerminal endpoint
-   - Store with correct `timeframe` field
+   - Map timeframe to GeckoTerminal endpoint (1m, 15m, 1h, 4h)
+   - **Fetches correct timeframe directly from API** (no rollup - rollup is only for ongoing data collection)
+   - Store with correct `timeframe` field in `lowcap_price_data_ohlc`
 
 2. **TA Tracker** (`ta_tracker.py`):
    - Accept `timeframe` parameter
@@ -227,16 +258,30 @@
    - Store results per timeframe: `features.uptrend_engine_v4_{timeframe}`
 
 5. **Price Tracking & OHLC Rollup** (`scheduled_price_collector.py` + `rollup_ohlc.py`):
-   - **Price Tracking**: Collects 1m price data every 1 minute → stores in `lowcap_price_data_1m`
-   - **OHLC Rollup**: Rolls up 1m to 15m, 1h, 4h (for all required timeframes)
-   - **1m OHLC**: Convert 1m price points to 1m OHLC bars (⚠️ VERIFICATION NEEDED)
-   - Stores all timeframes in `lowcap_price_data_ohlc` with correct `timeframe` column
+   - **Price Tracking**: Collects 1m price data every 1 minute → stores in `lowcap_price_data_1m` (raw price points)
+   - **1m OHLC Conversion** (CRITICAL - different from rollup):
+     - Convert 1m price points → 1m OHLC bars
+     - **Open**: Previous candle's close price (or first price if no previous candle)
+     - **Close**: Current candle's price (from `lowcap_price_data_1m`)
+     - **High**: `max(open, close)` (highest of the two)
+     - **Low**: `min(open, close)` (lowest of the two)
+     - **Volume**: Sum of volumes for the 1-minute window (if available)
+     - **Why different**: This is creating OHLC from price points, not rolling up to higher timeframe
+   - **OHLC Rollup**: Rolls up 1m OHLC → 15m OHLC → 1h OHLC → 4h OHLC
+     - Uses standard OHLC rollup logic: Open=first bar's open, Close=last bar's close, High=max(highs), Low=min(lows), Volume=sum(volumes)
+   - **Storage**: All timeframes stored in `lowcap_price_data_ohlc` with correct `timeframe` column (1m, 15m, 1h, 4h)
+   - **Usage**: PM and Uptrend Engine read from `lowcap_price_data_ohlc` (not `lowcap_price_data_1m`)
 
 6. **PM** (`pm_core_tick.py`):
    - Processes positions grouped by status: `watchlist` + `active` only (skips `dormant`)
    - Each position already has its timeframe (read from position row)
    - Reads `features.uptrend_engine_v4` (no timeframe suffix needed - stored per position)
-   - **Frequency**: Every 5 minutes (for lower timeframes)
+   - **Frequency**: Timeframe-specific (runs at same rate as timeframe being checked)
+     - **1m timeframe**: Every 1 minute
+     - **15m timeframe**: Every 15 minutes
+     - **1h timeframe**: Every 1 hour
+     - **4h timeframe**: Every 4 hours
+   - **Implementation**: Run PM separately per timeframe, grouped by timeframe (not by token)
    - No changes needed to executor (works with PM decisions, tags orders with position_id)
 
 **Key Insight**: Just extra runs, extra database columns - not big module changes!
@@ -262,6 +307,7 @@
    - Store per position: `features.uptrend_engine_v4` (position already encodes timeframe)
    - Store per position: `features.ta` (or `features.ta_{timeframe}` if multiple TFs per position later)
    - Store per position: `features.geometry` (or `features.geometry_{timeframe}` if multiple TFs per position later)
+   - Store per position: `features.pm_execution_history` (tracks last execution per signal type - **REQUIRED**)
    - **No schema changes needed** - JSONB handles this, position.timeframe provides context
 
 3. **Position Tracking** (Already Implemented):
@@ -328,12 +374,19 @@
 
 ## PM → Executor Flow & Price Tracking
 
+**Note**: This section details the PM-Executor interaction. For learning system integration, see [`LEARNING_SYSTEM_V4.md`](./LEARNING_SYSTEM_V4.md) section "Complete Learning Feedback Loop".
+
 ### Current Flow
 
 #### Step 1: PM Core Tick
 **File**: `src/intelligence/lowcap_portfolio_manager/jobs/pm_core_tick.py`
 
-**Schedule**: Hourly at :06 UTC (should be every 5 minutes for lower timeframes)
+**Schedule**: Timeframe-specific (runs at same rate as timeframe being checked)
+- **1m timeframe**: Every 1 minute
+- **15m timeframe**: Every 15 minutes
+- **1h timeframe**: Every 1 hour
+- **4h timeframe**: Every 4 hours
+- **Implementation**: Run PM separately per timeframe, grouped by timeframe (processes all positions of that timeframe)
 
 **What happens**:
 1. Gets all active positions
@@ -342,15 +395,19 @@
    - Reads `features.uptrend_engine_v4` (expects engine to have run)
    - Calls `compute_levers()` to compute A/E scores
    - Calls `plan_actions()` to generate decisions
-   - **Writes to `ad_strands` table** with decision:
+   - **Writes to `ad_strands` table** with decision (only for actions, not holds):
      ```json
      {
+       "kind": "pm_action",
        "token": "contract_address",
+       "position_id": "uuid",
+       "timeframe": "1h",
+       "chain": "base",
        "timestamp": "2024-01-15T10:06:00Z",
-       "decision_type": "add|trim|demote|hold",
+       "decision_type": "add|trim|emergency_exit",
        "size_frac": 0.25,
        "reasons": {
-         "buy_signal": true,
+         "flag": "buy_signal",  // or "buy_flag", "trim_flag", "emergency_exit", "first_dip_buy_flag", "reclaimed_ema333"
          "state": "S1",
          "a_score": 0.75,
          "ts_score": 0.65
@@ -360,6 +417,14 @@
          "e_final": 0.30,
          "phase_meso": "uptrend",
          "cut_pressure": 0.15
+       },
+       "execution_result": {
+         // Added after execution (from executor return)
+         "status": "success",
+         "tx_hash": "...",
+         "price": 0.0015,
+         "tokens_bought": 1000,
+         "slippage": 0.02
        }
      }
      ```
@@ -387,41 +452,52 @@
 
 **Schedule**: Direct call from PM Core Tick (not event-driven)
 
-**What happens** (NEW DESIGN):
+**What happens** (CORRECTED DESIGN):
 1. **PM Core Tick directly calls executor** (no events):
    ```python
    result = executor.execute(decision, position)
    ```
-2. **Executor executes**:
-   - Checks idempotency (prevents duplicate execution within 3 minutes)
+2. **Executor executes** (executor does NOT write to database):
    - Gets position from database (revalidation)
-   - **Gets latest price** from `lowcap_price_data_1m` table (1m data)
+   - **Gets latest price** from `lowcap_price_data_ohlc` table (filtered by position's timeframe)
+     - For 1m positions: Reads 1m OHLC bars
+     - For 15m positions: Reads 15m OHLC bars
+     - For 1h positions: Reads 1h OHLC bars
+     - For 4h positions: Reads 4h OHLC bars
    - Executes based on `decision_type`:
-     - **`"add"` or `"trend_add"`**: 
+     - **`"add"`**: 
        - Calculates `notional_usd = total_allocation_usd * size_frac`
        - Calls `chain_executor.execute_buy(contract, notional_usd)`
-       - Returns `{"status": "success", "tx_hash": "...", "tokens_bought": ...}`
-     - **`"trim"` or `"trail"`**: 
+       - Returns `{"status": "success", "tx_hash": "...", "tokens_bought": ..., "price": ..., "slippage": ...}`
+     - **`"trim"`**: 
        - Calculates `tokens_to_sell = total_quantity * size_frac`
        - Calls `chain_executor.execute_sell(contract, tokens_to_sell, price_usd)`
-       - Returns `{"status": "success", "tx_hash": "...", "tokens_sold": ...}`
-     - **`"demote"`**: 
-       - Same as trim but with larger size_frac (or full exit if size_frac = 1.0)
+       - Returns `{"status": "success", "tx_hash": "...", "tokens_sold": ..., "price": ..., "slippage": ...}`
+     - **`"emergency_exit"`**: 
+       - Same as trim with `size_frac = 1.0` (full exit)
        - Returns execution result
    - **Execution is immediate** (synchronous) - no price condition checking
-   - **Returns execution result** (success/error, tx_hash, etc.)
+   - **Returns execution result** (success/error, tx_hash, tokens, price, slippage)
+   - **Executor does NOT write to database** - only returns results to PM
 
-3. **PM writes strand after execution** (non-blocking):
+3. **PM updates position table** (PM does all database writes):
+   - Updates `total_quantity` based on executor results
+   - Updates `total_investment_native`, `total_extracted_native`
+   - Updates `total_tokens_bought`, `total_tokens_sold`
+   - Updates `features.pm_execution_history` (tracks last execution per signal type)
+   - If position fully closed: Sets `status='watchlist'`, `closed_at=now()`, computes R/R, writes `completed_trades` JSONB
+
+4. **PM emits strand after execution** (non-blocking):
    - Includes execution result in strand
    - Learning system can analyze: decision → execution → outcome
    - Written asynchronously (doesn't block execution)
 
 **Key Points**:
-- **Price source**: `lowcap_price_data_1m` (1-minute price data)
+- **Price source**: `lowcap_price_data_ohlc` (OHLC bars for position's timeframe: 1m, 15m, 1h, 4h)
 - **Execution timing**: Immediate (direct call, no event overhead)
 - **Error handling**: Direct exception propagation (easier to debug)
-- **Idempotency**: Checked in executor before executing
-- **Canary mode**: Can be checked in executor
+- **Executor role**: Only executes trades, returns results (no database writes)
+- **PM role**: Does all database writes (position updates, execution history, strands)
 - **Strands**: Written after execution with results (better for learning)
 
 **Why Direct Call**:
@@ -449,7 +525,7 @@
    └─> Reads engine flags
    └─> Computes A/E scores
    └─> plan_actions_v4() combines: engine flags + A/E + position sizing
-   └─> Makes decision: add/trim/demote/hold
+   └─> Makes decision: add/trim/emergency_exit/hold
    └─> ??? (execution - what's best?)
 
 3. Execution
@@ -521,18 +597,101 @@
 ```python
 # In pm_core_tick.py
 for decision in decisions:
-    if decision["decision_type"] != "hold":
+    # Only execute and emit strands for actions (not holds)
+    if decision["decision_type"] not in ["hold", None]:
         # Execute immediately (direct call)
         result = executor.execute(decision, position)
+        
+        # PM updates position table (executor just returns results, PM does all writes)
+        new_total_quantity = position['total_quantity'] + result.get('tokens_bought', 0) - result.get('tokens_sold', 0)
+        update_position(position_id, {
+            'total_quantity': new_total_quantity,
+            'total_investment_native': updated_investment,
+            'total_extracted_native': updated_extracted,
+            'total_tokens_bought': updated_tokens_bought,
+            'total_tokens_sold': updated_tokens_sold,
+        })
+        
+        # Update execution history
+        exec_history = position.get('features', {}).get('pm_execution_history', {})
+        exec_history['prev_state'] = current_state
+        if decision["decision_type"] == "add":
+            signal_type = decision["reasons"].get("flag", "unknown")  # Flag is now a string field
+            exec_history[f'last_{current_state.lower()}_buy'] = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'price': result.get('price'),
+                'size_frac': decision.get('size_frac'),
+                'signal': signal_type
+            }
+        elif decision["decision_type"] == "trim":
+            # Get current S/R level
+            sr_levels = features.get("geometry", {}).get("levels", {}).get("sr_levels", [])
+            current_sr_level = None
+            if sr_levels and result.get('price'):
+                closest_sr = min(sr_levels, key=lambda x: abs(float(x.get("price", 0)) - result.get('price')))
+                current_sr_level = float(closest_sr.get("price", 0))
+            
+            exec_history['last_trim'] = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'price': result.get('price'),
+                'size_frac': decision.get('size_frac'),
+                'signal': 'trim_flag',
+                'sr_level_price': current_sr_level
+            }
+        
+        # Update features with execution history
+        position['features']['pm_execution_history'] = exec_history
+        update_position(position_id, {'features': position['features']})
+        
+        # Check if position fully closed (for final exits only: emergency_exit with size_frac=1.0)
+        # Note: This applies to ANY full exit (emergency_exit OR trim with size_frac=1.0)
+        is_full_exit = (
+            decision["decision_type"] == "emergency_exit" or
+            (decision["decision_type"] == "trim" and decision.get("size_frac", 0) >= 1.0)
+        )
+        if is_full_exit and new_total_quantity == 0:
+            # Compute R/R from OHLCV, write completed_trades, emit position_closed strand
+            # (See LEARNING_SYSTEM_V4.md for full flow)
+            # This includes: R/R calculation, completed_trades JSONB, position_closed strand with all learning data
+            completed_trade = compute_rr_from_ohlcv(position)
+            position['completed_trades'].append(completed_trade)
+            update_position(position_id, {
+                'status': 'watchlist',
+                'closed_at': datetime.now(timezone.utc),
+                'completed_trades': position['completed_trades']
+            })
+            # Emit position_closed strand with all learning data
+            # (See LEARNING_SYSTEM_V4.md section "Critical Role: Feedback Loop" for complete structure)
+            emit_strand({
+                'kind': 'position_closed',
+                'position_id': position_id,
+                'token': position['token_contract'],
+                'chain': position['token_chain'],
+                'timeframe': position['timeframe'],
+                'completed_trade': completed_trade,  # Includes: entry/exit prices, min/max prices, R/R, return, max_drawdown, max_gain
+                'entry_context': position['entry_context']  # Includes: curator, chain, mcap_bucket, vol_bucket, age_bucket, intent, mapping_confidence, etc.
+            })
+        
         # Write strand after execution (with result, non-blocking)
-        write_strand_async(decision, position, result)
-    else:
-        # Hold decisions - just write strand
-        write_strand(decision, position)
+        # Strand includes: kind, token, position_id, timeframe, chain, decision_type, size_frac, reasons, execution_result
+        write_strand_async({
+            'kind': 'pm_action',
+            'token': position['token_contract'],
+            'position_id': position_id,
+            'timeframe': position['timeframe'],
+            'chain': position['token_chain'],
+            'decision_type': decision['decision_type'],
+            'size_frac': decision.get('size_frac'),
+            'reasons': decision.get('reasons', {}),
+            'execution_result': result
+        })
+    # Hold decisions: No strand emitted (no action taken)
 ```
 
 **Strands for Learning**:
 - Strands written **after execution** (with execution results)
+- **Only for actions** (add, trim, emergency_exit) - no strands for holds
+- Strand includes: `kind='pm_action'`, `position_id`, `timeframe`, `chain`, `token`, `decision_type`, `reasons.flag`, `execution_result`
 - Learning system can analyze: decision → execution → outcome
 - Non-blocking write (doesn't slow down execution)
 - Better for learning (has actual execution results)
@@ -544,33 +703,61 @@ for decision in decisions:
 
 ```
 1. Price Tracking (every 1 min)
-   └─> Writes to lowcap_price_data_1m
+   └─> Writes to lowcap_price_data_1m (raw price points)
 
-2. Uptrend Engine (every 5 min)
-   └─> Reads OHLC data (1h/5m/15m/1m)
+2. OHLC Conversion & Rollup (every 1 min)
+   └─> Converts 1m price points → 1m OHLC bars (Open=previous close, Close=current price, High/Low=max/min)
+   └─> Rolls up 1m OHLC → 15m OHLC (every 15 min)
+   └─> Rolls up 1m OHLC → 1h OHLC (every 1 hour)
+   └─> Rolls up 1m OHLC → 4h OHLC (every 4 hours)
+   └─> All stored in lowcap_price_data_ohlc with timeframe column
+
+3. Uptrend Engine (timeframe-specific)
+   └─> 1m: Every 1 minute
+   └─> 15m: Every 15 minutes
+   └─> 1h: Every 1 hour
+   └─> 4h: Every 4 hours
+   └─> Reads OHLC data from lowcap_price_data_ohlc (filtered by timeframe)
    └─> Checks price conditions
    └─> Writes signals to features.uptrend_engine_v4
 
-3. PM Core Tick (every 5 min, currently hourly)
+4. PM Core Tick (timeframe-specific)
+   └─> 1m: Every 1 minute
+   └─> 15m: Every 15 minutes
+   └─> 1h: Every 1 hour
+   └─> 4h: Every 4 hours
+   └─> Processes all positions of that timeframe (watchlist + active)
    └─> Reads features.uptrend_engine_v4
+   └─> Reads features.pm_execution_history (for signal tracking)
    └─> Computes A/E scores
-   └─> Generates decisions
-   └─> Calls executor directly to execute (synchronous)
-   └─> Writes strand after execution (async)
+   └─> Calculates profit/allocation multipliers
+   └─> plan_actions_v4() generates decisions (checks execution history, applies multipliers)
+   └─> Calls executor.execute() → Executor returns results (no database writes)
+   └─> PM updates position table (total_quantity, execution_history, etc.)
+   └─> If position closed: Computes R/R, writes completed_trades, emits position_closed strand
+   └─> Writes strand after execution (async, with results)
 
-4. PM Executor (direct call)
-   └─> Gets latest price from lowcap_price_data_1m
+5. PM Executor (direct call)
+   └─> Gets latest price from lowcap_price_data_ohlc (filtered by position's timeframe)
    └─> Executes trade immediately
+   └─> Returns results to PM (tx_hash, price, tokens, slippage)
+   └─> Does NOT write to database (PM does all database writes)
 ```
 
 ### What PM Outputs
 
 **PM Core Tick outputs**:
-- `ad_strands` table rows with:
-  - `decision_type`: "add", "trim", "demote", "hold"
+- `ad_strands` table rows (only for actions, not holds) with:
+  - `kind`: "pm_action" (or "position_closed" for final exits)
+  - `position_id`: UUID linking to position
+  - `timeframe`: Position's timeframe (1m, 15m, 1h, 4h)
+  - `chain`: Position's chain (base, solana, ethereum, bsc)
+  - `token`: Contract address
+  - `decision_type`: "add", "trim", "emergency_exit"
   - `size_frac`: Fraction of allocation (for adds) or position (for trims)
-  - `reasons`: Dict with signal details (buy_signal, state, scores, etc.)
+  - `reasons`: Dict with `flag` (string: "buy_signal", "buy_flag", "trim_flag", "emergency_exit", "first_dip_buy_flag", "reclaimed_ema333"), state, scores, etc.
   - `lever_diag`: Dict with A/E scores and phase info
+  - `execution_result`: Dict with tx_hash, price, tokens, slippage (added after execution)
 
 **PM Executor**:
 - Invoked directly by PM (no event bus)
@@ -585,9 +772,9 @@ for decision in decisions:
 
 #### What's Working:
 - ✅ A/E scores computed correctly (`compute_levers()`)
-- ✅ PM Core Tick runs hourly
+- ✅ PM Core Tick runs timeframe-specifically (1m=1min, 15m=15min, 1h=1hr, 4h=4hr)
 - ✅ PM Executor callable (direct execution path)
-- ✅ Decision types supported (`add`, `trim`, `demote`, `hold`)
+- ✅ Decision types supported (`add`, `trim`, `emergency_exit`, `hold`)
 
 #### What's Missing:
 - ❌ `plan_actions()` uses OLD geometry-based logic
@@ -616,22 +803,66 @@ buy_flag = uptrend.get("buy_flag", False)
 
 ### New PM Decision Flow
 
+**Key Logic**:
+- **Signal Persistence**: Flags are recomputed each tick by engine (don't persist). PM must track execution history to prevent duplicate executions.
+- **Buy Signal Tracking**: 
+  - S1: One-time initial entry (only when transitioning S0 → S1). S2 → S1 doesn't reset (S1 buy only happens once).
+  - S2/S3: Reset when we trim OR state transitions S2 → S3
+  - **Trim Signal Tracking**: 
+    - 1 trim per 3-bar cooldown (timeframe-specific: 1m=3min, 15m=45min, 1h=3hr, 4h=12hr), OR
+    - Price moves to next S/R level (up or down) and signal fires again
+- **Profit/Allocation Multipliers**: Applied in `plan_actions_v4()` based on current position state
+
 ```python
 def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, phase_meso: str) -> List[Dict[str, Any]]:
     """
     New PM action planning using Uptrend Engine v4 signals + A/E scores.
+    
+    Includes:
+    - Signal execution tracking (prevents duplicate executions)
+    - Profit/allocation multipliers (affects sizing)
+    - Cooldown logic (trims: 3 bars per timeframe or new S/R level)
     """
     features = position.get("features") or {}
     uptrend = features.get("uptrend_engine_v4") or {}  # This IS the payload
+    exec_history = features.get("pm_execution_history") or {}
     
     state = uptrend.get("state", "")
+    prev_state = exec_history.get("prev_state", "")
     actions = []
+    
+    # Calculate profit/allocation multipliers (used for sizing)
+    total_allocation_usd = float(position.get("total_allocation_usd") or 0.0)
+    total_extracted_native = float(position.get("total_extracted_native") or 0.0)
+    total_quantity = float(position.get("total_quantity") or 0.0)
+    current_price = float(uptrend.get("price") or 0.0)
+    current_position_value = total_quantity * current_price if current_price > 0 else 0.0
+    
+    # Entry multiplier (for S2/S3 only, S1 uses base size)
+    profit_ratio = total_extracted_native / total_allocation_usd if total_allocation_usd > 0 else 0.0
+    if profit_ratio >= 1.0:
+        entry_multiplier = 0.3  # 100%+ profit: smaller buys
+    elif profit_ratio >= 0.0:
+        entry_multiplier = 1.0  # Breakeven: normal buys
+    else:
+        entry_multiplier = 1.5  # In loss: larger buys to average down
+    
+    # Trim multiplier
+    allocation_deployed_ratio = current_position_value / total_allocation_usd if total_allocation_usd > 0 else 0.0
+    if allocation_deployed_ratio >= 0.8:
+        trim_multiplier = 3.0  # Nearly maxed out: take more profit
+    elif profit_ratio >= 1.0:
+        trim_multiplier = 0.3  # 100%+ profit: take less profit
+    elif profit_ratio >= 0.0:
+        trim_multiplier = 1.0  # Breakeven: normal trims
+    else:
+        trim_multiplier = 0.5  # In loss: smaller trims, preserve capital
     
     # Exit Precedence (highest priority)
     if uptrend.get("exit_position"):
         # Full exit - emergency or structural invalidation
         actions.append({
-            "decision_type": "demote",  # Full exit = demote with size_frac: 1.0
+            "decision_type": "emergency_exit",  # Changed from "demote"
             "size_frac": 1.0,
             "reasons": {
                 "exit_reason": uptrend.get("exit_reason"),
@@ -644,72 +875,153 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
     # v4 simplified: emergency_exit = full exit (no bounce protocol)
     if state == "S3" and uptrend.get("emergency_exit"):
         actions.append({
-            "decision_type": "demote",
+            "decision_type": "emergency_exit",  # Changed from "demote"
             "size_frac": 1.0,
             "reasons": {"emergency_exit": True, "e_score": e_final, "state": state}
         })
         return actions
     
-    # Trim Flags (S2/S3)
+    # Trim Flags (S2/S3) - Check cooldown and S/R level
     if uptrend.get("trim_flag"):
-        trim_size = _e_to_trim_size(e_final)
-        actions.append({
-            "decision_type": "trim",
-            "size_frac": trim_size,
-            "reasons": {
-                "trim_flag": True,
-                "state": state,
-                "e_score": e_final,
-                "ox_score": uptrend.get("scores", {}).get("ox", 0.0),
-            }
-        })
-        return actions
+        # Check if we can trim (cooldown or new S/R level)
+        last_trim = exec_history.get("last_trim", {})
+        last_trim_ts = last_trim.get("timestamp")
+        last_trim_sr_level = last_trim.get("sr_level_price")
+        
+        # Get current S/R level (closest to price)
+        sr_levels = features.get("geometry", {}).get("levels", {}).get("sr_levels", [])
+        current_sr_level = None
+        if sr_levels and current_price > 0:
+            closest_sr = min(sr_levels, key=lambda x: abs(float(x.get("price", 0)) - current_price))
+            current_sr_level = float(closest_sr.get("price", 0))
+        
+        can_trim = False
+        if not last_trim_ts:
+            # Never trimmed before
+            can_trim = True
+        else:
+            # Check cooldown (3 bars for position's timeframe)
+            # Query OHLC data to count bars since last trim
+            timeframe = position.get("timeframe", "1h")  # Position's timeframe
+            bars_since_trim = count_bars_since(last_trim_ts, contract, chain, timeframe)
+            cooldown_expired = bars_since_trim >= 3
+            
+            # Check if price moved to new S/R level
+            sr_level_changed = False
+            if last_trim_sr_level and current_sr_level:
+                # Price moved to different S/R level (up or down)
+                sr_level_changed = abs(current_sr_level - last_trim_sr_level) > (current_price * 0.01)  # 1% threshold
+            
+            can_trim = cooldown_expired or sr_level_changed
+        
+        if can_trim:
+            trim_size = _e_to_trim_size(e_final) * trim_multiplier
+            trim_size = min(trim_size, 1.0)  # Cap at 100%
+            actions.append({
+                "decision_type": "trim",
+                "size_frac": trim_size,
+                "reasons": {
+                    "flag": "trim_flag",  # Changed from "trim_flag": True
+                    "state": state,
+                    "e_score": e_final,
+                    "ox_score": uptrend.get("scores", {}).get("ox", 0.0),
+                    "trim_multiplier": trim_multiplier,
+                    "cooldown_expired": cooldown_expired if last_trim_ts else True,
+                    "sr_level_changed": sr_level_changed if last_trim_ts else False,
+                }
+            })
+            return actions
     
-    # Entry Gates (S1, S2, S3)
+    # Entry Gates (S1, S2, S3) - Check execution history
     buy_signal = uptrend.get("buy_signal", False)  # S1
     buy_flag = uptrend.get("buy_flag", False)  # S2 retest or S3 DX
     first_dip_buy_flag = uptrend.get("first_dip_buy_flag", False)  # S3 first dip
     
-    if buy_signal or buy_flag or first_dip_buy_flag:
-        entry_size = _a_to_entry_size(a_final, state, buy_signal, buy_flag, first_dip_buy_flag)
-        if entry_size > 0:
-            actions.append({
-                "decision_type": "add",
-                "size_frac": entry_size,
-                "reasons": {
-                    "buy_signal": buy_signal,
-                    "buy_flag": buy_flag,
-                    "first_dip_buy_flag": first_dip_buy_flag,
-                    "state": state,
-                    "a_score": a_final,
-                    "ts_score": uptrend.get("scores", {}).get("ts", 0.0),
-                    "dx_score": uptrend.get("scores", {}).get("dx", 0.0),
-                }
-            })
-            return actions
+    # S1: One-time initial entry (only on S0 → S1 transition)
+    if buy_signal and state == "S1":
+        last_s1_buy = exec_history.get("last_s1_buy")
+        if not last_s1_buy:
+            # Never bought in S1, and we're in S1 (transitioned from S0)
+            entry_size = _a_to_entry_size(a_final, state, buy_signal=True, buy_flag=False, first_dip_buy_flag=False)
+            if entry_size > 0:
+                actions.append({
+                    "decision_type": "add",
+                    "size_frac": entry_size,
+                    "reasons": {
+                        "flag": "buy_signal",  # Changed from "buy_signal": True
+                        "state": state,
+                        "a_score": a_final,
+                        "ts_score": uptrend.get("scores", {}).get("ts", 0.0),
+                    }
+                })
+                return actions
+    
+    # S2/S3: Reset on trim or state transition
+    if (buy_flag or first_dip_buy_flag) and state in ["S2", "S3"]:
+        last_buy = exec_history.get(f"last_{state.lower()}_buy", {})
+        last_trim_ts = exec_history.get("last_trim", {}).get("timestamp")
+        state_transitioned = (prev_state != state)  # State changed (S2 → S3 or S3 → S2)
+        
+        # Reset conditions: trim happened OR state transitioned
+        can_buy = False
+        if not last_buy:
+            # Never bought in this state
+            can_buy = True
+        elif state_transitioned:
+            # State transitioned (S2 → S3 or S3 → S2) - reset buy eligibility
+            can_buy = True
+        elif last_trim_ts:
+            # Check if trim happened after last buy
+            last_buy_ts = last_buy.get("timestamp")
+            if last_buy_ts:
+                from datetime import datetime, timezone
+                trim_dt = datetime.fromisoformat(last_trim_ts.replace("Z", "+00:00"))
+                buy_dt = datetime.fromisoformat(last_buy_ts.replace("Z", "+00:00"))
+                if trim_dt > buy_dt:
+                    # Trim happened after last buy - reset buy eligibility
+                    can_buy = True
+        
+        if can_buy:
+            entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=buy_flag, first_dip_buy_flag=first_dip_buy_flag)
+            entry_size = entry_size * entry_multiplier  # Apply profit/allocation multiplier
+            if entry_size > 0:
+                # Determine which flag triggered this buy
+                flag_type = "buy_flag" if buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
+                actions.append({
+                    "decision_type": "add",
+                    "size_frac": entry_size,
+                    "reasons": {
+                        "flag": flag_type,  # Changed from separate boolean fields
+                        "state": state,
+                        "a_score": a_final,
+                        "ts_score": uptrend.get("scores", {}).get("ts", 0.0),
+                        "dx_score": uptrend.get("scores", {}).get("dx", 0.0),
+                        "entry_multiplier": entry_multiplier,
+                    }
+                })
+                return actions
     
     # Reclaimed EMA333 (S3 auto-rebuy)
     if state == "S3" and uptrend.get("reclaimed_ema333"):
-        rebuy_size = _a_to_entry_size(a_final, state, False, False, False)
-        if rebuy_size > 0:
+        # Check if we already rebought on this reclaim
+        last_reclaim_buy = exec_history.get("last_reclaim_buy", {})
+        if not last_reclaim_buy or last_reclaim_buy.get("reclaimed_at") != uptrend.get("ts"):
+            rebuy_size = _a_to_entry_size(a_final, state, False, False, False) * entry_multiplier
+            if rebuy_size > 0:
             actions.append({
                 "decision_type": "add",
                 "size_frac": rebuy_size,
                 "reasons": {
-                    "reclaimed_ema333": True,
+                    "flag": "reclaimed_ema333",  # Changed from "reclaimed_ema333": True
                     "state": state,
                     "a_score": a_final,
+                    "entry_multiplier": entry_multiplier,
                 }
             })
-            return actions
+                return actions
     
-    # Default: Hold
-    actions.append({
-        "decision_type": "hold",
-        "size_frac": 0.0,
-        "reasons": {"state": state}
-    })
-    return actions
+    # Default: No action (don't emit strand for holds)
+    return actions  # Empty list = no action, no strand
 ```
 
 ### Position Sizing (A/E Driven)
@@ -734,6 +1046,7 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
   - If `total_extracted_native >= total_allocation_usd * 0.0` (breakeven): **1.0x multiplier** (normal buys)
   - If `total_extracted_native < 0` (in loss): **1.5x multiplier** (larger buys to average down)
 - **Applied to**: S2 and S3 entries only (S1 entries use base size)
+- **Implementation**: Applied in `plan_actions_v4()` - recalculated after each execution
 
 **Tunable Entry Thresholds** (Future):
 - Each A/E level can have different Uptrend Engine score thresholds
@@ -753,6 +1066,18 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
   - If `total_extracted_native >= total_allocation_usd * 1.0` (100% profit recouped): **0.3x multiplier** (take less profit)
   - If `total_extracted_native >= total_allocation_usd * 0.0` (breakeven): **1.0x multiplier** (normal trims)
   - If `total_extracted_native < 0` (in loss): **0.5x multiplier** (smaller trims, preserve capital)
+- **Implementation**: Applied in `plan_actions_v4()` - recalculated after each execution
+
+**Trim Cooldown Logic**:
+- **Cooldown**: 3 bars minimum between trims (timeframe-specific)
+  - **1m timeframe**: 3 bars = 3 minutes
+  - **15m timeframe**: 3 bars = 45 minutes
+  - **1h timeframe**: 3 bars = 3 hours
+  - **4h timeframe**: 3 bars = 12 hours
+- **OR**: Price moves to next S/R level (up or down) and signal fires again
+- **Tracking**: `pm_execution_history.last_trim` stores timestamp, S/R level price, and bar count
+- **Reset**: Trim allowed if cooldown expired (3 bars for position's timeframe) OR S/R level changed
+- **Implementation**: Track bars since last trim using position's timeframe (query `lowcap_price_data_ohlc` for bars since last trim timestamp)
 
 **Tunable Trim Thresholds** (Future):
 - Each E level can have different OX thresholds
@@ -760,7 +1085,7 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
 
 #### Exit Types
 
-- **Emergency exit** = Full exit (`demote` with `size_frac: 1.0`)
+- **Emergency exit** = Full exit (`emergency_exit` with `size_frac: 1.0`) - Changed from "demote"
 - **Rest is trims** = `trim` with appropriate `size_frac` and multiplier
 
 #### Position Tracking (Already Implemented)
@@ -778,6 +1103,86 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
 - `current_position_value` = `total_quantity * current_price`
 - `allocation_deployed_pct` = `current_position_value / total_allocation_usd`
 - `profit_taken_pct` = `total_extracted_native / total_allocation_usd`
+
+#### Execution History Tracking (Required for Signal Persistence)
+
+**New field**: `features.pm_execution_history` JSONB (no schema change needed)
+
+**Purpose**: Track last execution per signal type to prevent duplicate executions.
+
+**Structure**:
+```json
+{
+  "pm_execution_history": {
+    "prev_state": "S2",  // Previous state (for detecting state transitions)
+    "last_s1_buy": {
+      "timestamp": "2024-01-15T10:00:00Z",
+      "price": 0.0015,
+      "size_frac": 0.50,
+      "signal": "buy_signal"
+    },
+    "last_s2_buy": {
+      "timestamp": "2024-01-15T12:00:00Z",
+      "price": 0.0018,
+      "size_frac": 0.25,
+      "signal": "buy_flag"
+    },
+    "last_s3_buy": {
+      "timestamp": "2024-01-15T14:00:00Z",
+      "price": 0.0020,
+      "size_frac": 0.15,
+      "signal": "buy_flag"
+    },
+    "last_trim": {
+      "timestamp": "2024-01-15T16:00:00Z",
+      "price": 0.0032,
+      "size_frac": 0.10,
+      "signal": "trim_flag",
+      "sr_level_price": 0.0030  // S/R level price at time of trim
+    },
+    "last_reclaim_buy": {
+      "timestamp": "2024-01-15T18:00:00Z",
+      "price": 0.0025,
+      "size_frac": 0.15,
+      "reclaimed_at": "2024-01-15T18:00:00Z"  // When EMA333 was reclaimed
+    },
+    "executions": [
+      // Full history of all executions (optional, for audit)
+      {
+        "type": "buy",
+        "timestamp": "2024-01-15T10:00:00Z",
+        "price": 0.0015,
+        "tokens": 1000,
+        "usd": 1.5,
+        "signal": "buy_signal",
+        "state": "S1"
+      },
+      {
+        "type": "trim",
+        "timestamp": "2024-01-15T16:00:00Z",
+        "price": 0.0032,
+        "tokens": 100,
+        "usd": 0.32,
+        "signal": "trim_flag",
+        "state": "S3"
+      }
+    ]
+  }
+}
+```
+
+**Update Logic**:
+- After each execution, PM updates `pm_execution_history`:
+  - Sets `last_{state}_buy` or `last_trim` with timestamp, price, size_frac, signal
+  - Updates `prev_state` to current state (for next tick's state transition detection)
+  - Optionally appends to `executions` array (for full audit trail)
+  - For trims: Stores `sr_level_price` (closest S/R level at time of trim)
+
+**Usage in `plan_actions_v4()`**:
+- Read `pm_execution_history` to check if signal already executed
+- S1: Check `last_s1_buy` - if exists, don't buy again (one-time only)
+- S2/S3: Check `last_{state}_buy` - reset if trim happened OR state transitioned
+- Trims: Check `last_trim` - allow if cooldown expired (3 hours) OR S/R level changed
 
 ---
 
@@ -798,10 +1203,17 @@ asyncio.create_task(schedule_5min(4, uptrend_engine_main))  # Run every 5 minute
 - Remove lines 1165-1189 (first buy execution)
 - Let PM handle all entries via signals
 
-#### 3. Fix Backfill
+#### 3. Fix Backfill to Support All 4 Timeframes
 **File**: `src/intelligence/trader_lowcap/trader_service.py`
-- Change `backfill_token_15m` to `backfill_token_1h` (or make dynamic)
-- Make dynamic based on token age (see timeframe strategy)
+- **CRITICAL**: Each new token gets 4 positions (one per timeframe: 1m, 15m, 1h, 4h)
+- Trigger backfill for all 4 timeframes (async, non-blocking)
+- Backfill logic per timeframe:
+  - **1m**: Backfill 1m OHLC data (directly from API)
+  - **15m**: Backfill 15m OHLC data (directly from API - GeckoTerminal 15m endpoint)
+  - **1h**: Backfill 1h OHLC data (directly from API - GeckoTerminal 1h endpoint)
+  - **4h**: Backfill 4h OHLC data (directly from API - GeckoTerminal 4h endpoint)
+- **Note**: Backfill fetches correct timeframe directly from API (no rollup). Rollup is only for ongoing data collection.
+- Update `bars_count` per position as data arrives
 
 #### 4. Make TA Tracker Multi-Timeframe
 **File**: `src/intelligence/lowcap_portfolio_manager/jobs/ta_tracker.py`
@@ -809,10 +1221,15 @@ asyncio.create_task(schedule_5min(4, uptrend_engine_main))  # Run every 5 minute
 - Store with dynamic suffix
 - Run multiple times for different timeframes
 
-#### 5. Update PM Frequency
+#### 5. Update PM Frequency (Timeframe-Specific)
 **File**: `src/run_social_trading.py`
-- Change PM Core Tick from hourly to every 5 minutes (for lower timeframes)
-- **Reason**: If trading on 5m/15m timeframes, hourly PM misses signals
+- Change PM Core Tick to timeframe-specific scheduling:
+  - **1m timeframe**: Every 1 minute
+  - **15m timeframe**: Every 15 minutes
+  - **1h timeframe**: Every 1 hour
+  - **4h timeframe**: Every 4 hours
+- **Implementation**: Run PM separately per timeframe, grouped by timeframe (processes all positions of that timeframe)
+- **Reason**: PM must run at same rate as timeframe being checked, otherwise misses signals
 
 #### 6. Update Geometry Frequency
 **File**: `src/run_social_trading.py`
@@ -895,18 +1312,16 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 
 ### Phase 0: Critical Fixes (Must Do First) 🔴
 
-1. **Database Reorganization** (CRITICAL - do first):
-   - Archive all existing schemas to `database/archive/`
-   - Export token registry (symbol/name/contract/chain) to seed file
-   - Drop all current tables (positions, strands, price cache)
-   - Recreate minimal schemas:
-     - `lowcap_positions` with `timeframe` column (enum: 1m, 15m, 1h, 4h)
-     - Unique constraint: `(token_contract, chain, timeframe)`
-     - Status enum: `dormant`, `watchlist`, `active`, `paused`, `archived`
-     - Add `bars_count`, `alloc_cap_usd`, `alloc_policy` JSONB
-     - Create `position_signals` table for time-series history (optional)
-   - Seed token registry back
-   - Recreate essential indexes
+1. **Database Schema Updates** (CRITICAL - do first):
+   - **Update `lowcap_positions_v4_schema.sql`**:
+     - Add `entry_context JSONB` column (for learning system - stores lever values at entry)
+     - Add `completed_trades JSONB DEFAULT '[]'::jsonb` column (for learning system - stores closed trade summaries)
+     - Verify `features` JSONB exists (for `pm_execution_history` tracking)
+   - **Create `learning_configs_schema.sql`** (new table for module-specific configs)
+   - **Create `learning_coefficients_schema.sql`** (new table for learned performance coefficients)
+   - **Update `curators_schema.sql`**: Add `chain_counts JSONB DEFAULT '{}'::jsonb` column
+   - **Verify `ad_strands` schema** supports `kind='position_closed'` (already supported via `kind` TEXT column)
+   - **For detailed schema specifications**, see [`LEARNING_SYSTEM_V4.md`](./LEARNING_SYSTEM_V4.md) section "Database Schema Changes"
 
 2. **Verify 1m OHLC Conversion** (CRITICAL - before implementation):
    - Test 1m price data → 1m OHLC conversion works correctly
@@ -926,15 +1341,33 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
    - Store allocation splits in `alloc_policy` JSONB
    - **Note**: Most tokens will start with all positions at `watchlist` (if they have enough data)
 
-4. **Update Backfill** to support all 4 timeframes:
-   - Trigger backfill for 1m, 15m, 1h, 4h (async, non-blocking)
+4. **Update Backfill** to support all 4 timeframes per token:
+   - **CRITICAL**: Each new token gets 4 positions (one per timeframe: 1m, 15m, 1h, 4h)
+   - Trigger backfill for all 4 timeframes (async, non-blocking)
+   - Backfill logic (directly from GeckoTerminal API - no rollup):
+     - **1m timeframe**: Backfill 1m OHLC data (from GeckoTerminal 1m endpoint)
+     - **15m timeframe**: Backfill 15m OHLC data (from GeckoTerminal 15m endpoint)
+     - **1h timeframe**: Backfill 1h OHLC data (from GeckoTerminal 1h endpoint)
+     - **4h timeframe**: Backfill 4h OHLC data (from GeckoTerminal 4h endpoint)
+   - **Note**: Backfill fetches correct timeframe directly from API (no rollup). Rollup is only for ongoing data collection (1m price points → 1m OHLC → rollup to 15m/1h/4h).
    - Update `bars_count` per position as data arrives (✅ already tracking this)
-   - Auto-flip `dormant → watchlist` when `bars_count >= 350`
-   - **Note**: Most tokens will have enough data for at least some timeframes → those start at `watchlist` immediately
+   - Auto-flip `dormant → watchlist` when `bars_count >= 350` for that timeframe
+   - **Note**: Most tokens will have enough data for at least some timeframes → those positions start at `watchlist` immediately
 
-5. **Update OHLC Rollup** to roll up to all required timeframes:
-   - Roll up 1m → 15m, 1h, 4h
-   - Ensure 1m OHLC conversion works (from price points)
+5. **Update OHLC Conversion & Rollup** to handle all timeframes:
+   - **1m OHLC Conversion** (CRITICAL - different from rollup):
+     - Convert 1m price points → 1m OHLC bars
+     - Open = previous candle's close (or first price if no previous)
+     - Close = current candle's price
+     - High = max(open, close)
+     - Low = min(open, close)
+     - Volume = sum of volumes for 1-minute window
+   - **OHLC Rollup** (standard aggregation):
+     - Roll up 1m OHLC → 15m OHLC (aggregate 15 bars)
+     - Roll up 1m OHLC → 1h OHLC (aggregate 60 bars)
+     - Roll up 1m OHLC → 4h OHLC (aggregate 240 bars)
+   - **Storage**: All timeframes (1m, 15m, 1h, 4h) in `lowcap_price_data_ohlc` with `timeframe` column
+   - **Usage**: PM and Uptrend Engine read from `lowcap_price_data_ohlc` (NOT `lowcap_price_data_1m`)
 
 6. **Schedule Uptrend Engine v4** per timeframe:
    - 1m: Every 1 minute
@@ -951,7 +1384,12 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 
 8. **Remove first buy execution** from trader service
 9. **Create `plan_actions_v4()`** with correct payload structure
-10. **Update PM frequency** (hourly → every 5 minutes)
+10. **Update PM frequency** (timeframe-specific):
+    - **1m timeframe**: Every 1 minute
+    - **15m timeframe**: Every 15 minutes
+    - **1h timeframe**: Every 1 hour
+    - **4h timeframe**: Every 4 hours
+    - **Implementation**: Run PM separately per timeframe, grouped by timeframe
 11. **Create `pm_thresholds` table** and 5-min cache layer
 12. **Update PM to process only watchlist + active** (skip dormant)
 
@@ -1017,7 +1455,7 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 6. ✅ **Geometry timeframe-dependent** (confirmed)
 7. ✅ **1m data can be converted to OHLC** (using existing rollup system)
 8. ✅ **DB reset planned** - Recreate minimal schemas; add `timeframe` to positions
-9. ✅ **PM frequency** - Every 5 minutes (for lower timeframes)
+9. ✅ **PM frequency** - Timeframe-specific (1m=1min, 15m=15min, 1h=1hr, 4h=4hr) - runs at same rate as timeframe being checked
 10. ✅ **Geometry frequency** - Every 1 hour for all timeframes
 11. ✅ **Gradual rollout** (feature flag, parallel run)
 12. ✅ **Tunable thresholds** - Future enhancement, architecture ready
@@ -1103,14 +1541,22 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
        ├─> total_quantity: 0.0
        └─> alloc_policy: JSONB with timeframe-specific config
 
-4. Backfill (async, non-blocking) → For all 4 timeframes
-   └─> Triggers backfill for 1m, 15m, 1h, 4h
+4. Backfill (async, non-blocking) → For all 4 timeframes per token
+   └─> **CRITICAL**: Each new token gets 4 positions (one per timeframe: 1m, 15m, 1h, 4h)
+   └─> Triggers backfill for all 4 timeframes (1m, 15m, 1h, 4h)
+   └─> Backfill per timeframe:
+       ├─> 1m: Backfill 1m OHLC data (directly from API - GeckoTerminal 1m endpoint)
+       ├─> 15m: Backfill 15m OHLC data (directly from API - GeckoTerminal 15m endpoint)
+       ├─> 1h: Backfill 1h OHLC data (directly from API - GeckoTerminal 1h endpoint)
+       └─> 4h: Backfill 4h OHLC data (directly from API - GeckoTerminal 4h endpoint)
+   └─> **Note**: Backfill fetches correct timeframe directly from API (no rollup). Rollup is only for ongoing data collection.
    └─> Stores in lowcap_price_data_ohlc with correct timeframe
-   └─> Updates bars_count per position
+   └─> Updates bars_count per position as data arrives
 
 5. Data Pipeline (continuous)
-   └─> price_data_1m → Collected every 1 minute
-   └─> OHLC Rollup → Rolls up 1m to 15m, 1h, 4h (for all required timeframes)
+   └─> Price Tracking → Collects 1m price points every 1 minute → stores in `lowcap_price_data_1m`
+   └─> OHLC Conversion → Converts 1m price points → 1m OHLC bars (Open=previous close, Close=current price, High/Low=max/min)
+   └─> OHLC Rollup → Rolls up 1m OHLC → 15m OHLC → 1h OHLC → 4h OHLC (all stored in `lowcap_price_data_ohlc` with `timeframe` column)
    └─> TA Tracker → Runs per timeframe, stores features.ta_{timeframe}
    └─> Geometry Builder → Runs per timeframe, stores features.geometry_{timeframe}
 
@@ -1127,16 +1573,28 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
    └─> For watchlist/active: Emits signals, writes to features.uptrend_engine_v4
    └─> For dormant: Continues bootstrapping, writes diagnostics only
 
-8. PM Core Tick → Processes only watchlist + active positions
+8. PM Core Tick (timeframe-specific) → Processes only watchlist + active positions of that timeframe
+   └─> **1m**: Every 1 minute
+   └─> **15m**: Every 15 minutes
+   └─> **1h**: Every 1 hour
+   └─> **4h**: Every 4 hours
+   └─> Processes all positions of that timeframe (watchlist + active)
    └─> Reads engine flags from features.uptrend_engine_v4
+   └─> Reads execution history from features.pm_execution_history
    └─> Computes A/E scores
-   └─> plan_actions_v4() makes decisions
+   └─> Calculates profit/allocation multipliers
+   └─> plan_actions_v4() makes decisions (checks execution history, applies multipliers)
+   └─> Calls executor.execute() → Executor returns results (no database writes)
+   └─> PM updates position table (total_quantity, execution_history, etc.)
    └─> For watchlist positions: First buy updates status → 'active'
    └─> For active positions: Adds/trims/exits
+   └─> If position closed: Computes R/R, writes completed_trades, emits position_closed strand
+   └─> Writes strand after execution (async, with results)
 
 9. Executor → Executes trades
    └─> Tags all orders with position_id (ensures emergency exits only touch that TF's holdings)
-   └─> Updates position total_quantity, total_investment_native, etc.
+   └─> Returns results to PM (tx_hash, price, tokens, slippage)
+   └─> Does NOT write to database (PM does all database writes)
 ```
 
 **Status Field Definitions**:
@@ -1179,11 +1637,11 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 
 ---
 
-### 5. Demote vs Emergency Exit
+### 5. Emergency Exit (No "Demote")
 
 **Current State**:
-- **Demote** (old system): Sells 80%, keeps moon bag (line 156 in `actions.py`)
-- **Emergency Exit** (v4): Full exit (100%) when price < EMA333
+- **Old system**: Had "demote" which sold 80%, kept moon bag
+- **v4**: Simplified - only "trim" (partial) and "emergency_exit" (full exit)
 
 **Decision**: 
 - **Remove "demote"** - Use "emergency_exit" for full exits
@@ -1192,17 +1650,24 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 
 ---
 
-### 6. Hold Strand
+### 6. Strands Only for Actions (No Hold Strands)
 
-**Trigger**: When no buy/trim/exit conditions are met (default action)
+**Decision**: Only emit strands when actions are taken (add, trim, emergency_exit). No strands for holds.
 
-**Content**:
-- Decision: "hold"
-- Reasons: Why it held (no buy signals, no trim signals, no exit signals)
-- A/E scores used
-- Engine flags checked
+**Rationale**:
+- Reduces noise (holds are the default state)
+- Focuses learning on actual decisions and outcomes
+- Strands are for actions, not inaction
 
-**Purpose**: Learning/audit - understand why PM didn't act
+**Content for action strands**:
+- `kind`: "pm_action" (or "position_closed" for final exits)
+- `position_id`: Links to position (can look up curator via position)
+- `timeframe`: Position's timeframe
+- `chain`: Position's chain
+- `token`: Contract address
+- `decision_type`: "add", "trim", "emergency_exit"
+- `reasons.flag`: String identifying which flag triggered ("buy_signal", "buy_flag", "trim_flag", "emergency_exit", "first_dip_buy_flag", "reclaimed_ema333")
+- `execution_result`: Results from executor (tx_hash, price, tokens, slippage)
 
 ---
 
@@ -1399,19 +1864,21 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
            └─> Full exit → Update status back to 'watchlist'
        └─> For non-hold decisions:
            ├─> Direct call: executor.execute(decision) [synchronous]
+           ├─> PM updates position table (total_quantity, execution_history, etc.)
+           ├─> If position closed: Computes R/R, writes completed_trades, emits position_closed strand
            └─> Write strand after execution [async, with results]
 
 4. Executor (per-chain)
    └─> Executes trade (via chain-specific executor)
-   └─> Writes to position table immediately (entries/exits JSONB)
-   └─> Returns tx_hash, actual price, slippage
-   └─> First buy: Updates status='active', updates total_quantity, updates sell amounts, writes strands
-   └─> Full exit: Updates status back to 'watchlist'
+   └─> Returns results to PM (tx_hash, actual price, slippage, tokens_bought/sold)
+   └─> Does NOT write to database (PM does all database writes)
 
 5. Strands (for learning)
-   └─> Buy strand: decision + execution result
-   └─> Sell strand: decision + execution result
-   └─> Hold strand: decision (no execution)
+   └─> Buy strand: decision + execution result (kind='pm_action', flag='buy_signal'|'buy_flag'|'first_dip_buy_flag'|'reclaimed_ema333')
+   └─> Trim strand: decision + execution result (kind='pm_action', flag='trim_flag')
+   └─> Emergency exit strand: decision + execution result (kind='pm_action', flag='emergency_exit')
+   └─> Position closed strand: completed_trade data (kind='position_closed', includes R/R, entry_context, all learning data)
+   └─> No hold strands (only actions emit strands)
 ```
 
 ### Key Decisions Confirmed
@@ -1429,8 +1896,11 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
 11. ✅ **Position ID tagging** - Executor tags all orders with position_id (ensures emergency exits only touch that TF's holdings)
 12. ✅ **Separate executors per chain** - Clean separation, easy to extend
 13. ✅ **Emergency exit = full exit** - Simplified v4 approach (removed "demote")
-14. ✅ **Hold strands** - For learning/audit
-15. ✅ **Executor writes directly** - No execution table needed
-16. ✅ **Database reorganization** - Archive old schemas, drop tables, recreate fresh minimal schemas
-17. ✅ **1m OHLC verification needed** - Must verify 1m price data → 1m OHLC conversion before Phase 0
+14. ✅ **Execution history tracking** - `features.pm_execution_history` prevents duplicate signal executions
+15. ✅ **Signal reset logic** - S1 one-time, S2/S3 reset on trim or state transition, trims reset on cooldown (3hr) or S/R level change
+16. ✅ **Profit/allocation multipliers** - Applied in `plan_actions_v4()`, recalculated after each execution
+17. ✅ **Executor pattern** - Executor only executes and returns results; PM does all database writes (applies to all trades, not just final exits)
+18. ✅ **No hold strands** - Only actions emit strands (reduces noise, focuses on decisions)
+19. ✅ **Database reorganization** - Archive old schemas, drop tables, recreate fresh minimal schemas
+20. ✅ **1m OHLC verification needed** - Must verify 1m price data → 1m OHLC conversion before Phase 0
 

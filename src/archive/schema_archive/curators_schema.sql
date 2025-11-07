@@ -48,9 +48,6 @@ CREATE TABLE curators (
     status TEXT DEFAULT 'active',         -- "active", "inactive", "suspended", "testing"
     tags TEXT[],                          -- ["defi", "alpha", "technical", "multi_platform"]
     
-    -- Chain preference tracking (for Social Ingest chain resolution)
-    chain_counts JSONB DEFAULT '{}'::jsonb,  -- {"solana": 27, "ethereum": 5, "base": 9, "bsc": 0} - counts of successful chain resolutions per chain
-    
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -361,9 +358,6 @@ BEGIN
     LIMIT limit_param;
 END;
 $$ LANGUAGE plpgsql;
-
--- Comments for documentation
-COMMENT ON COLUMN curators.chain_counts IS 'Learning system: Chain preference tracking for Social Ingest - counts of successful chain resolutions per chain (e.g., {"solana": 27, "ethereum": 5, "base": 9, "bsc": 0})';
 
 -- Grant permissions (adjust as needed for your setup)
 -- GRANT ALL ON curators TO your_app_user;

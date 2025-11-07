@@ -1073,6 +1073,9 @@ class TraderService:
                 ss = mi.get('social_signal', {}) or {}
                 source_tweet_url = (ss.get('message', {}) or {}).get('url')
 
+            # Calculate total_allocation_usd from allocation_pct and balance
+            total_allocation_usd = (allocation_pct * float(balance)) / 100.0
+            
             # create position
             position = {
                 'id': position_id,
@@ -1080,8 +1083,9 @@ class TraderService:
                 'token_contract': contract,
                 'token_ticker': ticker,
                 'book_id': decision.get('id'),
-                'status': 'active',
+                'status': 'watchlist',  # Changed from 'active' - PM will handle first buy via signals
                 'total_allocation_pct': allocation_pct,
+                'total_allocation_usd': total_allocation_usd,  # Added for v4 multi-timeframe model
                 'total_quantity': 0.0,
                 'total_tokens_bought': 0.0,
                 'total_tokens_sold': 0.0,
@@ -1090,7 +1094,7 @@ class TraderService:
                 'total_pnl_native': 0.0,
                 'curator_sources': (decision.get('content', {}) or {}).get('curator_id'),
                 'source_tweet_url': source_tweet_url,
-                'first_entry_timestamp': datetime.now(timezone.utc).isoformat(),
+                'first_entry_timestamp': None,  # Will be set when first entry executes
                 'exit_rules': self._build_exit_rules_from_config(),
                 'trend_exit_rules': self._build_trend_exit_rules_from_config(),
             }
