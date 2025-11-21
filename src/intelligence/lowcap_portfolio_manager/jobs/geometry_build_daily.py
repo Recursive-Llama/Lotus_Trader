@@ -30,7 +30,14 @@ logger = logging.getLogger(__name__)
 
 
 class GeometryBuilder:
-    def __init__(self, generate_charts: bool = True) -> None:
+    def __init__(self, timeframe: str = "1h", generate_charts: bool = True) -> None:
+        """
+        Initialize Geometry Builder.
+        
+        Args:
+            timeframe: Timeframe to process ("1m", "15m", "1h", "4h")
+            generate_charts: Whether to generate chart images
+        """
         supabase_url = os.getenv("SUPABASE_URL", "")
         supabase_key = os.getenv("SUPABASE_KEY", "")
         if not supabase_url or not supabase_key:
@@ -39,25 +46,35 @@ class GeometryBuilder:
         self.persist = SpiralPersist()
         self.lookback_days = int(os.getenv("GEOM_LOOKBACK_DAYS", "14"))
         self.generate_charts = generate_charts
+        self.timeframe = timeframe
 
     def _active_positions(self) -> List[Dict[str, Any]]:
-        res = self.sb.table("lowcap_positions").select("id,token_contract,token_chain").eq("status", "active").limit(2000).execute()
+        """Get positions for this timeframe (watchlist + active only)."""
+        res = (
+            self.sb.table("lowcap_positions")
+            .select("id,token_contract,token_chain,timeframe")
+            .eq("timeframe", self.timeframe)
+            .in_("status", ["watchlist", "active"])  # Process watchlist and active
+            .limit(2000)
+            .execute()
+        )
         return res.data or []
 
     def _fetch_bars(self, contract: str, chain: str, end: datetime, minutes: int = None) -> List[Dict[str, Any]]:
+        """Fetch OHLC bars for the specified timeframe."""
         # If minutes is None, fetch all available data
         if minutes is not None:
             start = end - timedelta(minutes=minutes)
-            # Use OHLC data with 1h timeframe for geometry analysis (cleaner trendlines)
+            # Use OHLC data for the specified timeframe
             res = (
                 self.sb.table("lowcap_price_data_ohlc")
-                .select("timestamp, high_native, low_native, close_native, volume")
+                .select("timestamp, high_usd, low_usd, close_usd, volume")
                 .eq("token_contract", contract)
                 .eq("chain", chain)
-                .eq("timeframe", "1h")  # Use 1h timeframe for geometry (cleaner data)
+                .eq("timeframe", self.timeframe)  # Use timeframe-specific data
                 .gte("timestamp", start.isoformat())
                 .lte("timestamp", end.isoformat())
-                .gt("close_native", 0)  # Filter out zero-price bars (no trading)
+                .gt("close_usd", 0)  # Filter out zero-price bars (no trading)
                 .order("timestamp", desc=False)
                 .execute()
             )
@@ -65,18 +82,18 @@ class GeometryBuilder:
             # Fetch all available data
             res = (
                 self.sb.table("lowcap_price_data_ohlc")
-                .select("timestamp, high_native, low_native, close_native, volume")
+                .select("timestamp, high_usd, low_usd, close_usd, volume")
                 .eq("token_contract", contract)
                 .eq("chain", chain)
-                .eq("timeframe", "1h")  # Use 1h timeframe for geometry (cleaner data)
+                .eq("timeframe", self.timeframe)  # Use timeframe-specific data
                 .lte("timestamp", end.isoformat())
-                .gt("close_native", 0)  # Filter out zero-price bars (no trading)
+                .gt("close_usd", 0)  # Filter out zero-price bars (no trading)
                 .order("timestamp", desc=False)
                 .execute()
             )
         return res.data or []
 
-    def _get_swing_points_with_coordinates(self, timestamps: List[datetime], highs_native: List[float], lows_native: List[float], closes: List[float]) -> List[Dict[str, Any]]:
+    def _get_swing_points_with_coordinates(self, timestamps: List[datetime], highs: List[float], lows: List[float], closes: List[float]) -> List[Dict[str, Any]]:
         """Get swing points with their coordinates (timestamps and prices)"""
         if len(timestamps) < 3:
             return []
@@ -90,14 +107,14 @@ class GeometryBuilder:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i].isoformat(),  # Convert datetime to ISO string
-                'price': highs_native[i],
+                'price': highs[i],
                 'type': 'high'
             })
         for i in swing_lows:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i].isoformat(),  # Convert datetime to ISO string
-                'price': lows_native[i],
+                'price': lows[i],
                 'type': 'low'
             })
         
@@ -135,7 +152,7 @@ class GeometryBuilder:
         
         return highs, lows
 
-    def _find_ath_atl_pivots(self, timestamps: List[datetime], closes: List[float], highs_native: List[float], lows_native: List[float]) -> List[Dict[str, Any]]:
+    def _find_ath_atl_pivots(self, timestamps: List[datetime], closes: List[float], highs: List[float], lows: List[float]) -> List[Dict[str, Any]]:
         """Find ATH and ATL pivots to define sustained trend segments using OHLC extremes"""
         if len(timestamps) < 3:
             return []
@@ -149,14 +166,14 @@ class GeometryBuilder:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i],
-                'price': highs_native[i],
+                'price': highs[i],
                 'type': 'high'
             })
         for i in swing_lows:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i],
-                'price': lows_native[i],
+                'price': lows[i],
                 'type': 'low'
             })
         
@@ -237,8 +254,7 @@ class GeometryBuilder:
         
         return segments
 
-    def _detect_trends_proper(self, timestamps: List[datetime], closes: List[float], 
-                              highs_native: List[float], lows_native: List[float]) -> List[Dict[str, Any]]:
+    def _detect_trends_proper(self, timestamps: List[datetime], closes: List[float], highs: List[float], lows: List[float]) -> List[Dict[str, Any]]:
         """Proper trend detection: Find first trend using ATL/ATH, then detect subsequent trend changes"""
         if len(timestamps) < 3:
             return []
@@ -252,14 +268,14 @@ class GeometryBuilder:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i],
-                'price': highs_native[i],
+                'price': highs[i],
                 'type': 'high'
             })
         for i in swing_lows:
             swing_points.append({
                 'index': i,
                 'timestamp': timestamps[i],
-                'price': lows_native[i],
+                'price': lows[i],
                 'type': 'low'
             })
         
@@ -1003,16 +1019,16 @@ class GeometryBuilder:
             if len(bars) < 50:  # Need sufficient data for analysis
                 continue
                 
-            closes = [float(b["close_native"]) for b in bars]
-            highs_native = [float(b.get("high_native", b["close_native"])) for b in bars]
-            lows_native = [float(b.get("low_native", b["close_native"])) for b in bars]
+            closes = [float(b["close_usd"]) for b in bars]
+            highs = [float(b.get("high_usd", b["close_usd"])) for b in bars]
+            lows = [float(b.get("low_usd", b["close_usd"])) for b in bars]
             timestamps = [datetime.fromisoformat(b["timestamp"].replace('Z', '+00:00')) for b in bars]
             
             # Use improved percentage-based swing detection
             swing_highs, swing_lows = self._swings_percentage_based(closes, prominence_threshold=0.5)
             
             # Get swing points with coordinates
-            swing_points = self._get_swing_points_with_coordinates(timestamps, highs_native, lows_native, closes)
+            swing_points = self._get_swing_points_with_coordinates(timestamps, highs, lows, closes)
             
             if len(swing_highs) < 3 and len(swing_lows) < 3:
                 continue  # Need sufficient swing points
@@ -1056,7 +1072,7 @@ class GeometryBuilder:
                 sr_levels = sr_levels[:12]  # Keep top 12 levels (increased for Fib levels)
             
             # Use proper trend detection instead of the broken ATH/ATL logic
-            trend_segments = self._detect_trends_proper(timestamps, closes, highs_native, lows_native)
+            trend_segments = self._detect_trends_proper(timestamps, closes, highs, lows)
             
             # Generate trendlines for each sustained trend segment
             all_trendlines = []
@@ -1371,10 +1387,11 @@ class GeometryBuilder:
                         price_padding = (max(closes) - min(closes)) * 0.1  # 10% padding
                         ax1.set_ylim(min(closes) - price_padding, max(closes) + price_padding)
                     
-                    # Volume chart - use appropriate width for 1h bars
+                    # Volume chart - use appropriate width for timeframe-specific bars
                     volumes = [float(b["volume"]) for b in bars]
-                    # Calculate appropriate width for 1h bars (1/24 of a day)
-                    bar_width = 1/24  # 1 hour = 1/24 of a day
+                    # Calculate appropriate width based on timeframe
+                    bar_width_map = {"1m": 1/1440, "15m": 1/96, "1h": 1/24, "4h": 1/6}  # Fraction of a day
+                    bar_width = bar_width_map.get(self.timeframe, 1/24)  # Default to 1h if unknown
                     ax2.bar(timestamps, volumes, width=bar_width, alpha=0.7, color='gray')
                     ax2.set_ylabel('Volume (USD)')
                     ax2.set_xlabel('Time')
@@ -1462,9 +1479,15 @@ class GeometryBuilder:
         return updated
 
 
-def main() -> None:
+def main(timeframe: str = "1h") -> None:
+    """
+    Main entry point for Geometry Builder.
+    
+    Args:
+        timeframe: Timeframe to process ("1m", "15m", "1h", "4h")
+    """
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    job = GeometryBuilder()
+    job = GeometryBuilder(timeframe=timeframe)
     job.build()
 
 

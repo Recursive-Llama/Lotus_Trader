@@ -106,25 +106,33 @@
 
 3. Decision Maker (DecisionMakerLowcapSimple)
    └─> Evaluates criteria (5 checks)
+       └─> If approved:
+           ├─> Calculates total_allocation_usd (from allocation_pct and balance)
+           ├─> Creates 4 positions in lowcap_positions table (one per timeframe: 1m, 15m, 1h, 4h)
+           │   ├─> Each position: alloc_cap_usd = total_allocation_usd * timeframe_percentage
+           │   ├─> Sets status: 'watchlist' (if bars_count >= 350) or 'dormant' (if bars_count < 350)
+           │   └─> Stores allocation splits in alloc_policy JSONB
        └─> Creates decision_lowcap strand (approve/reject)
            └─> Returns to Learning System
 
 4. Learning System
    └─> Triggers Trader (if approved)
 
-5. Trader Service
-   └─> Creates position in lowcap_positions table
-       ├─> Sets max_allocation_pct and total_allocation_usd
-       ├─> Triggers async backfill (currently 15m, should be 1h or dynamic) ⚠️
-       └─> ❌ REMOVE: First buy execution (old system behavior)
+5. Trader Service (v4 simplified)
+   └─> Validates decision was approved
+   └─> Checks if positions already exist (idempotency)
+   └─> Triggers async backfill for all 4 timeframes (1m, 15m, 1h, 4h) ⚠️
+   └─> **Note**: No longer creates positions (Decision Maker does this)
+   └─> **Note**: No first buy execution (PM handles all entries via signals)
 
 6. Scheduled Jobs (Parallel, Independent)
    ├─> TA Tracker (every 5 min) - writes features.ta (1h only) ⚠️
    ├─> Geometry Builder (daily at :10 UTC) - writes features.geometry (1h only) ⚠️
-   ├─> Uptrend Engine v4 (NOT SCHEDULED!) ❌
+   ├─> Uptrend Engine v4 (timeframe-specific: 1m=1min, 15m=15min, 1h=1hr, 4h=4hr) ✅
    ├─> Price Tracking (every 1 min) - writes to price tables ✅
-   ├─> Backfill Gap Scan (hourly) - fills missing 1h bars ⚠️
-   └─> OHLC Rollup (every 5 min) - rolls up 1m to 5m/15m/1h ✅
+   ├─> OHLC Conversion & Rollup (timeframe-specific) - converts 1m price points → 1m OHLC, rolls up to 15m/1h/4h ✅
+   ├─> Bars Count Update (hourly) - updates bars_count for dormant positions, flips dormant → watchlist ✅
+   └─> Backfill Gap Scan (hourly) - fills missing 1h bars ⚠️
 
 7. PM Core Tick (timeframe-specific: 1m=1min, 15m=15min, 1h=1hr, 4h=4hr) ⚠️
    └─> Reads features (expects uptrend_engine_v4) ❌
@@ -141,9 +149,10 @@
 | Social Ingest | Continuous | ✅ Working |
 | TA Tracker | Every 5 min | ⚠️ 1h only |
 | Geometry Builder | Daily at :10 UTC | ⚠️ 1h only |
-| **Uptrend Engine v4** | **NOT SCHEDULED** | ❌ **MISSING** |
+| Uptrend Engine v4 | Timeframe-specific (1m=1min, 15m=15min, 1h=1hr, 4h=4hr) | ✅ Scheduled |
 | Price Tracking | Every 1 min | ✅ Working |
-| OHLC Rollup | Every 5 min | ✅ Working |
+| OHLC Conversion & Rollup | Timeframe-specific (1m=1min, 15m=15min, 1h=1hr, 4h=4hr) | ✅ Working |
+| Bars Count Update | Hourly | ✅ Working |
 | PM Core Tick | Timeframe-specific (1m=1min, 15m=15min, 1h=1hr, 4h=4hr) | ⚠️ Must match timeframe |
 | Backfill Gap Scan | Hourly | ⚠️ 1h only |
 
@@ -175,7 +184,15 @@
 - Each position checks `bars_count`:
   - If `bars_count >= 350` → `status = 'watchlist'` ✅ (most common)
   - If `bars_count < 350` → `status = 'dormant'` (waiting for data)
-- As data arrives, `bars_count` updates → `dormant → watchlist` when threshold reached
+- **Periodic `bars_count` Update Job** (hourly):
+  - Processes **only `dormant` positions** (watchlist positions are skipped)
+  - Counts actual OHLC bars in `lowcap_price_data_ohlc` for each position's **specific timeframe**:
+    - 15m position → counts 15m bars
+    - 1h position → counts 1h bars
+    - Each position has its own `bars_count` for its timeframe
+  - Updates `bars_count` if changed
+  - Auto-flips `dormant → watchlist` when `bars_count >= 350` for that timeframe
+  - **Once a position reaches `watchlist`, it's no longer processed by this job** (already has enough data)
 - PM executes first buy → `watchlist → active`
 - When position fully exited → `active → watchlist` (back to watchlist, not closed)
 
@@ -272,7 +289,24 @@
    - **Storage**: All timeframes stored in `lowcap_price_data_ohlc` with correct `timeframe` column (1m, 15m, 1h, 4h)
    - **Usage**: PM and Uptrend Engine read from `lowcap_price_data_ohlc` (not `lowcap_price_data_1m`)
 
-6. **PM** (`pm_core_tick.py`):
+6. **Bars Count Update** (`update_bars_count.py`):
+   - **Purpose**: Periodically update `bars_count` for `dormant` positions and auto-flip `dormant → watchlist` when threshold reached
+   - **Frequency**: Hourly (runs once per hour for all dormant positions)
+   - **Process**:
+     - Queries **only `dormant` positions** (watchlist positions are skipped - already have enough data)
+     - For each dormant position:
+       - Counts actual OHLC bars in `lowcap_price_data_ohlc` for that position's **specific timeframe**:
+         - Filters by `token_contract`, `chain`, and `timeframe` (position's timeframe)
+         - 15m position → counts 15m bars
+         - 1h position → counts 1h bars
+         - Each position has its own `bars_count` for its timeframe
+       - Updates `bars_count` if changed
+       - Auto-flips `dormant → watchlist` when `bars_count >= 350` for that timeframe
+     - **Once a position reaches `watchlist`, it's no longer processed by this job**
+   - **Why needed**: Ongoing OHLC conversion/rollup jobs add new bars, but don't update position `bars_count` or trigger status transitions
+   - **Efficiency**: Uses caching to avoid duplicate counts for positions sharing same token/chain/timeframe
+
+7. **PM** (`pm_core_tick.py`):
    - Processes positions grouped by status: `watchlist` + `active` only (skips `dormant`)
    - Each position already has its timeframe (read from position row)
    - Reads `features.uptrend_engine_v4` (no timeframe suffix needed - stored per position)
@@ -464,21 +498,24 @@
      - For 15m positions: Reads 15m OHLC bars
      - For 1h positions: Reads 1h OHLC bars
      - For 4h positions: Reads 4h OHLC bars
+   - **Checks balance** on target chain (USDC + native gas)
    - Executes based on `decision_type`:
      - **`"add"`**: 
        - Calculates `notional_usd = total_allocation_usd * size_frac`
-       - Calls `chain_executor.execute_buy(contract, notional_usd)`
+       - Executes trade using Li.Fi SDK (USDC → token swap)
        - Returns `{"status": "success", "tx_hash": "...", "tokens_bought": ..., "price": ..., "slippage": ...}`
      - **`"trim"`**: 
        - Calculates `tokens_to_sell = total_quantity * size_frac`
-       - Calls `chain_executor.execute_sell(contract, tokens_to_sell, price_usd)`
+       - Executes trade using Li.Fi SDK (token → USDC swap)
        - Returns `{"status": "success", "tx_hash": "...", "tokens_sold": ..., "price": ..., "slippage": ...}`
      - **`"emergency_exit"`**: 
        - Same as trim with `size_frac = 1.0` (full exit)
        - Returns execution result
+   - **After execution**: Checks if rebalancing needed (bridge funds if balance below threshold)
    - **Execution is immediate** (synchronous) - no price condition checking
    - **Returns execution result** (success/error, tx_hash, tokens, price, slippage)
    - **Executor does NOT write to database** - only returns results to PM
+   - **Note**: See [Fund Management & Bridging Strategy](#fund-management--bridging-strategy) for detailed bridging logic
 
 3. **PM updates position table** (PM does all database writes):
    - Updates `total_quantity` based on executor results
@@ -506,6 +543,237 @@
 - Simpler (fewer moving parts)
 - Better error handling (exceptions propagate)
 - Still has audit trail (strands written after)
+
+---
+
+## Fund Management & Bridging Strategy
+
+**Status**: v4 enhancement using Li.Fi SDK for unified cross-chain execution
+
+**Related**: See [`scripts/lifi_sandbox/README.md`](../../../scripts/lifi_sandbox/README.md) for Li.Fi SDK integration details
+
+### Overview
+
+**Problem**: Different ecosystems have different tokens. Most trading happens on Solana, but we need to support Base, BSC, and Ethereum. Maintaining separate balances on all chains is capital inefficient.
+
+**Solution**: Centralized fund management with on-demand bridging using Li.Fi SDK.
+
+### Fund Management Strategy
+
+#### Home Base Chain
+- **Primary**: Solana (configurable, but Solana is default)
+- **Rationale**: Most trading happens on Solana, lowest fees, fast execution
+- **Allocation Calculation**: All `total_allocation_usd` calculations are based on **USDC balance on Solana** (home base)
+
+#### Per-Chain Reserves (Pre-Positioned)
+Each chain maintains minimum reserves to support at least 1 trade:
+
+- **Base**: $100 USDC + $15 ETH (for gas)
+- **BSC**: $100 USDC + $15 BNB (for gas)
+- **Ethereum**: $100 USDC + $15 ETH (for gas)
+- **Solana**: All remaining USDC + SOL (for gas)
+
+**Initial Setup**: Bridge $100 USDC + $15 native token to each chain on system startup.
+
+**Maintenance Thresholds**:
+- **USDC minimum**: $100 per chain (aim to keep above this)
+- **Native gas minimum**: $15 per chain (pre-positioned), top-up threshold is $10 (swap from USDC on same chain when below $10)
+- **Auto-rebalancing**: When a position opens, bridge additional funds to maintain buffer
+- **Gas management**: Use USDC on chain to swap for native gas (primary method), or bridge $100 native if completely out of gas
+
+### Bridging Rules
+
+#### Minimum Bridge Size
+- **Minimum**: $100 USDC (configurable)
+- **Rationale**: Bridge fees are acceptable above this threshold; below this, fees become significant percentage
+
+#### Bridging Strategy (All Timeframes)
+**Same strategy for all timeframes** (1m, 15m, 1h, 4h):
+- Pre-positioned funds for at least 1 trade per chain
+- Bridge additional funds when depleted (after trade executes)
+- Execute trade first, then bridge more if needed (non-blocking)
+
+**Flow**:
+1. **Check balance** on target chain
+2. **If sufficient**: Execute trade immediately
+3. **If insufficient**: 
+   - Execute trade using pre-positioned funds
+   - **After execution**: Trigger bridge to replenish (async, non-blocking)
+   - Bridge amount: `notional_usd + buffer` to maintain $100+ USDC reserve
+
+#### Gas Token Management
+**Hybrid Strategy**:
+- **Pre-positioned**: $15 native token per chain (ETH, BNB, SOL)
+- **Primary method**: Swap USDC → native on the same chain (using USDC already on that chain)
+- **Fallback**: Bridge $100 native token from Solana if completely out of gas, then swap $85 → USDC on arrival
+
+**Gas Top-Up Flow**:
+1. Check native balance on target chain
+2. **If < $10** (threshold):
+   - **First**: Check if USDC balance on that chain is sufficient
+   - **If USDC available**: Swap USDC → native on same chain (using Li.Fi SDK spot swap, amount: $10-15)
+   - **If no USDC available AND no gas**: 
+     - Bridge $100 native token (ETH/BNB) from Solana (meets $100 minimum bridge size)
+     - Once bridge completes: Swap $85 → USDC on target chain, keep $15 for gas
+     - **Rationale**: This gives us both gas AND USDC on the target chain, meeting minimum bridge size
+3. **Rationale**: 
+   - Use existing USDC on chain first (no bridge needed)
+   - If completely out of gas: Bridge $100 native, then swap most of it to USDC
+   - Avoids constant small bridges for gas
+
+### Executor Integration
+
+**Related**: See [`scripts/lifi_sandbox/README.md`](../../../scripts/lifi_sandbox/README.md) for detailed Li.Fi SDK integration, test suite, and implementation guide.
+
+#### Li.Fi SDK Integration
+
+**Unified Execution Layer**:
+- **Single SDK**: One interface for all chains (Solana, Base, BSC, Ethereum)
+- **USDC Support**: Native USDC → token swaps (no native currency conversion needed)
+- **Cross-Chain**: Built-in bridging when needed
+- **Route Finding**: SDK finds optimal routes automatically
+- **Transaction Capture**: Use `updateRouteHook` to capture txHash immediately
+- **Confirmation**: Use our own RPC for fast, reliable confirmation (SDK confirmation can be slow)
+
+**Key SDK Methods**:
+- `getQuote()`: Find optimal route for swap
+- `executeRoute()`: Execute swap/bridge with `updateRouteHook` for txHash capture
+- **Input**: USDC amount, target token, chain
+- **Output**: Transaction hash, execution status, actual tokens received
+
+**Implementation Details**:
+- See [`scripts/lifi_sandbox/README.md`](../../../scripts/lifi_sandbox/README.md) for:
+  - Wallet setup (Solana + EVM)
+  - Transaction capture hook pattern
+  - Confirmation polling strategy
+  - Cross-chain bridge handling
+  - Error handling and retry logic
+
+#### Enhanced Execution Flow
+
+```python
+def execute(decision, position):
+    chain = position['token_chain']
+    timeframe = position['timeframe']
+    notional_usd = calculate_notional(decision, position)
+    
+    # Check USDC balance on target chain
+    usdc_balance = get_balance(chain, 'USDC')
+    
+    # Execute trade (always use pre-positioned funds)
+    if usdc_balance < notional_usd:
+        # Should not happen if rebalancing works correctly
+        # But if it does, we still try to execute (may fail)
+        logger.warning(f"Insufficient USDC on {chain}: ${usdc_balance} < ${notional_usd}")
+    
+    # Execute trade immediately (non-blocking on bridge)
+    result = execute_trade(decision, position)
+    
+    # After execution: Check if rebalancing needed
+    if result.status == "success":
+        # Check if balance is below threshold
+        remaining_balance = usdc_balance - notional_usd
+        if remaining_balance < MIN_USDC_RESERVE:  # $100
+            # Trigger bridge to replenish (async, non-blocking)
+            bridge_amount = MIN_USDC_RESERVE + notional_usd  # Bridge enough for next trade + buffer
+            if bridge_amount >= MIN_BRIDGE_SIZE:  # $100
+                bridge_usdc_async(
+                    source_chain='solana',
+                    target_chain=chain,
+                    amount=bridge_amount
+                )
+        
+        # Check native gas balance (use USDC on chain first, bridge native if completely out)
+        native_balance = get_balance(chain, 'native')
+        if native_balance < MIN_NATIVE_RESERVE:  # $10 (threshold)
+            # First try: Swap USDC → native on same chain (if USDC available)
+            usdc_on_chain = get_balance(chain, 'USDC')
+            if usdc_on_chain >= GAS_SWAP_AMOUNT:  # $10-15
+                swap_usdc_to_native_async(chain, amount=GAS_SWAP_AMOUNT)
+            else:
+                # Fallback: Bridge $100 native token from Solana (meets minimum bridge size)
+                # Once bridge completes: Swap $85 → USDC, keep $15 for gas
+                # This gives us both gas AND USDC on target chain
+                bridge_native_async(
+                    source_chain='solana',
+                    target_chain=chain,
+                    amount=100.0  # Bridge $100 native (ETH/BNB)
+                )
+                # After bridge completes: swap $85 → USDC, keep $15 for gas
+                # (This happens in bridge completion callback)
+    
+    return result
+```
+
+#### Bridge Failure Handling
+
+**Strategy**: Retry with exponential backoff, but avoid infinite loops.
+
+**Implementation**:
+- **Retry limit**: 3 attempts (configurable)
+- **Backoff**: Exponential (1s, 2s, 4s)
+- **Failure handling**: 
+  - Log error and continue (trade already executed)
+  - Alert if balance remains below threshold after retries
+  - Manual intervention may be required
+
+**Note**: Bridge failures don't block trades (we always have pre-positioned funds). Worst case: We execute trade, bridge fails, need to manually top up later.
+
+### Balance Tracking
+
+#### Database Schema
+**Table**: `wallet_balances` (already exists)
+
+**Structure**:
+```sql
+wallet_balances (
+    chain TEXT PRIMARY KEY,        -- 'solana', 'ethereum', 'base', 'bsc'
+    balance FLOAT NOT NULL,        -- Current native token balance (for gas)
+    balance_usd FLOAT,            -- Current USD value of native balance
+    usdc_balance FLOAT,           -- Current USDC balance (NEW - for tracking USDC separately per chain)
+    wallet_address TEXT,
+    last_updated TIMESTAMPTZ DEFAULT NOW()
+)
+```
+
+**Tracking**:
+- **USDC per chain**: Yes, tracked separately in `usdc_balance` column (one row per chain)
+- **Native per chain**: Tracked in `balance` column (one row per chain)
+- **Updates**: After each trade execution, after each bridge completion, periodic reconciliation (hourly)
+
+### Allocation Calculation
+
+**Critical Change**: All allocation calculations use **Solana USDC balance** as the base.
+
+**Decision Maker Flow**:
+1. Get USDC balance from Solana (`wallet_balances` where `chain='solana'`)
+2. Calculate `total_allocation_usd = (allocation_pct / 100.0) * solana_usdc_balance`
+3. Create positions with this allocation
+4. Each position's `alloc_cap_usd` is based on this Solana-based total
+
+**Rationale**: 
+- Centralized capital management
+- All allocations relative to home base balance
+- Pre-positioned funds on other chains are operational reserves, not part of allocation calculation
+
+### Implementation Checklist
+
+1. **Update `wallet_balances` schema**: Add `usdc_balance` column
+2. **Update balance tracking**: Track USDC separately from native tokens
+3. **Implement bridge checks**: In executor, check balances before/after execution
+4. **Implement auto-rebalancing**: Bridge funds when balance drops below threshold
+5. **Update allocation calculation**: Use Solana USDC balance as base
+6. **Add bridge failure handling**: Retry logic with exponential backoff
+7. **Add monitoring**: Alert when balances below threshold for extended period
+
+### Future Enhancements
+
+- **Dynamic rebalancing**: Adjust reserves based on trading frequency per chain
+- **Bridge cost optimization**: Batch multiple small bridges into one larger bridge
+- **Cross-chain position management**: Bridge profits back to Solana automatically
+- **Gas price optimization**: Time gas top-ups based on network congestion
+
+---
 
 ### Architecture Analysis: Execution Flow Design
 
@@ -761,8 +1029,10 @@ for decision in decisions:
 
 **PM Executor**:
 - Invoked directly by PM (no event bus)
-- Gets latest price from `lowcap_price_data_1m`
-- Executes via chain executors (bsc_executor, base_executor, eth_executor, sol_executor)
+- Gets latest price from `lowcap_price_data_ohlc` (filtered by position's timeframe)
+- Executes via Li.Fi SDK (unified cross-chain execution)
+- Handles bridging automatically (USDC → token swaps, cross-chain bridges)
+- See [Fund Management & Bridging Strategy](#fund-management--bridging-strategy) for details
 
 ---
 
@@ -917,20 +1187,20 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
         if can_trim:
             trim_size = _e_to_trim_size(e_final) * trim_multiplier
             trim_size = min(trim_size, 1.0)  # Cap at 100%
-            actions.append({
-                "decision_type": "trim",
-                "size_frac": trim_size,
-                "reasons": {
+        actions.append({
+            "decision_type": "trim",
+            "size_frac": trim_size,
+            "reasons": {
                     "flag": "trim_flag",  # Changed from "trim_flag": True
-                    "state": state,
-                    "e_score": e_final,
-                    "ox_score": uptrend.get("scores", {}).get("ox", 0.0),
+                "state": state,
+                "e_score": e_final,
+                "ox_score": uptrend.get("scores", {}).get("ox", 0.0),
                     "trim_multiplier": trim_multiplier,
                     "cooldown_expired": cooldown_expired if last_trim_ts else True,
                     "sr_level_changed": sr_level_changed if last_trim_ts else False,
-                }
-            })
-            return actions
+            }
+        })
+        return actions
     
     # Entry Gates (S1, S2, S3) - Check execution history
     buy_signal = uptrend.get("buy_signal", False)  # S1
@@ -943,11 +1213,11 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
         if not last_s1_buy:
             # Never bought in S1, and we're in S1 (transitioned from S0)
             entry_size = _a_to_entry_size(a_final, state, buy_signal=True, buy_flag=False, first_dip_buy_flag=False)
-            if entry_size > 0:
-                actions.append({
-                    "decision_type": "add",
-                    "size_frac": entry_size,
-                    "reasons": {
+        if entry_size > 0:
+            actions.append({
+                "decision_type": "add",
+                "size_frac": entry_size,
+                "reasons": {
                         "flag": "buy_signal",  # Changed from "buy_signal": True
                         "state": state,
                         "a_score": a_final,
@@ -992,14 +1262,14 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
                     "size_frac": entry_size,
                     "reasons": {
                         "flag": flag_type,  # Changed from separate boolean fields
-                        "state": state,
-                        "a_score": a_final,
-                        "ts_score": uptrend.get("scores", {}).get("ts", 0.0),
-                        "dx_score": uptrend.get("scores", {}).get("dx", 0.0),
+                    "state": state,
+                    "a_score": a_final,
+                    "ts_score": uptrend.get("scores", {}).get("ts", 0.0),
+                    "dx_score": uptrend.get("scores", {}).get("dx", 0.0),
                         "entry_multiplier": entry_multiplier,
-                    }
-                })
-                return actions
+                }
+            })
+            return actions
     
     # Reclaimed EMA333 (S3 auto-rebuy)
     if state == "S3" and uptrend.get("reclaimed_ema333"):
@@ -1007,7 +1277,7 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
         last_reclaim_buy = exec_history.get("last_reclaim_buy", {})
         if not last_reclaim_buy or last_reclaim_buy.get("reclaimed_at") != uptrend.get("ts"):
             rebuy_size = _a_to_entry_size(a_final, state, False, False, False) * entry_multiplier
-            if rebuy_size > 0:
+        if rebuy_size > 0:
             actions.append({
                 "decision_type": "add",
                 "size_frac": rebuy_size,
@@ -1018,7 +1288,7 @@ def plan_actions_v4(position: Dict[str, Any], a_final: float, e_final: float, ph
                     "entry_multiplier": entry_multiplier,
                 }
             })
-                return actions
+            return actions
     
     # Default: No action (don't emit strand for holds)
     return actions  # Empty list = no action, no strand
@@ -1205,8 +1475,8 @@ asyncio.create_task(schedule_5min(4, uptrend_engine_main))  # Run every 5 minute
 
 #### 3. Fix Backfill to Support All 4 Timeframes
 **File**: `src/intelligence/trader_lowcap/trader_service.py`
-- **CRITICAL**: Each new token gets 4 positions (one per timeframe: 1m, 15m, 1h, 4h)
-- Trigger backfill for all 4 timeframes (async, non-blocking)
+- **Note**: Positions are already created by Decision Maker (4 positions per token: 1m, 15m, 1h, 4h)
+- Trigger backfill for all 4 timeframes (async, non-blocking) for the newly created positions
 - Backfill logic per timeframe:
   - **1m**: Backfill 1m OHLC data (directly from API)
   - **15m**: Backfill 15m OHLC data (directly from API - GeckoTerminal 15m endpoint)
@@ -1330,8 +1600,9 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
    - Document any limitations or fixes needed
 
 3. **Update Decision Maker** to create 4 positions per token:
-   - Decision Maker sets `total_allocation_usd` (total for the token)
-   - Create positions for 1m, 15m, 1h, 4h timeframes
+   - Decision Maker calculates `allocation_pct` (e.g., 4%)
+   - **Gets current balance** (from wallet) to calculate `total_allocation_usd = (allocation_pct * balance) / 100.0`
+   - Creates 4 positions in `lowcap_positions` table (one per timeframe: 1m, 15m, 1h, 4h)
    - For each position: `alloc_cap_usd = total_allocation_usd * timeframe_percentage`
      - 1m: `total_allocation_usd * 0.05`
      - 15m: `total_allocation_usd * 0.125`
@@ -1340,6 +1611,7 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
    - Set `status` based on `bars_count` (dormant if < 350, watchlist if >= 350)
    - Store allocation splits in `alloc_policy` JSONB
    - **Note**: Most tokens will start with all positions at `watchlist` (if they have enough data)
+   - **Note**: Positions created atomically with decision (no gap between decision and positions)
 
 4. **Update Backfill** to support all 4 timeframes per token:
    - **CRITICAL**: Each new token gets 4 positions (one per timeframe: 1m, 15m, 1h, 4h)
@@ -1350,9 +1622,10 @@ Rationale: Reduce confusion from old simple/complex variants; align schema to v4
      - **1h timeframe**: Backfill 1h OHLC data (from GeckoTerminal 1h endpoint)
      - **4h timeframe**: Backfill 4h OHLC data (from GeckoTerminal 4h endpoint)
    - **Note**: Backfill fetches correct timeframe directly from API (no rollup). Rollup is only for ongoing data collection (1m price points → 1m OHLC → rollup to 15m/1h/4h).
-   - Update `bars_count` per position as data arrives (✅ already tracking this)
-   - Auto-flip `dormant → watchlist` when `bars_count >= 350` for that timeframe
+   - **Backfill updates `bars_count` immediately** after inserting data (one-time update per backfill)
+   - **Auto-flip `dormant → watchlist`** when `bars_count >= 350` for that timeframe (handled by backfill)
    - **Note**: Most tokens will have enough data for at least some timeframes → those positions start at `watchlist` immediately
+   - **Ongoing updates**: The periodic `bars_count` update job (hourly) handles updates from ongoing OHLC conversion/rollup jobs (see "Bars Count Update" section above)
 
 5. **Update OHLC Conversion & Rollup** to handle all timeframes:
    - **1m OHLC Conversion** (CRITICAL - different from rollup):

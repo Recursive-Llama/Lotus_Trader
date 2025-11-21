@@ -1,290 +1,132 @@
-# Alpha Detector Test Suite
+# PM v4 Uptrend Test Suite
 
-**Phase 1.6: Basic Test Suite Implementation**
+Test suite for PM v4 Uptrend System following the comprehensive testing plan.
 
-This directory contains comprehensive tests for the Alpha Detector module, implementing a complete testing framework as specified in the BUILD_IMPLEMENTATION_PLAN.md.
+## Test Organization
 
-## 📁 Test Structure
+### Layer 1: Component Testing
+- **Unit Tests** (`tests/unit/`): Test individual modules in isolation
+- **Integration Tests** (`tests/integration/`): Test how components work together
 
-### **Core Test Files (Phase 1.6)**
+### Layer 2: Flow Testing
+- **Flow Tests** (`tests/flow/`): Follow packets through entire pipeline using existing IDs/queries
 
-#### Unit Tests
-- **`test_core_detection.py`** - Core detection components unit tests
-  - MultiTimeframeProcessor tests
-  - BasicFeatureExtractor tests  
-  - SignalGenerator tests
-  - SignalProcessor tests
-  - CoreDetectionEngine integration tests
+## Running Tests
 
-- **`test_trading_plan_generation.py`** - Trading plan generation unit tests
-  - TradingPlanBuilder tests
-  - SignalPackGenerator tests
-  - Data model validation tests
-  - Configuration tests
-
-#### Integration Tests
-- **`test_communication.py`** - Inter-module communication tests
-  - DirectTableCommunicator tests
-  - ModuleListener tests
-  - End-to-end communication flow tests
-
-- **`test_end_to_end.py`** - Complete system integration tests
-  - Full signal detection pipeline
-  - Trading plan generation integration
-  - Multi-timeframe processing
-  - Error handling and resilience tests
-
-### **Legacy Test Files (Pre-Phase 1.6)**
-- `test_phase1_3_comprehensive.py` - Phase 1.3 comprehensive tests
-- `test_phase1_3_final.py` - Phase 1.3 final validation
-- `test_signal_processor.py` - Signal processor specific tests
-- `test_supabase_client.py` - Database client tests
-- `test_database_operations.py` - Database operation tests
-- `test_multi_timeframe.py` - Multi-timeframe tests
-- `test_all_timeframes.py` - All timeframes tests
-- `test_mini_section_1.py` - Mini section 1 tests
-- `test_phase1_2.py` - Phase 1.2 tests
-
-### **Test Infrastructure**
-- **`__init__.py`** - Test package initialization and categorization
-- **`run_tests.py`** - Comprehensive test runner with reporting
-- **`discover_tests.py`** - Test discovery and information script
-- **`test_config.yaml`** - Test configuration and settings
-- **`README.md`** - This documentation file
-
-## 🚀 Running Tests
-
-### **Quick Start**
+### Run all tests
 ```bash
-# Run all core tests (unit + integration)
-python tests/run_tests.py
-
-# Run all tests including legacy
-python tests/run_tests.py --all
-
-# Run specific test categories
-python tests/run_tests.py --unit
-python tests/run_tests.py --integration
-python tests/run_tests.py --legacy
-
-# Run specific test modules
-python tests/run_tests.py --specific test_core_detection test_communication
+pytest src/tests/ -v
 ```
 
-### **Using Python unittest directly**
+### Run by layer
 ```bash
-# Run all tests
-python -m unittest discover tests
+# Component tests (Layer 1)
+pytest src/tests/unit/ -v
+pytest src/tests/integration/ -v
 
-# Run specific test file
-python -m unittest tests.test_core_detection
-
-# Run with verbose output
-python -m unittest discover tests -v
+# Flow tests (Layer 2)
+pytest src/tests/flow/ -v -m flow
 ```
 
-### **Test Discovery**
+### Run specific test
 ```bash
-# List available tests
-python tests/discover_tests.py
-
-# Detailed test information
-python tests/discover_tests.py --detailed
+pytest src/tests/unit/test_bucket_vocabulary.py -v
+pytest src/tests/flow/test_scenario_1b_learning_loop.py -v
 ```
 
-## 📊 Test Categories
-
-### **Unit Tests** 
-Focus on individual components in isolation:
-- ✅ MultiTimeframeProcessor
-- ✅ BasicFeatureExtractor  
-- ✅ SignalGenerator
-- ✅ SignalProcessor
-- ✅ TradingPlanBuilder
-- ✅ SignalPackGenerator
-- ✅ Data Models
-- ✅ Configuration
-
-### **Integration Tests**
-Focus on component interactions:
-- ✅ Communication system
-- ✅ End-to-end signal detection
-- ✅ Trading plan generation pipeline
-- ✅ Multi-timeframe processing
-- ✅ Error handling
-
-### **Legacy Tests**
-Pre-Phase 1.6 tests maintained for compatibility:
-- ✅ Phase 1.3 comprehensive tests
-- ✅ Component-specific tests
-- ✅ Database integration tests
-
-## 🎯 Test Coverage
-
-### **Core Detection Engine**
-- [x] Multi-timeframe data processing
-- [x] Feature extraction (35+ indicators)
-- [x] Pattern detection
-- [x] Regime detection
-- [x] Signal generation
-- [x] Signal processing and filtering
-- [x] Error handling
-
-### **Trading Plan Generation**
-- [x] Trading plan creation
-- [x] Risk management calculations
-- [x] Position sizing (percentage-based)
-- [x] Signal pack generation
-- [x] LLM formatting
-- [x] Configuration management
-
-### **Communication System**
-- [x] Direct table communication
-- [x] Message serialization
-- [x] Tag-based routing
-- [x] Feedback handling
-- [x] Error recovery
-
-### **System Integration**
-- [x] End-to-end signal detection
-- [x] Complete trading plan pipeline
-- [x] Multi-timeframe integration
-- [x] Performance testing
-- [x] Resilience testing
-
-## ⚙️ Configuration
-
-Test behavior can be configured via `test_config.yaml`:
-
-```yaml
-# Test Runner Configuration
-test_runner:
-  default_verbosity: 2
-  enable_colors: true
-  show_timing: true
-
-# Test Data Configuration  
-test_data:
-  market_data:
-    default_periods: 2000
-    symbols: ['BTC', 'ETH', 'SOL']
-    timeframes: ['1m', '5m', '15m', '1h']
-
-# Performance Thresholds
-performance:
-  max_test_duration_seconds: 30
-  max_detection_time_seconds: 10
-```
-
-## 📈 Test Reporting
-
-The test runner provides comprehensive reporting:
-
-### **Colored Output**
-- ✅ Green: Passed tests
-- ❌ Red: Failed tests  
-- ⚠️ Yellow: Skipped tests
-- 🔵 Blue: Test categories and summaries
-
-### **Performance Metrics**
-- Test execution times
-- Memory usage tracking
-- Performance threshold validation
-
-### **Summary Reports**
-- Test success rates
-- Category breakdowns
-- Duration statistics
-- Error summaries
-
-## 🐛 Debugging Tests
-
-### **Verbose Output**
+### Run with coverage
 ```bash
-# Maximum verbosity
-python tests/run_tests.py --verbose
-
-# Quiet mode
-python tests/run_tests.py --quiet
+pytest src/tests/ --cov=src --cov-report=html
 ```
 
-### **Running Individual Tests**
-```bash
-# Run specific test class
-python -m unittest tests.test_core_detection.TestMultiTimeframeProcessor
+## Test Environment Setup
 
-# Run specific test method
-python -m unittest tests.test_core_detection.TestMultiTimeframeProcessor.test_process_multi_timeframe_success
-```
+Before running flow tests, ensure:
+1. Test database created and configured
+2. All schemas applied
+3. Test data seeded (tokens, curators, OHLC data)
+4. Test wallet configured with $15-25 USDC
+5. Environment variables set:
+   - `TEST_SUPABASE_URL`
+   - `TEST_SUPABASE_KEY`
+   - `TEST_WALLET_ADDRESS`
+   - `TEST_WALLET_PRIVATE_KEY`
 
-### **Test Discovery**
-```bash
-# Find all available tests
-python tests/discover_tests.py --detailed
-```
+## Test Fixtures
 
-## 🔧 Test Development
+Test fixtures are defined in `conftest.py`:
+- `test_db`: Database connection
+- `test_token`: POLYTALE token fixture
+- `test_curator`: 0xdetweiler curator fixture
+- `test_wallet`: Test wallet configuration
+- `test_signal_id`: Unique signal ID generator
+- `mock_engine_payload_*`: Mocked engine payloads for testing
 
-### **Adding New Tests**
-1. Create test file following naming convention: `test_*.py`
-2. Import required modules and test base classes
-3. Create test classes inheriting from `unittest.TestCase`
-4. Add test methods starting with `test_`
-5. Update test categories in `__init__.py` if needed
+## Test Helpers
 
-### **Test Data**
-- Use `create_sample_*` methods for consistent test data
-- Mock external dependencies (database, APIs)
-- Use realistic market data patterns
-- Test edge cases and error conditions
+Helper functions in `test_helpers.py`:
+- `wait_for_condition()`: Polling helper for async operations
+- `get_positions_by_token()`: Query positions by token
+- `get_strand_by_id()`: Query strand by ID
+- `get_coefficient()`: Query learning coefficient
+- `get_global_rr_baseline()`: Query global R/R baseline
+- `assert_allocation_splits()`: Assert allocation splits
+- `assert_coefficient_bounds()`: Assert coefficient weight bounds
 
-### **Best Practices**
-- One test per assertion when possible
-- Descriptive test method names
-- Proper setup and teardown
-- Mock external dependencies
-- Test both success and failure cases
+## Test Scenarios
 
-## 📋 Test Requirements (Phase 1.6)
+### Scenario 1A: Uptrend Engine Testing
+- Tests engine computation with real OHLC data
+- No execution required
 
-Based on BUILD_IMPLEMENTATION_PLAN.md Section 1.6:
+### Scenario 1B: Complete Learning Loop Flow Test
+- Gold standard flow test
+- Follows signal through entire pipeline
+- Uses mocked engine payload for guaranteed execution
 
-### **✅ Unit Tests (1.6.1)**
-- [x] `test_core_detection.py` - Core detection components
-- [x] `test_trading_plan_generation.py` - Trading plan generation
-- [x] Individual component testing
-- [x] Mock external dependencies
-- [x] Edge case testing
+### Scenario 2: Cold Start
+- Tests system without learned data
+- Verifies fallback logic
 
-### **✅ Integration Tests (1.6.2)**  
-- [x] `test_communication.py` - Decision Maker integration
-- [x] `test_end_to_end.py` - Full system integration
-- [x] Component interaction testing
-- [x] Error handling testing
-- [x] Performance testing
+### Scenario 4: EWMA Temporal Decay
+- Tests EWMA with temporal decay
+- Verifies recent trades weighted more heavily
 
-### **✅ Test Organization (1.6.3)**
-- [x] Proper test discovery
-- [x] Test runner with reporting
-- [x] Configuration management
-- [x] Documentation
-- [x] Categorization system
+### Scenario 9: PM/Executor Testing
+- Comprehensive PM/Executor test suite
+- 12 test cases covering all engine signal combinations
 
-## 🎉 Phase 1.6 Completion
+### Scenario 10: Majors Data Flow Test
+- Critical dependency test
+- Follows majors data through ingestion → rollup → SPIRAL consumption
 
-**Phase 1.6: Basic Test Suite** is now **COMPLETE** ✅
+### Scenario 11: SPIRAL Engine Testing
+- Tests SPIRAL phase detection and A/E score computation
+- Requires Scenario 10 to pass first
 
-This comprehensive test suite provides:
-- **Complete unit test coverage** for all core components
-- **Integration testing** for inter-module communication
-- **End-to-end testing** for the complete system
-- **Professional test organization** with discovery and reporting
-- **Performance and resilience testing**
-- **Comprehensive documentation**
+## Test Execution Order
 
-The Alpha Detector module now has a robust testing foundation that ensures reliability, maintainability, and confidence in all system components.
+1. **Layer 1: Component Tests** (run first)
+   - Unit tests
+   - Integration tests
 
----
+2. **Layer 2: Flow Tests** (run after component tests)
+   - Scenario 10 (Majors Data) - Run FIRST
+   - Scenario 11 (SPIRAL) - Run AFTER Scenario 10
+   - Scenario 1A (Engine) - Test engine with real data
+   - Scenario 1B (Learning Loop) - Full pipeline test
+   - Scenario 2 (Cold Start)
+   - Scenario 4 (EWMA)
+   - Scenario 9 (PM/Executor)
 
-**Next Phase**: Ready to proceed to Phase 2 (Intelligence) or any other development priorities! 🚀
+3. **Layer 3: Validation**
+   - Performance tests
+   - Data integrity checks
+   - Regression tests
 
+## Notes
+
+- Flow tests require test environment setup
+- Real execution uses small amounts ($5-10 per trade)
+- Tests use real tokens and curators from fixtures
+- Mocked engine payloads used for guaranteed execution testing

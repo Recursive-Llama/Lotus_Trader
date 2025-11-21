@@ -19,8 +19,12 @@ from datetime import datetime, timezone
 
 from .universal_scoring import UniversalScoring
 from .universal_clustering import UniversalClustering, Cluster
+from .coefficient_updater import CoefficientUpdater
+from .bucket_vocabulary import BucketVocabulary
 from llm_integration.prompt_manager import PromptManager
 from llm_integration.openrouter_client import OpenRouterClient
+from intelligence.lowcap_portfolio_manager.pm.braiding_system import process_position_closed_for_braiding
+from intelligence.lowcap_portfolio_manager.pm.llm_research_layer import LLMResearchLayer
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,15 @@ class UniversalLearningSystem:
         # Initialize components
         self.scoring = UniversalScoring(supabase_manager)
         self.clustering = UniversalClustering()
+        self.coefficient_updater = CoefficientUpdater(supabase_manager.client)
+        self.bucket_vocab = BucketVocabulary()
+        
+        # Initialize LLM Learning Layer (build from day 1, phased enablement)
+        self.llm_research_layer = LLMResearchLayer(
+            sb_client=supabase_manager.client,
+            llm_client=llm_client,
+            enablement=None  # Uses defaults, can be updated later
+        )
         
         # Learning configuration
         self.promotion_thresholds = {
@@ -296,22 +309,33 @@ class UniversalLearningSystem:
             Processed strand dictionary
         """
         try:
-            print(f"🧠 Universal Learning System: Processing strand {strand.get('id', 'unknown')} - {strand.get('kind', 'unknown')}")
-            self.logger.info(f"Processing strand event: {strand.get('id', 'unknown')} - {strand.get('kind', 'unknown')}")
+            strand_kind = strand.get('kind', 'unknown')
+            strand_id = strand.get('id', 'unknown')
             
-            # Calculate scores for the strand
+            print(f"🧠 Universal Learning System: Processing strand {strand_id} - {strand_kind}")
+            self.logger.info(f"Processing strand event: {strand_id} - {strand_kind}")
+            
+            # CRITICAL: Handle position_closed strands for learning system
+            if strand_kind == 'position_closed':
+                print(f"🧠 Learning System: Detected position_closed strand - processing for coefficient updates")
+                await self._process_position_closed_strand(strand)
+                self.logger.info(f"Successfully processed position_closed strand: {strand_id}")
+                return strand
+            
+            # Calculate scores for the strand (skip for position_closed - they don't need scoring)
             print(f"🧠 Calculating scores for strand...")
             self.scoring.update_strand_scores(strand)
             
             # Update strand in database with scores
-            self.supabase_manager.update_strand(
-                strand['id'], 
-                {
-                    'persistence_score': strand.get('persistence_score', 0.0),
-                    'novelty_score': strand.get('novelty_score', 0.0),
-                    'surprise_rating': strand.get('surprise_rating', 0.0)
-                }
-            )
+            if strand.get('id'):
+                self.supabase_manager.update_strand(
+                    strand['id'], 
+                    {
+                        'persistence_score': strand.get('persistence_score', 0.0),
+                        'novelty_score': strand.get('novelty_score', 0.0),
+                        'surprise_rating': strand.get('surprise_rating', 0.0)
+                    }
+                )
             
             # Check if this strand should trigger the Decision Maker
             print(f"🧠 Checking if should trigger Decision Maker...")
@@ -331,11 +355,9 @@ class UniversalLearningSystem:
                 await self._trigger_trader(strand)
                 print(f"🧠 Trader completed - strand processed")
             
-            # Check if this strand is a braid candidate
-            if self._is_braid_candidate(strand):
-                await self._mark_as_braid_candidate(strand)
+            # Legacy braid candidate check removed - not used by lowcap system
             
-            self.logger.info(f"Successfully processed strand event: {strand.get('id', 'unknown')}")
+            self.logger.info(f"Successfully processed strand event: {strand_id}")
             return strand
             
         except Exception as e:
@@ -496,24 +518,349 @@ class UniversalLearningSystem:
             import traceback
             traceback.print_exc()
     
-    def _is_braid_candidate(self, strand: Dict[str, Any]) -> bool:
-        """Check if strand is a candidate for braid creation"""
-        # Simple criteria: high confidence and persistence
-        return (
-            (strand.get('confidence') or 0) > 0.8 and
-            (strand.get('persistence_score') or 0) > 0.7
-        )
-    
-    async def _mark_as_braid_candidate(self, strand: Dict[str, Any]) -> None:
-        """Mark strand as braid candidate in database"""
+    async def _process_position_closed_strand(self, strand: Dict[str, Any]) -> None:
+        """
+        Process a position_closed strand to update learning coefficients.
+        
+        This is the critical feedback loop: when a position closes, we extract
+        the completed trade data and entry context, then update coefficients
+        for all matching levers and interaction patterns.
+        
+        Args:
+            strand: position_closed strand dictionary with completed_trades and entry_context
+        """
         try:
-            self.supabase_manager.update_strand(
-                strand['id'], 
-                {'braid_candidate': True}
+            self.logger.info(f"Processing position_closed strand for learning updates")
+            
+            # Extract data from strand (entry_context and completed_trades are now in content JSONB)
+            content = strand.get('content', {})
+            entry_context = content.get('entry_context', {})
+            completed_trades = content.get('completed_trades', [])
+            timeframe = strand.get('timeframe', '1h')
+            
+            if not completed_trades:
+                self.logger.warning(f"No completed_trades found in position_closed strand")
+                return
+            
+            # Get the most recent completed trade (last one in array)
+            completed_trade = completed_trades[-1] if isinstance(completed_trades, list) else completed_trades
+            
+            # Extract R/R metrics
+            rr = completed_trade.get('rr')
+            if rr is None:
+                self.logger.warning(f"No R/R metric found in completed_trade, skipping coefficient update")
+                return
+            
+            # Update coefficients from this closed trade
+            await self._update_coefficients_from_closed_trade(
+                entry_context=entry_context,
+                completed_trade=completed_trade,
+                timeframe=timeframe
             )
-            self.logger.info(f"Marked strand {strand.get('id', 'unknown')} as braid candidate")
+            
+            # Process braiding system (pattern discovery)
+            try:
+                await process_position_closed_for_braiding(
+                    sb_client=self.supabase_manager.client,
+                    strand=strand
+                )
+                self.logger.info(f"Successfully processed position_closed strand for braiding")
+                
+                # Build lessons from braids after every closed trade (keeps lessons fresh)
+                try:
+                    from src.intelligence.lowcap_portfolio_manager.pm.braiding_system import build_lessons_from_braids
+                    lessons_created = await build_lessons_from_braids(
+                        sb_client=self.supabase_manager.client,
+                        module='pm',
+                        n_min=10,
+                        edge_min=0.5,
+                        incremental_min=0.1,
+                        max_lessons_per_family=3
+                    )
+                    self.logger.info(f"Built {lessons_created} PM lessons from braids")
+                    
+                    # Also build DM lessons if we have DM data
+                    if entry_context.get('curator'):
+                        lessons_created_dm = await build_lessons_from_braids(
+                            sb_client=self.supabase_manager.client,
+                            module='dm',
+                            n_min=10,
+                            edge_min=0.5,
+                            incremental_min=0.1,
+                            max_lessons_per_family=3
+                        )
+                        self.logger.info(f"Built {lessons_created_dm} DM lessons from braids")
+                except Exception as e:
+                    self.logger.warning(f"Error building lessons from braids: {e}")
+                    # Don't fail the whole process if lesson building fails
+            except Exception as e:
+                self.logger.error(f"Error processing braiding system: {e}")
+                # Don't fail the whole process if braiding fails
+            
+            # Process LLM Learning Layer (semantic and structural intelligence)
+            try:
+                # Extract token data and curator message from strand if available
+                token_data = strand.get('token_data', {})
+                curator_message = strand.get('curator_message', '')
+                
+                await self.llm_research_layer.process(
+                    position_closed_strand=strand,
+                    token_data=token_data,
+                    curator_message=curator_message
+                )
+                self.logger.info(f"Successfully processed LLM learning layer")
+            except Exception as e:
+                self.logger.error(f"Error processing LLM learning layer: {e}")
+                # Don't fail the whole process if LLM layer fails
+            
+            self.logger.info(f"Successfully updated coefficients from position_closed strand")
+            
         except Exception as e:
-            self.logger.error(f"Error marking strand as braid candidate: {e}")
+            self.logger.error(f"Error processing position_closed strand: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    async def _update_coefficients_from_closed_trade(
+        self,
+        entry_context: Dict[str, Any],
+        completed_trade: Dict[str, Any],
+        timeframe: str
+    ) -> None:
+        """
+        Update learning coefficients from a closed trade (Phase 2: EWMA + Interaction Patterns).
+        
+        This method:
+        1. Normalizes bucket values using BucketVocabulary
+        2. Updates single-factor coefficients using EWMA with temporal decay
+        3. Updates interaction patterns
+        4. Applies importance bleed to avoid double-counting
+        5. Updates global R/R baseline
+        
+        Args:
+            entry_context: Lever values at entry (curator, chain, mcap_bucket, vol_bucket, etc.)
+            completed_trade: Trade summary with R/R metrics
+            timeframe: Timeframe for this trade (1m, 15m, 1h, 4h)
+        """
+        try:
+            rr = completed_trade.get('rr')
+            if rr is None:
+                return
+            
+            # Get trade timestamp
+            exit_timestamp_str = completed_trade.get('exit_timestamp')
+            if exit_timestamp_str:
+                try:
+                    trade_timestamp = datetime.fromisoformat(exit_timestamp_str.replace('Z', '+00:00'))
+                except:
+                    trade_timestamp = datetime.now(timezone.utc)
+            else:
+                trade_timestamp = datetime.now(timezone.utc)
+            
+            self.logger.info(f"Updating coefficients for R/R={rr:.3f}, timeframe={timeframe}, trade_timestamp={trade_timestamp.isoformat()}")
+            
+            # Normalize bucket values using BucketVocabulary
+            normalized_context = entry_context.copy()
+            if entry_context.get('mcap_bucket'):
+                normalized_context['mcap_bucket'] = self.bucket_vocab.normalize_bucket('mcap', entry_context['mcap_bucket'])
+            if entry_context.get('vol_bucket'):
+                normalized_context['vol_bucket'] = self.bucket_vocab.normalize_bucket('vol', entry_context['vol_bucket'])
+            if entry_context.get('age_bucket'):
+                normalized_context['age_bucket'] = self.bucket_vocab.normalize_bucket('age', entry_context['age_bucket'])
+            if entry_context.get('mcap_vol_ratio_bucket'):
+                normalized_context['mcap_vol_ratio_bucket'] = self.bucket_vocab.normalize_bucket('mcap_vol_ratio', entry_context['mcap_vol_ratio_bucket'])
+            
+            # Extract lever values from normalized entry_context
+            curator = normalized_context.get('curator')
+            chain = normalized_context.get('chain')
+            mcap_bucket = normalized_context.get('mcap_bucket')
+            vol_bucket = normalized_context.get('vol_bucket')
+            age_bucket = normalized_context.get('age_bucket')
+            intent = normalized_context.get('intent')
+            mapping_confidence = normalized_context.get('mapping_confidence')
+            mcap_vol_ratio_bucket = normalized_context.get('mcap_vol_ratio_bucket')
+            
+            # Update single-factor coefficients using EWMA
+            levers_to_update = []
+            
+            if curator:
+                levers_to_update.append(('curator', curator))
+            if chain:
+                levers_to_update.append(('chain', chain))
+            if mcap_bucket:
+                levers_to_update.append(('cap', mcap_bucket))
+            if vol_bucket:
+                levers_to_update.append(('vol', vol_bucket))
+            if age_bucket:
+                levers_to_update.append(('age', age_bucket))
+            if intent:
+                levers_to_update.append(('intent', intent))
+            if mapping_confidence:
+                levers_to_update.append(('mapping_confidence', mapping_confidence))
+            if mcap_vol_ratio_bucket:
+                levers_to_update.append(('mcap_vol_ratio', mcap_vol_ratio_bucket))
+            
+            # Update timeframe coefficient
+            if timeframe:
+                levers_to_update.append(('timeframe', timeframe))
+            
+            # Update each lever coefficient using EWMA
+            for lever_name, lever_key in levers_to_update:
+                self.coefficient_updater.update_coefficient_ewma(
+                    module='dm',
+                    scope='lever',
+                    name=lever_name,
+                    key=lever_key,
+                    rr_value=rr,
+                    trade_timestamp=trade_timestamp
+                )
+            
+            # Update interaction pattern
+            interaction_result = self.coefficient_updater.update_interaction_pattern(
+                entry_context=normalized_context,
+                rr_value=rr,
+                trade_timestamp=trade_timestamp
+            )
+            
+            # Apply importance bleed if interaction pattern exists and is significant
+            if interaction_result:
+                interaction_weight = interaction_result.get('weight', 1.0)
+                if abs(interaction_weight - 1.0) >= 0.1:  # Only apply if interaction is significant
+                    adjusted_weights = self.coefficient_updater.apply_importance_bleed(
+                        entry_context=normalized_context,
+                        interaction_weight=interaction_weight
+                    )
+                    
+                    # Update single-factor weights with bleed applied
+                    for lever_name, (lever_key, adjusted_weight) in adjusted_weights.items():
+                        # Update the weight in the database
+                        self.supabase_manager.client.table("learning_coefficients").update({
+                            "weight": adjusted_weight,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("module", "dm").eq("scope", "lever").eq("name", lever_name).eq("key", lever_key).execute()
+                        
+                        self.logger.debug(f"Applied importance bleed to {lever_name}.{lever_key}: weight adjusted to {adjusted_weight:.3f}")
+            
+            # Update global R/R baseline using EWMA
+            await self._update_global_rr_baseline_ewma(rr, trade_timestamp)
+            
+            self.logger.info(f"Updated {len(levers_to_update)} single-factor coefficient(s) and interaction pattern from closed trade")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating coefficients from closed trade: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    async def _update_global_rr_baseline_ewma(self, rr_value: float, trade_timestamp: datetime) -> None:
+        """
+        Update global R/R baseline in learning_configs table using EWMA.
+        
+        Args:
+            rr_value: R/R value from closed trade
+            trade_timestamp: Timestamp of the closed trade
+        """
+        try:
+            sb = self.supabase_manager.client
+            current_timestamp = datetime.now(timezone.utc)
+            
+            # Get existing global R/R config
+            existing = (
+                sb.table("learning_configs")
+                .select("config_data")
+                .eq("module_id", "decision_maker")
+                .limit(1)
+                .execute()
+            ).data
+            
+            if existing and len(existing) > 0:
+                # Update existing config using EWMA
+                config_data = existing[0].get('config_data', {})
+                global_rr = config_data.get('global_rr', {})
+                
+                current_rr_short = global_rr.get('rr_short', 1.0)
+                current_rr_long = global_rr.get('rr_long', 1.0)
+                current_n = global_rr.get('n', 0)
+                
+                # Calculate decay weights
+                w_short = self.coefficient_updater.calculate_decay_weight(trade_timestamp, current_timestamp, self.coefficient_updater.TAU_SHORT)
+                w_long = self.coefficient_updater.calculate_decay_weight(trade_timestamp, current_timestamp, self.coefficient_updater.TAU_LONG)
+                
+                # EWMA update
+                alpha_short = w_short / (w_short + 1.0)
+                alpha_long = w_long / (w_long + 1.0)
+                
+                new_rr_short = (1 - alpha_short) * current_rr_short + alpha_short * rr_value
+                new_rr_long = (1 - alpha_long) * current_rr_long + alpha_long * rr_value
+                new_n = current_n + 1
+                
+                # Update config
+                config_data['global_rr'] = {
+                    'rr_short': new_rr_short,
+                    'rr_long': new_rr_long,
+                    'n': new_n,
+                    'updated_at': current_timestamp.isoformat()
+                }
+                
+                sb.table("learning_configs").update({
+                    "config_data": config_data,
+                    "updated_at": current_timestamp.isoformat(),
+                    "updated_by": "learning_system"
+                }).eq("module_id", "decision_maker").execute()
+                
+                self.logger.debug(f"Updated global R/R baseline (EWMA): rr_short={new_rr_short:.3f}, rr_long={new_rr_long:.3f}, n={new_n}")
+            else:
+                # Create new config
+                config_data = {
+                    'global_rr': {
+                        'rr_short': rr_value,
+                        'rr_long': rr_value,
+                        'n': 1,
+                        'updated_at': current_timestamp.isoformat()
+                    }
+                }
+                
+                sb.table("learning_configs").insert({
+                    "module_id": "decision_maker",
+                    "config_data": config_data,
+                    "updated_at": current_timestamp.isoformat(),
+                    "updated_by": "learning_system"
+                }).execute()
+                
+                self.logger.debug(f"Created new global R/R baseline: rr_short={rr_value:.3f}, n=1")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating global R/R baseline: {e}")
+    
+    async def _get_global_rr_short(self) -> Optional[float]:
+        """
+        Get global R/R short-term baseline from learning_configs.
+        
+        Returns:
+            Global R/R short-term value, or None if not found
+        """
+        try:
+            sb = self.supabase_manager.client
+            
+            result = (
+                sb.table("learning_configs")
+                .select("config_data")
+                .eq("module_id", "decision_maker")
+                .limit(1)
+                .execute()
+            ).data
+            
+            if result and len(result) > 0:
+                config_data = result[0].get('config_data', {})
+                global_rr = config_data.get('global_rr', {})
+                return global_rr.get('rr_short')
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error getting global R/R baseline: {e}")
+            return None
+    
+    # Legacy braid candidate methods removed - not used by lowcap system
+    # The lowcap system uses learning_braids table directly, not braid_candidate flags
     
     async def process_strands_batch(self, strands: List[Dict[str, Any]], save_to_db: bool = True) -> Dict[str, Any]:
         """

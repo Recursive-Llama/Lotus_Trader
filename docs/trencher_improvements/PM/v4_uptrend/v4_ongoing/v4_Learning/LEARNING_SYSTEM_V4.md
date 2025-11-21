@@ -4,6 +4,28 @@
 
 **Purpose**: Determine what each module needs to learn (or doesn't need to learn) for v4, and set up infrastructure for future learning.
 
+## Implementation Status
+
+**Phase 1 (Basic Coefficient Updates)**: ✅ **COMPLETE**
+- Processes `position_closed` strands
+- Updates single-factor coefficients using simple averaging
+- Updates global R/R baseline
+
+**Phase 2 (EWMA + Interaction Patterns + Importance Bleed)**: ✅ **COMPLETE**
+- EWMA with temporal decay (TAU_SHORT=14 days, TAU_LONG=90 days)
+- Interaction pattern tracking and updates
+- Importance bleed to prevent double-counting
+- All implemented in `CoefficientUpdater` and `UniversalLearningSystem`
+
+**Social Ingest Infrastructure**: ✅ **COMPLETE**
+- `ignored_tokens` loaded from `learning_configs` table (with fallback)
+- `chain_counts` column in `curators` table (already exists)
+- Chain detection uses curator chain prior as small weight
+- Metadata added to strands (mapping_reason, confidence_grade, mapping_status)
+- Chain_counts incremented on successful strand creation
+
+**Remaining Work**: See [BRAIDING_SYSTEM_DESIGN.md](./BRAIDING_SYSTEM_DESIGN.md) for DM/PM Braiding and LLM Learning Layer
+
 ---
 
 ## Summary: Which Modules Need Learning?
@@ -285,15 +307,17 @@ await supabase_manager.client.table('curators').update({
 
 ### Summary: Social Ingest Changes
 
-**Minimal changes**:
-1. ✅ Expose ambiguous_terms in `learning_configs` table (read at startup, no prompt change)
-2. ✅ Change volume/liquidity from BLOCK to NOTE (3 lines: remove `return None`)
-3. ✅ Add `chain_counts` to curators table
+**Status**: ✅ **COMPLETE**
+
+**Implemented changes**:
+1. ✅ Expose ambiguous_terms in `learning_configs` table (read at startup, fallback to hardcoded)
+2. ⏸️ Change volume/liquidity from BLOCK to NOTE (future enhancement - currently still blocks)
+3. ✅ `chain_counts` column already exists in curators table
 4. ✅ Update `_detect_chain()` to accept curator parameter and use chain_counts as small weight
-   - **Note**: Need to pass curator through call chain: `process_social_signal()` → `_verify_token_with_dexscreener()` → `_detect_chain()`
+   - **Note**: Curator passed through call chain: `process_social_signal()` → `_verify_token_with_dexscreener()` → `_detect_chain()`
 5. ✅ Increment curator chain_counts on successful strand creation
-6. ✅ Add `mapping_reason`, `confidence_grade`, health metrics to strand
-7. ✅ Track how chain was resolved (LLM network vs text cues vs curator prior)
+6. ✅ Add `mapping_reason`, `confidence_grade`, `mapping_status` to strand metadata
+7. ✅ Track how chain was resolved (returns `mapping_reason` from `_detect_chain()`)
 
 **LLM Prompt Changes**: **NONE** - prompt already extracts network/chain_context. Our code handles resolution.
 
@@ -1534,12 +1558,12 @@ ALTER TABLE lowcap_positions ADD COLUMN IF NOT EXISTS completed_trades JSONB DEF
   - [ ] Track entry/exit prices, max drawdown in `lowcap_positions`
   - [ ] Store lever values at entry (curator, chain, mcap_bucket, vol_bucket, age_bucket, intent, mapping_confidence, mcap_vol_ratio_bucket)
   - [ ] Compute R/R on position close: `R = (exit/entry) - 1`, `DD = |min_price - entry| / entry`, `R/R = R / DD`
-- [ ] Implement coefficient update logic:
-  - [ ] EWMA with temporal decay (short τ₁ = 14 days, long τ₂ = 90 days)
-  - [ ] Update `rr_short`, `rr_long`, `n` for each lever/interaction pattern
-  - [ ] Calculate `weight = clamp((rr_short / rr_global_short), w_min, w_max)`
-- [ ] Implement weight calibration (clamp to [0.5, 2.0] then normalize product)
-- [ ] Implement importance bleed (downweight overlapping single-factor weights when interaction pattern active)
+- [x] Implement coefficient update logic:
+  - [x] EWMA with temporal decay (short τ₁ = 14 days, long τ₂ = 90 days) ✅ COMPLETE
+  - [x] Update `rr_short`, `rr_long`, `n` for each lever/interaction pattern ✅ COMPLETE
+  - [x] Calculate `weight = clamp((rr_short / rr_global_short), w_min, w_max)` ✅ COMPLETE
+- [x] Implement weight calibration (clamp to [0.5, 2.0] then normalize product) ✅ COMPLETE
+- [x] Implement importance bleed (downweight overlapping single-factor weights when interaction pattern active) ✅ COMPLETE
 - [ ] Update allocation formula to use learned coefficients:
   - [ ] Read coefficients from `learning_coefficients` table
   - [ ] Apply weight calibration and importance bleed

@@ -1,0 +1,23 @@
+{
+  "name": "lifi-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test-swap": "node src/test-swaps.mjs",
+    "test-solana": "node src/test-solana.mjs",
+    "test-base": "node src/test-base.mjs",
+    "test-eth": "node src/test-eth.mjs",
+    "test-bsc": "node src/test-bsc.mjs",
+    "test-solana-to-base": "node src/test-solana-to-base.mjs"
+  },
+  "dependencies": {
+    "@lifi/sdk": "^3.13.2",
+    "@lifi/types": "^17.46.0",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "viem": "^2.38.6"
+  }
+}

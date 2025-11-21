@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Import real components
 from utils.supabase_manager import SupabaseManager
+from supabase import create_client
 from llm_integration.openrouter_client import OpenRouterClient
 
 # Import real components
@@ -372,6 +373,47 @@ class SocialTradingSystem:
                 except Exception as e:
                     print(f"PM job error: {e}")
 
+        async def schedule_1min(func):
+            """Schedule job to run every 1 minute"""
+            while True:
+                await asyncio.sleep(60)  # Wait 1 minute
+                try:
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"1m job error: {e}")
+
+        async def schedule_15min(offset_min: int, func):
+            """Schedule job to run every 15 minutes at :offset_min"""
+            while True:
+                now = datetime.now(timezone.utc)
+                # Calculate next 15-minute boundary
+                minute_boundary = (now.minute // 15) * 15
+                next_run = now.replace(minute=minute_boundary + offset_min, second=0, microsecond=0)
+                if next_run <= now:
+                    from datetime import timedelta
+                    next_run = next_run + timedelta(minutes=15)
+                await asyncio.sleep((next_run - now).total_seconds())
+                try:
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"15m job error: {e}")
+
+        async def schedule_4h(offset_hour: int, func):
+            """Schedule job to run every 4 hours at :offset_hour"""
+            while True:
+                now = datetime.now(timezone.utc)
+                # Calculate next 4-hour boundary
+                hour_boundary = (now.hour // 4) * 4
+                next_run = now.replace(hour=hour_boundary + offset_hour, minute=0, second=0, microsecond=0)
+                if next_run <= now:
+                    from datetime import timedelta
+                    next_run = next_run + timedelta(hours=4)
+                await asyncio.sleep((next_run - now).total_seconds())
+                try:
+                    await asyncio.to_thread(func)
+                except Exception as e:
+                    print(f"4h job error: {e}")
+
         # Import job entrypoints lazily
         from intelligence.lowcap_portfolio_manager.jobs.nav_compute_1h import main as nav_main
         from intelligence.lowcap_portfolio_manager.jobs.dominance_ingest_1h import main as dom_main
@@ -379,26 +421,268 @@ class SocialTradingSystem:
         from intelligence.lowcap_portfolio_manager.jobs.bands_calc import main as bands_main
         from intelligence.lowcap_portfolio_manager.jobs.geometry_build_daily import main as geom_daily_main
         from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import main as pm_core_main
+        from intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import main as uptrend_engine_main
+        from intelligence.lowcap_portfolio_manager.jobs.update_bars_count import main as update_bars_count_main
+        from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import run_aggregator
+        from intelligence.lowcap_portfolio_manager.jobs.lesson_builder_v5 import build_lessons_from_pattern_scope_stats
+        from intelligence.lowcap_portfolio_manager.jobs.override_materializer import run_override_materializer
         from intelligence.lowcap_portfolio_manager.ingest.rollup_ohlc import GenericOHLCRollup, DataSource, Timeframe
+        from intelligence.lowcap_portfolio_manager.ingest.rollup import OneMinuteRollup
+        def majors_1m_rollup_job():
+            """Convert Hyperliquid ticks to 1m OHLC bars (every 1 minute)"""
+            try:
+                rollup = OneMinuteRollup()
+                majors_written = rollup.roll_minute()
+                print(f"Majors 1m rollup: {majors_written} bars")
+            except Exception as e:
+                print(f"Majors 1m rollup error: {e}")
 
-        # 5m rollup job function
-        def rollup_5m_job():
+
+        # OHLC conversion and rollup jobs (v4 - multi-timeframe support)
+        def convert_1m_ohlc_job():
+            """Convert 1m price points to 1m OHLC bars (every 1 minute)"""
             try:
                 rollup = GenericOHLCRollup()
-                # Roll up both majors and lowcaps to 5m
+                # Convert 1m price points to 1m OHLC bars for lowcaps
+                lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M1)
+                print(f"1m OHLC conversion: {lowcaps_written} lowcap bars")
+            except Exception as e:
+                print(f"1m OHLC conversion error: {e}")
+
+        def rollup_5m_job():
+            """Roll up 1m OHLC to 5m OHLC (every 5 minutes)"""
+            try:
+                rollup = GenericOHLCRollup()
                 majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.M5)
                 lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M5)
                 print(f"5m rollup: {majors_written} majors + {lowcaps_written} lowcaps = {majors_written + lowcaps_written} total bars")
             except Exception as e:
                 print(f"5m rollup error: {e}")
 
+        def rollup_15m_job():
+            """Roll up 1m OHLC to 15m OHLC (every 15 minutes)"""
+            try:
+                rollup = GenericOHLCRollup()
+                majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.M15)
+                lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.M15)
+                print(f"15m rollup: {majors_written} majors + {lowcaps_written} lowcaps = {majors_written + lowcaps_written} total bars")
+            except Exception as e:
+                print(f"15m rollup error: {e}")
+
+        def rollup_1h_job():
+            """Roll up 1m OHLC to 1h OHLC (every 1 hour)"""
+            try:
+                rollup = GenericOHLCRollup()
+                majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.H1)
+                lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.H1)
+                print(f"1h rollup: {majors_written} majors + {lowcaps_written} lowcaps = {majors_written + lowcaps_written} total bars")
+            except Exception as e:
+                print(f"1h rollup error: {e}")
+
+        def rollup_4h_job():
+            """Roll up 1m OHLC to 4h OHLC (every 4 hours)"""
+            try:
+                rollup = GenericOHLCRollup()
+                majors_written = rollup.rollup_timeframe(DataSource.MAJORS, Timeframe.H4)
+                lowcaps_written = rollup.rollup_timeframe(DataSource.LOWCAPS, Timeframe.H4)
+                print(f"4h rollup: {majors_written} majors + {lowcaps_written} lowcaps = {majors_written + lowcaps_written} total bars")
+            except Exception as e:
+                print(f"4h rollup error: {e}")
+
+        # Uptrend Engine v4 jobs (v4 - multi-timeframe support)
+        def uptrend_engine_1m_job():
+            """Run Uptrend Engine v4 for 1m timeframe (every 1 minute)"""
+            try:
+                uptrend_engine_main(timeframe="1m")
+            except Exception as e:
+                print(f"Uptrend Engine v4 (1m) error: {e}")
+
+        def uptrend_engine_15m_job():
+            """Run Uptrend Engine v4 for 15m timeframe (every 15 minutes)"""
+            try:
+                uptrend_engine_main(timeframe="15m")
+            except Exception as e:
+                print(f"Uptrend Engine v4 (15m) error: {e}")
+
+        def uptrend_engine_1h_job():
+            """Run Uptrend Engine v4 for 1h timeframe (every 1 hour)"""
+            try:
+                uptrend_engine_main(timeframe="1h")
+            except Exception as e:
+                print(f"Uptrend Engine v4 (1h) error: {e}")
+
+        def uptrend_engine_4h_job():
+            """Run Uptrend Engine v4 for 4h timeframe (every 4 hours)"""
+            try:
+                uptrend_engine_main(timeframe="4h")
+            except Exception as e:
+                print(f"Uptrend Engine v4 (4h) error: {e}")
+
+        def _create_service_client():
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            if not supabase_url or not supabase_key:
+                raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY for learning jobs")
+            return create_client(supabase_url, supabase_key)
+
+        def pattern_scope_aggregator_job():
+            async def _run():
+                sb_client = _create_service_client()
+                await run_aggregator(sb_client=sb_client)
+            try:
+                asyncio.run(_run())
+            except Exception as e:
+                print(f"Pattern scope aggregator error: {e}")
+
+        def lesson_builder_job(module: str):
+            async def _run():
+                sb_client = _create_service_client()
+                await build_lessons_from_pattern_scope_stats(sb_client, module=module)
+            try:
+                asyncio.run(_run())
+            except Exception as e:
+                print(f"Lesson builder ({module}) error: {e}")
+
+        def override_materializer_job():
+            try:
+                sb_client = _create_service_client()
+                run_override_materializer(sb_client=sb_client)
+            except Exception as e:
+                print(f"Override materializer error: {e}")
+
         # Fire background schedulers
         asyncio.create_task(schedule_hourly(2, nav_main))
         asyncio.create_task(schedule_hourly(3, dom_main))
         asyncio.create_task(schedule_5min(0, feat_main))  # Tracker every 5 minutes
-        asyncio.create_task(schedule_5min(1, rollup_5m_job))  # 5m rollup every 5 minutes (offset by 1 min)
+        
+        # v4: Multi-timeframe TA Tracker
+        from intelligence.lowcap_portfolio_manager.jobs.ta_tracker import main as ta_tracker_main
+        
+        def ta_tracker_1m_job():
+            """Run TA Tracker for 1m timeframe (every 1 minute)"""
+            try:
+                ta_tracker_main(timeframe="1m")
+            except Exception as e:
+                print(f"TA Tracker (1m) error: {e}")
+        
+        def ta_tracker_15m_job():
+            """Run TA Tracker for 15m timeframe (every 15 minutes)"""
+            try:
+                ta_tracker_main(timeframe="15m")
+            except Exception as e:
+                print(f"TA Tracker (15m) error: {e}")
+        
+        def ta_tracker_1h_job():
+            """Run TA Tracker for 1h timeframe (every 1 hour)"""
+            try:
+                ta_tracker_main(timeframe="1h")
+            except Exception as e:
+                print(f"TA Tracker (1h) error: {e}")
+        
+        def ta_tracker_4h_job():
+            """Run TA Tracker for 4h timeframe (every 4 hours)"""
+            try:
+                ta_tracker_main(timeframe="4h")
+            except Exception as e:
+                print(f"TA Tracker (4h) error: {e}")
+        
+        # Schedule TA Tracker per timeframe
+        asyncio.create_task(schedule_1min(ta_tracker_1m_job))  # 1m TA Tracker every 1 minute
+        asyncio.create_task(schedule_15min(0, ta_tracker_15m_job))  # 15m TA Tracker every 15 minutes
+        asyncio.create_task(schedule_hourly(6, ta_tracker_1h_job))  # 1h TA Tracker every 1 hour
+        asyncio.create_task(schedule_4h(0, ta_tracker_4h_job))  # 4h TA Tracker every 4 hours
+        
+        # v4: Multi-timeframe OHLC conversion and rollup
+        asyncio.create_task(schedule_1min(convert_1m_ohlc_job))  # 1m OHLC conversion every 1 minute
+        asyncio.create_task(schedule_1min(majors_1m_rollup_job))  # Majors tick → 1m conversion every 1 minute
+        asyncio.create_task(schedule_5min(0, rollup_5m_job))  # 5m rollup every 5 minutes
+        asyncio.create_task(schedule_15min(0, rollup_15m_job))  # 15m rollup every 15 minutes
+        asyncio.create_task(schedule_hourly(4, rollup_1h_job))  # 1h rollup every 1 hour
+        asyncio.create_task(schedule_4h(0, rollup_4h_job))  # 4h rollup every 4 hours
+        
+        # v4: Multi-timeframe Uptrend Engine v4 (runs for dormant/watchlist/active positions)
+        asyncio.create_task(schedule_1min(uptrend_engine_1m_job))  # 1m Uptrend Engine every 1 minute
+        asyncio.create_task(schedule_15min(0, uptrend_engine_15m_job))  # 15m Uptrend Engine every 15 minutes
+        asyncio.create_task(schedule_hourly(1, uptrend_engine_1h_job))  # 1h Uptrend Engine every 1 hour
+        asyncio.create_task(schedule_4h(0, uptrend_engine_4h_job))  # 4h Uptrend Engine every 4 hours
+        
         asyncio.create_task(schedule_hourly(5, bands_main))
-        asyncio.create_task(schedule_hourly(6, pm_core_main))
+        
+        # v4: Multi-timeframe Geometry Builder (runs every 1 hour for all timeframes)
+        def geometry_build_1m_job():
+            """Run Geometry Builder for 1m timeframe (every 1 hour)"""
+            try:
+                geom_daily_main(timeframe="1m")
+            except Exception as e:
+                print(f"Geometry Builder (1m) error: {e}")
+        
+        def geometry_build_15m_job():
+            """Run Geometry Builder for 15m timeframe (every 1 hour)"""
+            try:
+                geom_daily_main(timeframe="15m")
+            except Exception as e:
+                print(f"Geometry Builder (15m) error: {e}")
+        
+        def geometry_build_1h_job():
+            """Run Geometry Builder for 1h timeframe (every 1 hour)"""
+            try:
+                geom_daily_main(timeframe="1h")
+            except Exception as e:
+                print(f"Geometry Builder (1h) error: {e}")
+        
+        def geometry_build_4h_job():
+            """Run Geometry Builder for 4h timeframe (every 1 hour)"""
+            try:
+                geom_daily_main(timeframe="4h")
+            except Exception as e:
+                print(f"Geometry Builder (4h) error: {e}")
+        
+        # Schedule Geometry Builder per timeframe (every 1 hour for all timeframes)
+        asyncio.create_task(schedule_hourly(7, geometry_build_1m_job))  # 1m Geometry Builder every 1 hour
+        asyncio.create_task(schedule_hourly(7, geometry_build_15m_job))  # 15m Geometry Builder every 1 hour
+        asyncio.create_task(schedule_hourly(7, geometry_build_1h_job))  # 1h Geometry Builder every 1 hour
+        asyncio.create_task(schedule_hourly(7, geometry_build_4h_job))  # 4h Geometry Builder every 1 hour
+        
+        # PM Core Tick jobs (v4 - multi-timeframe support)
+        # Pass learning_system to enable position_closed strand processing
+        def pm_core_1m_job():
+            """Run PM Core Tick for 1m timeframe (every 1 minute)"""
+            try:
+                pm_core_main(timeframe="1m", learning_system=self.learning_system)
+            except Exception as e:
+                print(f"PM Core Tick (1m) error: {e}")
+
+        def pm_core_15m_job():
+            """Run PM Core Tick for 15m timeframe (every 15 minutes)"""
+            try:
+                pm_core_main(timeframe="15m", learning_system=self.learning_system)
+            except Exception as e:
+                print(f"PM Core Tick (15m) error: {e}")
+
+        def pm_core_1h_job():
+            """Run PM Core Tick for 1h timeframe (every 1 hour)"""
+            try:
+                pm_core_main(timeframe="1h", learning_system=self.learning_system)
+            except Exception as e:
+                print(f"PM Core Tick (1h) error: {e}")
+
+        def pm_core_4h_job():
+            """Run PM Core Tick for 4h timeframe (every 4 hours)"""
+            try:
+                pm_core_main(timeframe="4h", learning_system=self.learning_system)
+            except Exception as e:
+                print(f"PM Core Tick (4h) error: {e}")
+
+        # Schedule PM Core Tick per timeframe (runs at same rate as timeframe being checked)
+        asyncio.create_task(schedule_1min(pm_core_1m_job))  # 1m PM every 1 minute
+        asyncio.create_task(schedule_15min(0, pm_core_15m_job))  # 15m PM every 15 minutes
+        asyncio.create_task(schedule_hourly(6, pm_core_1h_job))  # 1h PM every 1 hour
+        asyncio.create_task(schedule_4h(0, pm_core_4h_job))  # 4h PM every 4 hours
+        asyncio.create_task(schedule_hourly(7, update_bars_count_main))  # Update bars_count and check dormant→watchlist transitions
+        asyncio.create_task(schedule_5min(2, pattern_scope_aggregator_job))  # Learning aggregator every 5 minutes
+        asyncio.create_task(schedule_hourly(8, lambda: lesson_builder_job('pm')))  # PM lessons hourly
+        asyncio.create_task(schedule_hourly(9, lambda: lesson_builder_job('dm')))  # DM lessons hourly
+        asyncio.create_task(schedule_hourly(10, override_materializer_job))  # Override materializer hourly
         # GeckoTerminal 15m backfill is triggered only on new-position onboarding (14 days); no hourly scan.
         # Daily geometry at :10 once per day
         async def schedule_daily(offset_min: int, func):
@@ -414,7 +698,7 @@ class SocialTradingSystem:
                     await asyncio.to_thread(func)
                 except Exception as e:
                     print(f"PM daily job error: {e}")
-        asyncio.create_task(schedule_daily(10, geom_daily_main))
+        # Geometry Builder is now scheduled hourly per timeframe (see below)
 
         # One-shot seed after startup: dominance → features/phase → bands → pm_core
         async def seed_pm_once():

@@ -39,25 +39,45 @@ class ReturnsComputer:
     def _minute_floor(self, ts: datetime) -> datetime:
         return ts.replace(second=0, microsecond=0)
 
-    def _fetch_last_bar(self, table: str, token: str, ts: datetime) -> Optional[dict]:
-        res = (
-            self.sb.table(table)
-            .select("close,volume,ts")
-            .eq("token", token)
-            .lte("ts", ts.isoformat())
-            .order("ts", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        return rows[0] if rows else None
+    def _fetch_last_bar(self, table: str, token: str, ts: datetime, timeframe: Optional[str] = None) -> Optional[dict]:
+        if table == "majors_price_data_ohlc":
+            # Use majors_price_data_ohlc format
+            query = (
+                self.sb.table(table)
+                .select("close_usd,volume,timestamp")
+                .eq("token_contract", token)
+                .eq("chain", "hyperliquid")
+            )
+            if timeframe:
+                query = query.eq("timeframe", timeframe)
+            query = query.lte("timestamp", ts.isoformat()).order("timestamp", desc=True)
+            res = query.limit(1).execute()
+            rows = res.data or []
+            if not rows:
+                return None
+            row = rows[0]
+            # Normalize to expected format
+            return {"close": row["close_usd"], "volume": row["volume"], "ts": row["timestamp"]}
+        else:
+            # Legacy format (majors_price_data_1m)
+            res = (
+                self.sb.table(table)
+                .select("close,volume,ts")
+                .eq("token", token)
+                .lte("ts", ts.isoformat())
+                .order("ts", desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = res.data or []
+            return rows[0] if rows else None
 
-    def _fetch_close(self, table: str, token: str, ts: datetime) -> Optional[float]:
-        row = self._fetch_last_bar(table, token, ts)
+    def _fetch_close(self, table: str, token: str, ts: datetime, timeframe: Optional[str] = None) -> Optional[float]:
+        row = self._fetch_last_bar(table, token, ts, timeframe)
         return float(row["close"]) if row and row.get("close") is not None else None
 
-    def _fetch_volume(self, table: str, token: str, ts: datetime) -> Optional[float]:
-        row = self._fetch_last_bar(table, token, ts)
+    def _fetch_volume(self, table: str, token: str, ts: datetime, timeframe: Optional[str] = None) -> Optional[float]:
+        row = self._fetch_last_bar(table, token, ts, timeframe)
         return float(row["volume"]) if row and row.get("volume") is not None else None
 
     def _log_return(self, now_close: Optional[float], prev_close: Optional[float]) -> float:
@@ -69,19 +89,20 @@ class ReturnsComputer:
         now = self._minute_floor(when or datetime.now(tz=timezone.utc))
         prev = now - timedelta(minutes=self.lookback_min)
 
-        table = "majors_price_data_1m"
+        table = "majors_price_data_ohlc"
+        timeframe_filter = "1m"
 
         # BTC close
-        btc_now = self._fetch_close(table, "BTC", now)
-        btc_prev = self._fetch_close(table, "BTC", prev)
+        btc_now = self._fetch_close(table, "BTC", now, timeframe_filter)
+        btc_prev = self._fetch_close(table, "BTC", prev, timeframe_filter)
         r_btc = self._log_return(btc_now, btc_prev)
 
         # Alt basket equal-weight close via arithmetic mean of closes
         closes_now: Dict[str, float] = {}
         closes_prev: Dict[str, float] = {}
         for sym in self.alt_basket:
-            closes_now[sym] = self._fetch_close(table, sym, now) or 0.0
-            closes_prev[sym] = self._fetch_close(table, sym, prev) or 0.0
+            closes_now[sym] = self._fetch_close(table, sym, now, timeframe_filter) or 0.0
+            closes_prev[sym] = self._fetch_close(table, sym, prev, timeframe_filter) or 0.0
 
         # Equal-weighted log return approximation: log(mean_now) - log(mean_prev)
         mean_now = sum(v for v in closes_now.values() if v > 0) / max(1, sum(1 for v in closes_now.values() if v > 0))
@@ -131,10 +152,10 @@ class ReturnsComputer:
         buckets = [(end_ts - timedelta(hours=h)).replace(minute=0, second=0, microsecond=0) for h in range(hours, -1, -1)]
 
         def close_at_hour(token: str, ts: datetime) -> Optional[float]:
-            return self._fetch_close("majors_price_data_1m", token, ts)
+            return self._fetch_close("majors_price_data_ohlc", token, ts, "1m")
 
         def volume_at_hour(token: str, ts: datetime) -> Optional[float]:
-            return self._fetch_volume("majors_price_data_1m", token, ts)
+            return self._fetch_volume("majors_price_data_ohlc", token, ts, "1m")
 
         btc_closes: list[float] = []
         alt_closes: list[float] = []

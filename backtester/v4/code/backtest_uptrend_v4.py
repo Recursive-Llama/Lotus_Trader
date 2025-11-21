@@ -54,29 +54,29 @@ def _now_utc() -> datetime:
 
 def _is_valid_price_row(row: Dict[str, Any]) -> bool:
     """Check if a row has valid (non-zero) price data."""
-    return float(row.get("close_native") or 0.0) > 0
+    return float(row.get("close_usd") or 0.0) > 0
 
 
 def _forward_fill_prices(rows_1h: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Forward-fill missing or zero OHLC prices from the last valid price."""
+    """Forward-fill missing or zero OHLC prices from the last valid price (using USD prices)."""
     filled_rows = []
     last_valid_price = None
     
     for r in rows_1h:
         filled_r = dict(r)
-        close_val = float(r.get("close_native") or 0.0)
+        close_val = float(r.get("close_usd") or 0.0)
         if close_val > 0:
             last_valid_price = close_val
         
         if last_valid_price and last_valid_price > 0:
-            if float(r.get("open_native") or 0.0) <= 0:
-                filled_r["open_native"] = last_valid_price
-            if float(r.get("high_native") or 0.0) <= 0:
-                filled_r["high_native"] = last_valid_price
-            if float(r.get("low_native") or 0.0) <= 0:
-                filled_r["low_native"] = last_valid_price
-            if float(r.get("close_native") or 0.0) <= 0:
-                filled_r["close_native"] = last_valid_price
+            if float(r.get("open_usd") or 0.0) <= 0:
+                filled_r["open_usd"] = last_valid_price
+            if float(r.get("high_usd") or 0.0) <= 0:
+                filled_r["high_usd"] = last_valid_price
+            if float(r.get("low_usd") or 0.0) <= 0:
+                filled_r["low_usd"] = last_valid_price
+            if float(r.get("close_usd") or 0.0) <= 0:
+                filled_r["close_usd"] = last_valid_price
         
         filled_rows.append(filled_r)
     
@@ -115,7 +115,7 @@ class SupabaseCtx:
         """Fetch OHLC bars up to a timestamp."""
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
             .eq("token_contract", contract)
             .eq("chain", chain)  # OHLC table uses "chain", not "token_chain"
             .eq("timeframe", "1h")
@@ -138,10 +138,10 @@ def _build_ta_payload_from_rows(rows_1h: List[Dict[str, Any]]) -> Dict[str, Any]
     bars_1h = [
         {
             "t0": datetime.fromisoformat(str(r["timestamp"]).replace("Z", "+00:00")),
-            "o": float(r.get("open_native") or 0.0),
-            "h": float(r.get("high_native") or 0.0),
-            "l": float(r.get("low_native") or 0.0),
-            "c": float(r.get("close_native") or 0.0),
+            "o": float(r.get("open_usd") or 0.0),
+            "h": float(r.get("high_usd") or 0.0),
+            "l": float(r.get("low_usd") or 0.0),
+            "c": float(r.get("close_usd") or 0.0),
             "v": float(r.get("volume") or 0.0),
         }
         for r in valid_rows
@@ -267,7 +267,7 @@ class BacktestEngine(UptrendEngineV4):
     def _latest_close_1h(self, contract: str, chain: str) -> Dict[str, Any]:
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, close_native, low_native")
+            .select("timestamp, close_usd, low_usd")
             .eq("token_contract", contract)
             .eq("chain", chain)  # OHLC table uses "chain", not "token_chain"
             .eq("timeframe", "1h")
@@ -286,8 +286,8 @@ class BacktestEngine(UptrendEngineV4):
         last_valid_close = None
         last_valid_low = None
         for r in rows:
-            close_val = float(r.get("close_native") or 0.0)
-            low_val = float(r.get("low_native") or 0.0)
+            close_val = float(r.get("close_usd") or 0.0)
+            low_val = float(r.get("low_usd") or 0.0)
             if close_val > 0:
                 if last_valid_close is None:
                     last_valid_close = close_val
@@ -295,8 +295,8 @@ class BacktestEngine(UptrendEngineV4):
                     last_valid_low = low_val
         
         r = rows[0]
-        close = float(r.get("close_native") or 0.0)
-        low = float(r.get("low_native") or 0.0)
+        close = float(r.get("close_usd") or 0.0)
+        low = float(r.get("low_usd") or 0.0)
         
         if close <= 0 and last_valid_close:
             close = last_valid_close
@@ -308,7 +308,7 @@ class BacktestEngine(UptrendEngineV4):
     def _fetch_recent_ohlc(self, contract: str, chain: str, limit: int = 60) -> List[Dict[str, Any]]:
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
             .eq("token_contract", contract)
             .eq("chain", chain)  # OHLC table uses "chain", not "token_chain"
             .eq("timeframe", "1h")
@@ -326,7 +326,7 @@ class BacktestEngine(UptrendEngineV4):
         """Override to respect backtester time filter - CRITICAL for EDX calculation."""
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
             .eq("token_contract", contract)
             .eq("chain", chain)
             .eq("timeframe", "1h")
@@ -721,7 +721,7 @@ def generate_results_chart(
         ts_str = str(r.get("timestamp", ""))
         try:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            close = float(r.get("close_native") or 0.0)
+            close = float(r.get("close_usd") or 0.0)
             if close > 0:  # Skip zero prices
                 chart_times.append(ts)
                 chart_closes.append(close)

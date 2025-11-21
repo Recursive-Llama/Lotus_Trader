@@ -123,6 +123,51 @@ def _compute_market_cap_component(features: Dict[str, Any]) -> Tuple[float, floa
         return 1.0, 1.0    # No boost for >$1m
 
 
+def _compute_bucket_multiplier(
+    position_bucket: str | None,
+    bucket_context: Dict[str, Any] | None,
+    bucket_config: Dict[str, Any] | None,
+) -> Tuple[float, Dict[str, Any]]:
+    diag = {
+        "bucket": position_bucket,
+        "rank": None,
+        "slope": 0.0,
+        "confidence": 0.0,
+        "multiplier": 1.0,
+    }
+    if not position_bucket or not bucket_context or not bucket_config:
+        return 1.0, diag
+
+    phases = bucket_context.get("bucket_phases") or {}
+    bucket_entry = phases.get(position_bucket) or {}
+    ranks = bucket_context.get("bucket_rank") or []
+    rank_idx = None
+    if position_bucket in ranks:
+        rank_idx = ranks.index(position_bucket) + 1
+
+    adjustments = bucket_config.get("rank_adjustments") or {}
+    slope_weight = float(bucket_config.get("slope_weight", 0.0))
+    min_conf = float(bucket_config.get("min_confidence", 0.0))
+    min_mult = float(bucket_config.get("min_multiplier", 0.7))
+    max_mult = float(bucket_config.get("max_multiplier", 1.3))
+
+    slope = float(bucket_entry.get("slope") or 0.0)
+    confidence = float(bucket_entry.get("confidence") or 0.0)
+    diag["rank"] = rank_idx
+    diag["slope"] = slope
+    diag["confidence"] = confidence
+
+    multiplier = 1.0
+    if confidence >= min_conf:
+        if rank_idx is not None:
+            multiplier += float(adjustments.get(str(rank_idx), 0.0))
+        multiplier += slope_weight * slope
+
+    multiplier = _clamp(multiplier, min_mult, max_mult)
+    diag["multiplier"] = multiplier
+    return multiplier, diag
+
+
 def _apply_intent_deltas(a: float, e: float, features: Dict[str, Any]) -> Tuple[float, float, Dict[str, float]]:
     """
     Apply intent-based deltas to A/E scores.
@@ -167,7 +212,15 @@ def _compute_position_sizing(a_final: float) -> float:
     return 0.10 + (a_final * 0.50)
 
 
-def compute_levers(phase_macro: str, phase_meso: str, cut_pressure: float, features: Dict[str, Any]) -> Dict[str, Any]:
+def compute_levers(
+    phase_macro: str,
+    phase_meso: str,
+    cut_pressure: float,
+    features: Dict[str, Any],
+    bucket_context: Dict[str, Any] | None = None,
+    position_bucket: str | None = None,
+    bucket_config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """
     Compute continuous A (add appetite) and E (exit assertiveness) in [0,1].
     Note: Macro/Meso/Micro phases and dominance influence A/E here only.
@@ -189,10 +242,12 @@ def compute_levers(phase_macro: str, phase_meso: str, cut_pressure: float, featu
     
     a_boost = a_age * a_mcap
     e_boost = e_age * e_mcap
+
+    bucket_multiplier, bucket_diag = _compute_bucket_multiplier(position_bucket, bucket_context, bucket_config)
     
     # Final calculation
-    a_final = _clamp(a_base * a_boost, 0.0, 1.0)
-    e_final = _clamp(e_base * e_boost, 0.0, 1.0)
+    a_final = _clamp(a_base * a_boost * bucket_multiplier, 0.0, 1.0)
+    e_final = _clamp(e_base * e_boost / max(bucket_multiplier, 0.2), 0.0, 1.0)
     
     # Continuous position sizing
     position_size_frac = _compute_position_sizing(a_final)
@@ -203,8 +258,9 @@ def compute_levers(phase_macro: str, phase_meso: str, cut_pressure: float, featu
         "components": {
             "global": {"phase": (a_pol, e_pol), "macro": (a_mac, e_mac), "cut_pressure": (a_cp, e_cp)},
             "per_token": {"age": (a_age, e_age), "mcap": (a_mcap, e_mcap)},
-            "boosts": {"a_boost": a_boost, "e_boost": e_boost}
+            "boosts": {"a_boost": a_boost, "e_boost": e_boost, "bucket_multiplier": bucket_multiplier}
         },
+        "bucket": bucket_diag,
         "position_sizing": {"continuous_frac": position_size_frac}
     }
     

@@ -1,156 +1,249 @@
-# Lotus Trader ⚘⟁ - Adaptive Trading System
+# Lotus Trader V3 ⚘⟁
 
-*Intelligent trading system that learns from multiple markets, adapts to patterns, and manages portfolios through mathematical resonance*
+*Universal trend detection and adaptive trading system that learns from outcomes across all markets*
 
 ## ⚘ **What is Lotus Trader?**
 
-Lotus Trader is an **adaptive trading system** that processes intelligence from multiple sources, learns from patterns across markets, and executes sophisticated trading strategies. It's not a trading bot - it's an **intelligent trading platform** that:
+Lotus Trader is a **universal trend detection and trading system** built around a core innovation: **Uptrend Engine v4** - a state machine that detects uptrends and downtrends in any market using only OHLCV data.
 
-- **Monitors multiple markets simultaneously** - Crypto, stocks, forex, commodities
-- **Spots patterns across markets** - Identifies when "the same thing" is happening globally
-- **Learns and adapts continuously** - Knows where best returns come from, how to manage portfolios
-- **Prevents repeated mistakes** - Mathematical resonance ensures learning from every outcome
-- **Trades multiple strategies** - Low caps, high caps, scalps, high leverage, liquidation cascades, hedging
-- **Modular architecture** - Easy to plug in new modules, signals, and pipelines
+**The Core Philosophy**: All markets, charts, and timeframes are more similar than they are different. The same human behavior and market dynamics that create trends in crypto tokens also create trends in stocks, perps, prediction markets, and any other market. The engine doesn't care what the asset is - it only needs OHLCV bars.
 
-**Key Innovation**: **Universal learning system** that knows what's important to each module, provides dynamic context injection, and orchestrates everything through mathematical resonance - creating a self-improving financial intelligence platform.
+**Key Innovation**: Multiple pipelines feed into one universal engine. Each pipeline handles its own data ingestion and execution, but they all share the same trend detection core and learning system.
 
-## ⟁ **System Architecture Overview**
+### **Why This Matters**
 
-### **Intelligent Data Flow Pipeline**
+- **One engine for all markets** - Same trend detection works on crypto, stocks, perps, prediction markets
+- **One learning system for all markets** - Outcomes from all pipelines feed into unified learning
+- **Works with any OHLCV data** - No market-specific logic, just price bars
+- **Learns from real outcomes, not predictions** - Outcome-first exploration discovers what actually worked
+- **Simple architecture → scalable intelligence** - Add new pipelines without changing the core engine
+
+---
+
+## 🎯 **Core Architecture**
+
+Lotus Trader V3 has three core components:
+
+1. **A universal trend engine** - Uptrend Engine v4 detects trends in any market
+2. **A cross-pipeline architecture** - Multiple pipelines share one engine and learning system
+3. **An outcome-first learning system** - Learns from what worked, not what was predicted
+
+Each component is described below.
+
+### **The Universal Engine**
+
+*Summary:* One clean state machine that works on any OHLCV data.
+
+**Uptrend Engine v4** is the heart of the system. It's a clean state machine (S0→S1→S2→S3) that:
+
+- **Works on any OHLCV data** - Crypto tokens, stocks, perps, prediction markets, forex - doesn't matter
+- **Detects both uptrends and downtrends** - Universal trend detection, not just one direction
+- **Emits signals, doesn't make decisions** - Clean separation: engine signals, Portfolio Manager decides
+- **Multi-timeframe by design** - Each token/asset gets 4 independent positions (1m, 15m, 1h, 4h) from day one
+- **Single source of truth** - `ta_utils.py` ensures production and backtesting use identical calculations
+
+**Why multi-timeframe matters**: The whole point is that all markets and timeframes are more similar than different. The same EMA state transitions (S0→S1→S2→S3) work on 1-minute crypto charts and 4-hour stock charts because they're driven by the same human behavior and market dynamics.
+
+### **Pipeline Architecture**
+
+*Summary:* Each market has different ingestion + execution requirements, but the trend engine is universal.
+
+Multiple pipelines feed OHLCV data into the same engine. Pipelines exist because each market has different ingestion + execution requirements — but the trend engine is universal.
 
 ```
-                    DATA SOURCES (Real-time)
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│   MARKET    │  │   SOCIAL    │  │    USER     │
-│    DATA     │  │    MEDIA    │  │    INPUT    │
-│     ∇       │  │     ℵ       │  │     ⨋       │
-│ WebSocket   │  │ Channels    │  │ Intelligence│
-│ Exchange    │  │ Charts      │  │ Patterns    │
-│ Data        │  │ Sentiment   │  │ Charts      │
-└─────┬───────┘  └─────┬───────┘  └─────┬───────┘
-      │                │                │
-      ▼                ▼                ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    INTELLIGENCE TEAMS                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │     RAW     │  │   SOCIAL    │  │    USER     │        │
-│  │     ⚸       │  │     𓂀      │  │     ⚕       │        │
-│  │• Analyzers  │  │• Sentiment  │  │• Pattern    │        │
-│  │• Coordination│  │• Charts     │  │  Analysis   │        │
-│  │• Integration│  │• Community  │  │• Chart      │        │
-│  │             │  │• News Impact│  │  Recognition│        │
-│  └─────┬───────┘  └─────┬───────┘  └─────┬───────┘        │
-└────────┼─────────────────┼─────────────────┼───────────────┘
-         │                 │                 │
-         └─────────────────┼─────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│              UNIVERSAL LEARNING SYSTEM ⚘                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   ENGINES   │  │   PIPELINE  │  │   SYSTEMS   │        │
-│  │• φ Resonance│  │• Processing │  │• Centralized│        │
-│  │• Context    │  │• Clustering │  │• Event-Driven│        │
-│  │• Triggering │  │• Learning   │  │• Management │        │
-│  │• Braid Mgmt │  │• Analysis   │  │             │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
-│                                                             │
-│  • Processes ALL strand types (patterns, predictions, etc.)│
-│  • Provides context injection to modules                   │
-│  │• Triggers subsequent modules automatically               │
-│  • Applies mathematical resonance universally              │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              MODULE ORCHESTRATION ⚛                        │
-│  RDI → pattern strands → CIL → prediction_review strands   │
-│  CIL → prediction_review strands → CTP → conditional_plans │
-│  CTP → conditional_plan strands → DM → trading_decisions   │
-│  DM → trading_decision strands → TD → execution_outcomes   │
-│  TD → execution_outcome strands → FEEDBACK LOOP            │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              FEEDBACK LOOP ↻                                │
-│  • Performance Data flows back to Universal Learning       │
-│  • Continuous improvement through outcome analysis          │
-│  • Context injection updates based on results              │
-│  • System evolution through mathematical resonance          │
-└─────────────────────────────────────────────────────────────┘
+Lowcap Pipeline:
+  Social Ingest (Twitter/Telegram) 
+    → Decision Maker 
+    → OHLCV Data Collection 
+    → Uptrend Engine v4 
+    → Portfolio Manager 
+    → Lowcap Executor (Li.Fi - multi-chain)
+
+Perps Pipeline:
+  Market Data Ingest 
+    → Decision Maker 
+    → OHLCV Data Collection 
+    → Uptrend Engine v4 
+    → Portfolio Manager 
+    → Perps Executor (Hyperliquid)
+
+Prediction Pipeline:
+  Market Data Ingest 
+    → Decision Maker 
+    → OHLCV Data Collection 
+    → Uptrend Engine v4 
+    → Portfolio Manager 
+    → Prediction Executor (Polymarket, etc.)
 ```
 
-## **Why This Matters**
+**Each pipeline**:
+- Has its own data ingestion (social signals, market data, etc.)
+- Has its own executor (Li.Fi for multi-chain, Hyperliquid SDK, etc.)
+- **Shares the same Uptrend Engine v4** (universal trend detection)
+- **Shares the same Portfolio Manager** (decision-making logic)
+- **Shares the same Learning System** (outcome-first learning across all pipelines)
 
-### **Multi-Market Intelligence**
-- **Simultaneous monitoring** - Watch crypto, stocks, forex, commodities at once
-- **Cross-market patterns** - Spot when "the same thing" happens globally
-- **Portfolio optimization** - Know where best returns come from across all markets
+---
 
-### **Learning & Adaptation**
-- **Module-specific learning** - Each module learns what's important to it
-- **Dynamic context injection** - Universal learning system provides relevant insights
-- **Mistake prevention** - Mathematical resonance ensures learning from every outcome
-- **Strategy evolution** - Continuously improves trading approaches
+## 🧠 **The Learning System**
 
-### **Modular Architecture**
-- **Easy expansion** - Plug in new modules, signals, pipelines
-- **Flexible strategies** - Low caps, high caps, scalps, high leverage, hedging
-- **Universal orchestration** - Learning system manages everything seamlessly
+*Summary:* Outcome-first exploration — start with what worked, discover what led to it, gently tune decision-making.
 
-## **Current Capabilities**
+Lotus Trader learns from outcomes, not from signals. The learning system works backwards from what actually happened to discover what led to success.
 
-### **☼ Production Ready**
+**Example:**
+After analyzing 24 big wins, the system discovers that 78% happened when:
+- S1 entry (primer state)
+- TS > 0.55 (trend strength threshold)
+- Market cap < $10M
+- Token age < 10 days
 
-#### **Social Lowcap Pipeline**
-- **Multi-platform monitoring** - Twitter, Telegram, Discord channels
-- **Token extraction & verification** - AI-powered analysis with DexScreener/Birdeye
-- **Curator management** - Scoring and tracking of signal providers
-- **Real-time processing** - Event-driven architecture for instant response
+The Portfolio Manager increases allocation for this pattern by +6% (gentle tuning, not replacement).
 
-#### **Multi-Chain Trading**
-- **Solana trading** - Jupiter DEX aggregation with JavaScript execution
-- **Ethereum/Base trading** - 0x Protocol integration for EVM chains
-- **Wallet management** - Secure private key handling and transaction signing
-- **Position tracking** - Real-time price monitoring and exit conditions
+### **Outcome-First Exploration**
 
-#### **Universal Learning System**
-- **Mathematical resonance** - φ (fractal patterns), ρ (recursive feedback), θ (global field), ω (acceleration)
-- **Event-driven processing** - Database triggers for instant strand processing
-- **Context injection** - Module-specific insights based on what each needs to learn
-- **Module orchestration** - Seamless data flow between all components
+**The Key Principle**: Start with outcomes (big wins, big losses), work backwards to find patterns.
 
-### **☽ Advanced Features (Available)**
-- **Cross-market analysis** - Pattern recognition across multiple asset classes
-- **Portfolio management** - Intelligent position sizing and risk management
-- **Strategy optimization** - Learning which approaches work best in different conditions
-- **Liquidation cascade detection** - Spotting and trading market dislocations
+**What is a big win?** A completed trade with R/R > 2.0 (risk/reward ratio - return divided by max drawdown). The system classifies all closed positions as: big_win, big_loss, small_win, small_loss, or breakeven based on their R/R outcome.
 
-## **Mathematical Foundation**
+1. **Position closes** → PM computes R/R from OHLCV data
+2. **Outcome classified** → big_win, big_loss, small_win, small_loss, breakeven
+3. **Pattern discovery** → "What contexts/signals led to these outcomes?"
+4. **Braiding** → Similar outcomes braided together to discover common patterns
+5. **Insights applied** → Gentle tuning of decision-making (not replacement)
 
-### **Resonance Calculations**
-- **φ (Fractal Self-Similarity)** - Patterns that repeat across timeframes and markets
-- **ρ (Recursive Feedback)** - Self-reinforcing learning loops that improve over time
-- **θ (Global Field)** - System-wide intelligence state across all markets
-- **ω (Resonance Acceleration)** - Exponential learning enhancement through meta-learning
+### **Three Layers of Learning**
 
-### **Learning Philosophy**
-- **Module-specific intelligence** - Each module learns what's important to its function
-- **Universal orchestration** - Learning system knows what each module needs
-- **Dynamic context** - Relevant insights injected based on current market conditions
-- **Continuous evolution** - System improves through mathematical resonance principles
+#### **1. Coefficients (Decision Maker Learning)** ✅ Complete
 
-## **Getting Started**
+**Purpose**: Learn which levers (curator, chain, mcap, vol, age, intent) correlate with R/R outcomes.
+
+**How it works**:
+- Each lever starts with neutral weight = 1.0
+- Drifts toward observed R/R ratio: `factor_weight = R/R_avg / R/R_global`
+- **Two layers**:
+  - **Single-factor coefficients**: "Base chain averages 1.4× R/R" → `chain_weight['base'] = 1.4`
+  - **Interaction patterns**: `{curator=detweiler, chain=base, age<7d}` → 1.8× R/R
+- **Temporal dimension**: Short-term (14 days) vs long-term (90 days) memory
+- **Importance bleed**: Prevents double-counting when interaction patterns are active
+
+**Allocation formula**: `initial_allocation = base_allocation × ∏(factor_weight[lever])`
+
+#### **2. Braiding (Portfolio Manager Learning)** ⏸️ Coming
+
+**Purpose**: Learn from action sequences (add → trim → exit), discover optimal timing, find counterfactual improvements.
+
+**How it works**:
+- **Outcome classification**: Classify all completed trades by outcome and hold time
+- **Dimension extraction**: Extract A/E scores, engine signals, scores, timing from `action_context`
+- **Pattern querying**: "Find all big wins where A=med, E=low, buy_flag=True, S1, TS>0.6"
+- **Pattern statistics**: Calculate avg_rr, win_rate, sample_size, variance for each pattern
+- **Counterfactual analysis**: "Could we have entered 6 bars later? What signals were showing then?"
+
+**Example braid lesson:**
+```
+Pattern: big_win | A=med | E=low | buy_flag=True | S1 | TS>0.6
+Stats: avg_rr=2.3, win_rate=0.85, sample_size=12
+Lesson: Increase entry size by +8% when this pattern matches
+```
+
+**Why braiding for PM**: PM has sequential actions (add → trim → exit), not just entry → exit. Coefficients can't handle sequences or counterfactuals well. Braiding can explore sequences and find "what if" patterns.
+
+#### **3. LLM Learning Layer** ⏸️ Coming (Build from Day 1, Phased Enablement)
+
+**Purpose**: Add qualitative intelligence parallel to the math layer - semantic interpretation, hypothesis generation, pattern recognition.
+
+**Five Levels** (phased enablement):
+1. **Commentary** (Day 1): Natural-language insights, regime summaries
+2. **Semantic Features** (Day 1): Extract narrative tags ("AI narrative", "memecoin revival") as hypotheses
+3. **Family Optimization** (50+ trades): Propose better braid groupings based on observed patterns
+4. **Semantic Compression** (100+ trades): Conceptual patterns that span multiple dimensional combinations
+5. **Hypothesis Generation** (10+ trades): Propose new tests, bucket boundaries, interaction patterns
+
+**The Golden Rule**: LLM ≠ math. LLM ≠ statistics. LLM = structure + semantic intelligence. Everything numerical stays in the math layer. LLM reshapes structure, discovers new representations, proposes new abstractions.
+
+---
+
+## 📊 **How It Works**
+
+*Summary:* Engine emits signals, Portfolio Manager makes decisions, Executor executes trades. Clean separation of concerns.
+
+### **Signal Emission Model**
+
+**Uptrend Engine v4** emits signals and flags - it does NOT make trading decisions.
+
+- **Engine responsibility**: Compute state (S0/S1/S2/S3), conditions, quality scores (TS, OX, DX, EDX), emit clear signals
+- **Portfolio Manager responsibility**: Interpret signals, combine with A/E scores, make trading decisions
+- **Executor responsibility**: Execute trades, return results (no database writes)
+
+**Output format**: Structured payload with state, flags, scores, and **diagnostics** (always populated, not optional).
+
+### **State Machine (S0→S1→S2→S3)**
+
+- **S0 (Pure Downtrend)**: Perfect bearish EMA order - fast band below mid, slow descending
+- **S1 (Primer)**: Fast band above EMA60, price above EMA60 - looking for entries at EMA60
+- **S2 (Defensive)**: Price above EMA333, not yet full alignment - looking for exits at expansion (OX trims) and entries at EMA333 (retest buys)
+- **S3 (Trending)**: Full bullish alignment - all EMAs above EMA333, full bullish order
+
+**Buy signals**:
+- **From S1**: Entry zone (price within 1.0× ATR of EMA60), slope OK (EMA60 or EMA144 rising), TS gate (TS + S/R boost ≥ 0.58)
+- **From S2**: Retest buys at EMA333 (same conditions, anchored to EMA333)
+- **From S3**: DX buys in deep zones (DX ≥ 0.60)
+
+**Exit signals**:
+- **Global exit**: Fast band at bottom (overrides all states)
+- **S2/S3 trims**: OX ≥ 0.65 (pump trims)
+- **S3 emergency exit**: Price < EMA333 (flag only, doesn't change state)
+
+### **Multi-Timeframe Positions**
+
+**Each token/asset gets 4 independent positions from day one**:
+- **1m position**: Fast signals, quick entries/exits
+- **15m position**: Medium-term trends
+- **1h position**: Primary trading timeframe
+- **4h position**: Long-term trends
+
+Each position has:
+- Its own allocation (split from Decision Maker's total allocation)
+- Its own entries/exits (independent PnL tracking)
+- Its own status flow: `dormant` (< 350 bars) → `watchlist` (ready) → `active` (holding) → `watchlist` (closed)
+
+**Why this matters**: The same trend can be in different states on different timeframes. A token might be S3 on 4h (trending) but S1 on 1m (looking for entry). The system trades each timeframe independently.
+
+### **Portfolio Manager Integration**
+
+**Portfolio Manager** combines:
+- **Uptrend Engine signals** (state, buy_signal, buy_flag, trim_flag, scores)
+- **A/E scores** (Add Appetite, Exit Assertiveness) - influenced by market phases, portfolio risk, token age, market cap, social intent
+- **Position sizing** (entry/trim multipliers, profit multipliers, allocation multipliers)
+
+**Decision flow**:
+1. PM Core Tick runs timeframe-specifically (1m=1min, 15m=15min, 1h=1hr, 4h=4hr)
+2. Fetches active/watchlist positions for timeframe
+3. Computes A/E scores for each position
+4. Calls `plan_actions_v4()` to generate decisions
+5. Executor executes trades, returns results
+6. PM updates position state, writes `completed_trades` JSONB
+7. On position closure: PM computes R/R, emits `position_closed` strand
+8. Learning system processes strand → Updates coefficients/braids
+
+---
+
+## 🚀 **Getting Started**
 
 ### **Prerequisites**
+
 - Python 3.8+
-- Node.js 16+ (for Solana transactions)
-- PostgreSQL database
-- API keys for trading and social platforms
+- Node.js 16+ (for Solana transactions via Jupiter)
+- PostgreSQL database (Supabase recommended)
+- API keys:
+  - Supabase (database)
+  - OpenRouter (LLM for social ingest)
+  - GeckoTerminal (price data)
+  - Trading platforms (Li.Fi for multi-chain, Hyperliquid for perps, etc.)
 
 ### **Quick Start**
+
 ```bash
 # Clone the repository
 git clone https://github.com/Recursive-Llama/Lotus_Trader.git
@@ -164,77 +257,114 @@ npm install
 cp env.example .env
 # Edit .env with your API keys
 
-# Run the social trading system
+# Run the lowcap pipeline
 python src/run_social_trading.py
 ```
 
 ### **Configuration**
-Edit `src/config/social_trading_config.yaml` to configure:
-- Market monitoring parameters
-- Trading strategies and risk management
-- Learning system thresholds
-- Module-specific settings
 
-## **System Status**
+Key configuration files:
+- `src/config/trading_plans.yaml` - Trading strategy parameters
+- `src/config/twitter_curators.yaml` - Social media curators to monitor
+- `src/config/context_injection.yaml` - Learning system context injection
 
-### **☼ Fully Implemented**
-- ✅ Universal Learning System with mathematical resonance
-- ✅ Social Lowcap Pipeline (Twitter/Telegram monitoring)
-- ✅ Multi-chain trading execution (Solana, Ethereum, Base)
-- ✅ Event-driven architecture with database triggers
-- ✅ Module orchestration and context injection
+---
+
+## 📈 **Backtesting**
+
+Lotus Trader includes a comprehensive backtesting system that uses the **exact same engine** as production.
+
+**Key features**:
+- **Single source of truth**: Backtester calls `UptrendEngineV4` methods directly (no duplicate logic)
+- **Diagnostics preserved**: All slope values, condition checks, missing conditions in JSON output
+- **Visualization**: Charts show TS threshold markers, state transitions, buy/sell signals
+- **Multi-timeframe**: Test all 4 timeframes independently
+- **Consistency guarantee**: Impossible for backtester to diverge from production
+
+**Run backtest**:
+```bash
+cd backtester/v4/code
+python backtest_uptrend_v4.py --token CONTRACT --chain solana --timeframe 1h --start 2024-01-01 --end 2024-01-31
+```
+
+---
+
+## 🏗️ **System Status**
+
+### **☼ Production Ready**
+
+- ✅ **Uptrend Engine v4** - Universal trend detection (S0→S1→S2→S3 state machine)
+- ✅ **Lowcap Pipeline** - Social ingest (Twitter/Telegram) → DM → PM → Li.Fi executor
+- ✅ **Multi-timeframe positions** - 4 independent positions per token (1m, 15m, 1h, 4h)
+- ✅ **Portfolio Manager v4** - A/E scores, signal integration, position management
+- ✅ **Learning System Phase 1 & 2** - Coefficients (single-factor + interaction patterns, EWMA, importance bleed)
+- ✅ **Backtesting** - Full backtest suite using production engine
+- ✅ **Multi-chain execution** - Li.Fi SDK for unified cross-chain trading
 
 ### **☽ In Development**
-- 🔄 Cross-market pattern recognition
-- 🔄 Advanced portfolio management
-- 🔄 Additional trading strategies
-- 🔄 Enhanced learning algorithms
 
-## **Key Innovation**
-
-### **Revolutionary Approach**
-Instead of separate trading bots, Lotus Trader uses:
-
-1. **⚘ Universal Learning** - One system processes all market intelligence
-2. **↻ Event-Driven Processing** - Instant response to market changes
-3. **Module-Specific Intelligence** - Each component learns what's important to it
-4. **Dynamic Context Injection** - Relevant insights provided automatically
-5. **Ξ Mathematical Resonance** - Universal principles across all markets
-
-### **Why This Works**
-- **Multi-market intelligence** - Sees patterns across all markets simultaneously
-- **Continuous learning** - Adapts to changing market conditions
-- **Modular expansion** - Easy to add new strategies and data sources
-- **Mathematical precision** - Resonance calculations ensure optimal learning
-- **Portfolio optimization** - Knows where best returns come from
+- 🔄 **Braiding System** - PM learning from action sequences (outcome-first exploration)
+- 🔄 **LLM Learning Layer** - Semantic features, hypothesis generation (infrastructure ready, phased enablement)
+- 🔄 **Additional Pipelines** - Perps (Hyperliquid), Prediction (Polymarket), Stocks
+- 🔄 **Enhanced Learning** - Cross-pipeline learning, regime detection improvements
 
 ---
 
-## **Glyph Codex Reference**
+## 🎓 **Key Concepts**
 
-**☼ Complete** | **☽ In Progress** | **☿ Active** | **♄ Planned**  
-**⚘ Lotus** | **⚟ Architecture** | **Ω Intelligence** | **Ξ Logic** | **↻ Cycles** | **∮ Integration**  
-**φ Resonance** | **❈ Blooming Lotus** | **𓂀 Vision** | **♆ Depths** | **♃ Expansion** | **♁ Earth**  
-**⋔ Braid** | **∅ Null** | **⚷ Feedback** | **⚯ Coordination** | **⚳ Grounding** | **⚱ Archive**  
-**∴ Logic** | **⊹ Spark** | **∷ Proportion** | **⨀ Core** | **❂ Radiance** | **⧉ Overlap** | **⌬ Structure**  
-**◉ Focus** | **⬡ Module** | **✺ Milestone** | **❖ Crossroads** | **⋄ Precision**  
-**ᚠ Resources** | **ᛉ Protection** | **Ϟ Lightning** | **Ⰻ Hidden Knowledge**
+### **Why Universal?**
+
+The Uptrend Engine v4 works on any OHLCV data because:
+- **Human behavior is universal** - The same greed, fear, and FOMO that drives crypto pumps also drives stock rallies
+- **Market dynamics are universal** - Support/resistance, trend following, momentum - these patterns repeat across all markets
+- **Timeframes are similar** - A 1-minute crypto chart and a 4-hour stock chart show the same EMA state transitions, just at different speeds
+
+### **Why Multi-Timeframe?**
+
+The same trend can be in different states on different timeframes:
+- **4h S3 (trending)** + **1h S1 (primer)** = Long-term uptrend, short-term entry opportunity
+- **1m S2 (defensive)** + **15m S0 (downtrend)** = Short-term bounce, medium-term decline
+
+Each timeframe gives independent signals. The system trades each one separately.
+
+### **Why Outcome-First Learning?**
+
+Traditional ML starts with features and predicts outcomes. Lotus Trader starts with outcomes and discovers features:
+- **We know what we want**: High R/R, short hold time
+- **We work backwards**: "What contexts/signals led to these outcomes?"
+- **Patterns emerge from data**: Not predefined, discovered through braiding
+- **Gentle tuning**: Insights adjust decision-making by small amounts (max 10%), not replacement
 
 ---
 
-## **⚘❈ Deeper Vision**
+## 📚 **Documentation**
 
-**Quant-Grade Intelligence**: Lotus Trader represents a fundamental shift from simple trading bots to sophisticated financial intelligence - where mathematical resonance processes market data across multiple sources and strategies, learning what works and adapting continuously.
+### **Core Specifications**
 
-**The Mathematical Foundation**: Built on Simons' mathematical rigor combined with consciousness principles - where mathematical resonance (φ, ρ, θ, ω) becomes the universal language of financial intelligence, applied consistently across all markets and strategies.
+- **[Uptrend Engine v4 Spec](./docs/trencher_improvements/PM/v4_uptrend/UPTREND_ENGINE_V4_SPEC.md)** - Complete state machine specification
+- **[Learning System v4](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/LEARNING_SYSTEM_V4.md)** - Coefficients, braiding, LLM layer
+- **[Braiding System Design](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/BRAIDING_SYSTEM_DESIGN.md)** - Outcome-first exploration architecture
+- **[Braiding Implementation Guide](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/BRAIDING_IMPLEMENTATION_GUIDE.md)** - Step-by-step implementation
 
-**The Three-Pillar System**: 
-1. **⚘ Universal Learning** - One system processes all market intelligence
-2. **↻ Event-Driven Architecture** - Instant processing through database triggers
-3. **Ξ Mathematical Resonance** - Universal principles applied consistently
+### **Architecture**
 
-**The Evolution**: From simple trading bots to quant-grade financial learning systems - where the learning system becomes the brain that orchestrates all market intelligence through mathematical resonance and dynamic context injection.
+- **[Complete Integration Plan](./docs/trencher_improvements/PM/v4_uptrend/COMPLETE_INTEGRATION_PLAN.md)** - Multi-timeframe, PM integration, system flow
+- **[Implementation Status](./docs/trencher_improvements/PM/v4_uptrend/IMPLEMENTATION_STATUS.md)** - What's built, what's coming
 
 ---
 
-*Lotus Trader represents a revolutionary approach to financial intelligence, where mathematical resonance processes market data across multiple sources and strategies, creating a self-improving system that learns where best returns come from and how to manage portfolios effectively.*
+## ⚘ **The Vision**
+
+Lotus Trader is not a trading bot. It's a universal trend engine + outcome-first learner that works on anything with OHLCV data.
+
+Lotus Trader represents a fundamental shift from trading bots to **universal trend detection systems**.
+
+**The Core Innovation**: One engine that works on any market, any timeframe, any asset class - because all markets are driven by the same human behavior and market dynamics.
+
+**The Learning Innovation**: Outcome-first exploration - start with what worked, discover what led to it, gently tune decision-making. Not ML prediction, but pattern discovery from outcomes.
+
+**The Architecture Innovation**: Multiple pipelines, one engine, one learning system. Each pipeline handles its own data and execution, but they all share the universal trend detection core.
+
+---
+
+*Lotus Trader V3 - Universal trend detection that learns from outcomes across all markets.*

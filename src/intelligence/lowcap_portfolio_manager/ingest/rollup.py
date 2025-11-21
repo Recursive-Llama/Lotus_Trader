@@ -2,7 +2,7 @@
 Roll up Hyperliquid ticks → 1m OHLCV bars for majors.
 
 Reads: public.majors_trades_ticks
-Writes: public.majors_price_data_1m
+Writes: public.majors_price_data_ohlc (timeframe='1m')
 
 Rules
 - Bars aligned to minute start (UTC)
@@ -99,20 +99,31 @@ class OneMinuteRollup:
         if not bars:
             return 0
 
-        rows = [
-            {
-                "token": b.token,
-                "ts": b.ts.isoformat(),
-                "open": b.open,
-                "high": b.high,
-                "low": b.low,
-                "close": b.close,
+        # Write to majors_price_data_ohlc with timeframe='1m'
+        ohlc_rows = []
+        for b in bars:
+            # Majors: Using USD prices only (native prices set to 0.0 for consistency)
+            ohlc_rows.append({
+                "token_contract": b.token,
+                "chain": "hyperliquid",
+                "timeframe": "1m",
+                "timestamp": b.ts.isoformat(),
+                "open_native": 0.0,
+                "high_native": 0.0,
+                "low_native": 0.0,
+                "close_native": 0.0,
+                "open_usd": b.open,
+                "high_usd": b.high,
+                "low_usd": b.low,
+                "close_usd": b.close,
                 "volume": b.volume,
-                "source": "hyperliquid",
-            }
-            for b in bars
-        ]
-        self.sb.table("majors_price_data_1m").upsert(rows, on_conflict="token,ts").execute()
+                "source": "hyperliquid"
+            })
+        
+        self.sb.table("majors_price_data_ohlc").upsert(
+            ohlc_rows, 
+            on_conflict="token_contract,chain,timeframe,timestamp"
+        ).execute()
         return len(bars)
 
 

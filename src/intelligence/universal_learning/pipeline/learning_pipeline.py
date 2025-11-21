@@ -212,69 +212,18 @@ class LearningPipeline:
     
     async def process_learning_queue(self, limit: int = 10) -> Dict[str, int]:
         """
-        Process strands from the learning queue
+        DEPRECATED: Learning queue has been removed. Strands are now processed directly.
+        This method is kept for backward compatibility but will always return empty results.
         
         Args:
-            limit: Maximum number of strands to process
+            limit: Maximum number of strands to process (ignored)
             
         Returns:
-            Dictionary with processing statistics
+            Dictionary with processing statistics (always empty)
         """
-        try:
-            # Get pending strands from learning queue
-            result = await self.supabase_manager.client.table('learning_queue').select(
-                '*'
-            ).eq('status', 'pending').limit(limit).execute()
-            
-            if not result.data:
-                return {'processed': 0, 'successful': 0, 'failed': 0}
-            
-            # Process each strand
-            successful = 0
-            failed = 0
-            
-            for queue_item in result.data:
-                strand_id = queue_item['strand_id']
-                
-                # Get the actual strand data
-                strand_result = await self.supabase_manager.client.table('AD_strands').select(
-                    '*'
-                ).eq('id', strand_id).execute()
-                
-                if not strand_result.data:
-                    print(f"Strand not found: {strand_id}")
-                    failed += 1
-                    continue
-                
-                strand = strand_result.data[0]
-                
-                # Process the strand
-                success = await self.process_strand(strand)
-                
-                if success:
-                    successful += 1
-                    # Update queue status
-                    await self.supabase_manager.client.table('learning_queue').update({
-                        'status': 'completed',
-                        'processed_at': 'now()'
-                    }).eq('id', queue_item['id']).execute()
-                else:
-                    failed += 1
-                    # Update queue status
-                    await self.supabase_manager.client.table('learning_queue').update({
-                        'status': 'failed',
-                        'processed_at': 'now()'
-                    }).eq('id', queue_item['id']).execute()
-            
-            return {
-                'processed': len(result.data),
-                'successful': successful,
-                'failed': failed
-            }
-            
-        except Exception as e:
-            print(f"Error processing learning queue: {e}")
-            return {'processed': 0, 'successful': 0, 'failed': 0}
+        # DEPRECATED: Learning queue removed - strands are processed directly via process_strand_event()
+        # Return empty results to maintain backward compatibility
+        return {'processed': 0, 'successful': 0, 'failed': 0}
     
     async def get_context_for_strand_type(self, strand_type: str, 
                                          context_data: Dict[str, Any]) -> Dict[str, Any]:

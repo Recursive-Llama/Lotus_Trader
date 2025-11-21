@@ -116,30 +116,32 @@ class ScheduledPriceCollector:
             logger.error(f"Error collecting prices for active positions: {e}")
     
     async def _get_active_positions(self) -> List[Dict[str, Any]]:
-        """Get active positions from database and add native tokens"""
+        """Get active positions from database"""
         try:
-            result = self.supabase_manager.client.table('lowcap_positions').select(
-                'token_contract', 'token_chain'
-            ).eq('status', 'active').execute()
+            result = (
+                self.supabase_manager.client.table('lowcap_positions')
+                .select('token_contract', 'token_chain')
+                .in_('status', ['active', 'watchlist', 'dormant'])
+                .execute()
+            )
             
             positions = result.data if result.data else []
+            # Deduplicate by (token_contract, chain)
+            unique = {}
+            for pos in positions:
+                token = (pos.get('token_contract'), (pos.get('token_chain') or '').lower())
+                if token[0] and token[1] and token not in unique:
+                    unique[token] = {
+                        'token_contract': token[0],
+                        'token_chain': token[1]
+                    }
             
-            # Add native tokens for price collection (store WETH separately for each chain)
-            native_tokens = [
-                {'token_contract': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'token_chain': 'ethereum'},  # WETH on Ethereum
-                {'token_contract': '0x4200000000000000000000000000000000000006', 'token_chain': 'base'},      # WETH on Base
-                {'token_contract': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', 'token_chain': 'bsc'},       # WBNB
-                {'token_contract': 'So11111111111111111111111111111111111111112', 'token_chain': 'solana'},    # SOL
-            ]
-            
-            # Combine positions with native tokens
-            all_tokens = positions + native_tokens
-            
-            if all_tokens:
-                logger.info(f"Found {len(positions)} active positions + {len(native_tokens)} native tokens")
-                return all_tokens
+            unique_positions = list(unique.values())
+            if unique_positions:
+                logger.info(f"Found {len(unique_positions)} unique tokens across tracked positions")
             else:
-                return []
+                logger.info("No tracked positions found")
+            return unique_positions
                 
         except Exception as e:
             logger.error(f"Error getting active positions: {e}")
@@ -363,8 +365,16 @@ class ScheduledPriceCollector:
                     price_native = price_usd / native_usd_rate
                     logger.info(f"Converted USDT price to native for {chain}: ${price_usd:.6f} USD -> {price_native:.6f} native")
             
-            # Calculate volume and liquidity changes (will be 0 for first entry)
-            volume_24h = float(pair.get('volume', {}).get('h24', 0))
+            # Get volume data from Dexscreener (multi-timeframe volumes)
+            volume_data = pair.get('volume', {})
+            volume_24h = float(volume_data.get('h24', 0))
+            volume_6h = float(volume_data.get('h6', 0))
+            volume_1h = float(volume_data.get('h1', 0))
+            volume_5m = float(volume_data.get('m5', 0))  # 5-minute rolling volume
+            
+            # Calculate 1m volume as m5 / 5 (simple average)
+            volume_1m = volume_5m / 5.0 if volume_5m > 0 else 0
+            
             liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
             
             return {
@@ -376,8 +386,11 @@ class ScheduledPriceCollector:
                 'quote_token': quote_symbol,
                 'liquidity_usd': liquidity_usd,
                 'liquidity_change_1m': 0,  # Will be calculated on next run
-                'volume_24h': volume_24h,
-                'volume_change_1m': 0,  # Will be calculated on next run
+                'volume_5m': volume_5m,  # Store 5-minute volume
+                'volume_1m': volume_1m,  # Calculated 1-minute volume (m5/5)
+                'volume_1h': volume_1h,  # 1-hour volume for 1h rollups
+                'volume_6h': volume_6h,  # 6-hour volume for 4h rollups
+                'volume_24h': volume_24h,  # 24-hour volume for 1d rollups
                 'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0)),
                 'market_cap': float(pair.get('marketCap', 0)),
                 'fdv': float(pair.get('fdv', 0)),
@@ -415,27 +428,22 @@ class ScheduledPriceCollector:
             
             # Get previous entry
             result = self.supabase_manager.client.table('lowcap_price_data_1m').select(
-                'volume_24h', 'liquidity_usd'
+                'liquidity_usd'
             ).eq('token_contract', token_contract).eq('chain', chain).order(
                 'timestamp', desc=True
             ).limit(1).execute()
             
             if result.data:
                 prev_data = result.data[0]
-                prev_volume = float(prev_data.get('volume_24h', 0))
                 prev_liquidity = float(prev_data.get('liquidity_usd', 0))
                 
-                # Calculate changes
-                price_data['volume_change_1m'] = price_data['volume_24h'] - prev_volume
                 price_data['liquidity_change_1m'] = price_data['liquidity_usd'] - prev_liquidity
             else:
                 # First entry - no changes
-                price_data['volume_change_1m'] = 0
                 price_data['liquidity_change_1m'] = 0
                 
         except Exception as e:
             logger.error(f"Error calculating changes: {e}")
-            price_data['volume_change_1m'] = 0
             price_data['liquidity_change_1m'] = 0
 
     async def _log_heartbeat(self):
@@ -504,15 +512,15 @@ class ScheduledPriceCollector:
             if not token_contract or not token_chain:
                 return False
                 
-            current_price = await self._get_current_price_native_from_db(token_contract, token_chain)
-            if current_price is None:
-                logger.warning(f"Could not get current price for {token_contract} on {token_chain}")
+            current_price_usd = await self._get_current_price_usd_from_db(token_contract, token_chain)
+            if current_price_usd is None:
+                logger.warning(f"Could not get current USD price for {token_contract} on {token_chain}")
                 return False
             
-            # Calculate P&L
+            # Calculate P&L (USD)
             total_quantity = float(position.get('total_quantity', 0.0) or 0.0)
-            total_investment = float(position.get('total_investment_native', 0.0) or 0.0)
-            total_extracted = float(position.get('total_extracted_native', 0.0) or 0.0)
+            total_investment_usd = float(position.get('total_allocation_usd', 0.0) or 0.0)
+            total_extracted_usd = float(position.get('total_extracted_usd', 0.0) or 0.0)
             
             # Reconcile total_quantity = total_tokens_bought - total_tokens_sold
             total_tokens_bought = float(position.get('total_tokens_bought', 0.0) or 0.0)
@@ -524,20 +532,17 @@ class ScheduledPriceCollector:
                 logger.info(f"Reconciling {position_id} quantity: {total_quantity:.8f} -> {expected_quantity:.8f}")
                 total_quantity = expected_quantity
             
-            current_position_value = total_quantity * current_price
-            total_pnl_native = (total_extracted + current_position_value) - total_investment
-            
-            # Get native/USD rate for USD P&L
-            native_usd_rate = await self._get_native_usd_rate_async(token_chain)
-            total_pnl_usd = total_pnl_native * native_usd_rate
-            total_pnl_pct = (total_pnl_native / total_investment * 100.0) if total_investment > 0 else 0.0
+            current_position_value_usd = total_quantity * current_price_usd
+            total_pnl_usd = (total_extracted_usd + current_position_value_usd) - total_investment_usd
+            total_pnl_pct = (total_pnl_usd / total_investment_usd * 100.0) if total_investment_usd > 0 else 0.0
             
             # Update position
             update_data = {
                 'total_quantity': total_quantity,
-                'total_pnl_native': total_pnl_native,
+                'current_usd_value': current_position_value_usd,
                 'total_pnl_usd': total_pnl_usd,
-                'total_pnl_pct': total_pnl_pct
+                'total_pnl_pct': total_pnl_pct,
+                'pnl_last_calculated_at': datetime.now(timezone.utc).isoformat()
             }
             
             result = self.supabase_manager.client.table('lowcap_positions').update(update_data).eq('id', position_id).execute()
@@ -550,21 +555,21 @@ class ScheduledPriceCollector:
             logger.error(f"Error updating P&L for position {position_id}: {e}")
             return False
 
-    async def _get_current_price_native_from_db(self, token_contract: str, chain: str) -> Optional[float]:
-        """Get current native price from database"""
+    async def _get_current_price_usd_from_db(self, token_contract: str, chain: str) -> Optional[float]:
+        """Get current USD price from database"""
         try:
             result = self.supabase_manager.client.table('lowcap_price_data_1m').select(
-                'price_native'
+                'price_usd'
             ).eq('token_contract', token_contract).eq('chain', chain).order(
                 'timestamp', desc=True
             ).limit(1).execute()
             
             if result.data and len(result.data) > 0:
-                return float(result.data[0]['price_native'])
+                return float(result.data[0]['price_usd'])
             return None
             
         except Exception as e:
-            logger.error(f"Error getting current price from database: {e}")
+            logger.error(f"Error getting current USD price from database: {e}")
             return None
 
     async def _get_native_usd_rate_async(self, chain: str) -> float:

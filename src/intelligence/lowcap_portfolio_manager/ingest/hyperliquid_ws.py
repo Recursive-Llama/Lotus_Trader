@@ -58,7 +58,6 @@ class HyperliquidWSIngester:
         self.ws_url: str = self._build_ws_url()
 
         self.symbols: List[str] = [s.strip().upper() for s in os.getenv("HL_SYMBOLS", "BTC,ETH,BNB,SOL,HYPE").split(",") if s.strip()]
-        self.tick_buffer_sec: int = int(os.getenv("TICK_BUFFER_SEC", "75"))
         self.backoff_base_ms: int = int(os.getenv("BACKOFF_BASE_MS", "500"))
         self.max_retries: int = int(os.getenv("MAX_RETRIES", "10"))
 
@@ -68,17 +67,17 @@ class HyperliquidWSIngester:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are required")
         self.sb: Client = create_client(supabase_url, supabase_key)
 
-        # per-token in-memory buffer of ticks for the latest minute
-        self._buffers: Dict[str, List[Tick]] = {sym: [] for sym in self.symbols}
-        self._last_flush_minute: Optional[int] = None
         self._debug: bool = os.getenv("HL_DEBUG", "0") == "1"
         self._debug_limit: int = int(os.getenv("HL_DEBUG_LIMIT", "5"))
         self._debug_seen: int = 0
         self._token_counts: Dict[str, int] = {sym: 0 for sym in self.symbols}
-        self._save_ticks: bool = os.getenv("SAVE_TICKS", "0") == "1"
+        
+        # Batch ticks for efficient writes (small buffer, flush frequently)
+        self._tick_buffer: List[Tick] = []
+        self._buffer_size: int = 10  # Flush every 10 ticks for more frequent writes
 
     async def run(self) -> None:
-        """Main loop: connect → subscribe → read → persist → flush each minute."""
+        """Main loop: connect → subscribe → read → write ticks to DB."""
         retries = 0
         while True:
             try:
@@ -100,14 +99,12 @@ class HyperliquidWSIngester:
             await self._subscribe(ws, self.symbols)
             async for raw in ws:
                 await self._handle_message(raw)
-
+    
     async def flush_on_shutdown(self) -> None:
-        """Best-effort flush of the current minute so we don't lose data on stop."""
-        now_bucket = int(datetime.now(tz=timezone.utc).timestamp() // 60)
-        try:
-            await self._flush_minute(now_bucket)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("flush_on_shutdown failed: %s", exc)
+        """Flush any remaining ticks in buffer before shutdown."""
+        if self._tick_buffer:
+            await self._write_ticks(self._tick_buffer)
+            self._tick_buffer.clear()
 
     async def _subscribe(self, ws: Any, symbols: List[str]) -> None:
         """Subscribe to market data. Using repo's existing style as reference.
@@ -146,23 +143,33 @@ class HyperliquidWSIngester:
                 tick = self._parse_tick(rec)
                 if tick is None:
                     continue
-                self._buffers.setdefault(tick.token, []).append(tick)
+                self._tick_buffer.append(tick)
                 wrote += 1
                 self._token_counts[tick.token] = self._token_counts.get(tick.token, 0) + 1
-            if self._debug and self._debug_seen < self._debug_limit:
-                self._debug_seen += 1
-                first_keys = list(records[0].keys()) if records else []
-                logger.info("trades envelope coin=%s records=%d first_keys=%s counts=%s", envelope_coin, len(records or []), first_keys, self._token_counts)
-            if wrote:
-                await self._maybe_flush_complete_minutes()
+                
+                # Flush buffer when it reaches size limit
+                if len(self._tick_buffer) >= self._buffer_size:
+                    await self._write_ticks(self._tick_buffer)
+                    self._tick_buffer.clear()
+            
+            if wrote > 0:
+                if self._debug and self._debug_seen < self._debug_limit:
+                    self._debug_seen += 1
+                    first_keys = list(records[0].keys()) if records else []
+                    logger.info("trades envelope coin=%s records=%d first_keys=%s counts=%s", envelope_coin, len(records or []), first_keys, self._token_counts)
             return
 
         # Fallback: direct trade object or other shapes
         tick = self._parse_tick(data)
         if tick is None:
             return
-        self._buffers.setdefault(tick.token, []).append(tick)
-        await self._maybe_flush_complete_minutes()
+        self._tick_buffer.append(tick)
+        self._token_counts[tick.token] = self._token_counts.get(tick.token, 0) + 1
+        
+        # Flush buffer when it reaches size limit
+        if len(self._tick_buffer) >= self._buffer_size:
+            await self._write_ticks(self._tick_buffer)
+            self._tick_buffer.clear()
 
     def _parse_tick(self, payload: Dict[str, Any]) -> Optional[Tick]:
         """Translate HL message → Tick. Replace with real parsing.
@@ -171,12 +178,13 @@ class HyperliquidWSIngester:
         """
         # Attempts multiple common shapes based on repo examples and HL docs.
         try:
-            # trades style: { type: 'trade', coin, px, sz, side, time, id }
+            # trades style: { type: 'trade', coin, px, sz, side, time, id/hash/tid }
             if "coin" in payload and ("px" in payload or "price" in payload):
                 token = str(payload.get("coin") or payload.get("symbol")).upper()
                 price = float(payload.get("px", payload.get("price")))
                 size = float(payload.get("sz", payload.get("size", 0.0)))
-                trade_id_val = payload.get("id") or payload.get("trade_id")
+                # Hyperliquid uses "hash" or "tid" for trade ID, not "id"
+                trade_id_val = payload.get("id") or payload.get("trade_id") or payload.get("hash") or payload.get("tid")
                 trade_id = str(trade_id_val) if trade_id_val is not None else None
                 side = payload.get("side")
                 ts_ms_val = payload.get("time") or payload.get("ts")
@@ -230,63 +238,19 @@ class HyperliquidWSIngester:
             ws = ws.rstrip("/") + "/ws"
         return ws
 
-    async def _maybe_flush_complete_minutes(self) -> None:
-        now = datetime.now(tz=timezone.utc)
-        minute_bucket = int(now.timestamp() // 60)
-        if self._last_flush_minute is None:
-            self._last_flush_minute = minute_bucket
-            return
-
-        # When time advanced beyond last+1 and buffer window has elapsed, flush last minute
-        if minute_bucket > self._last_flush_minute:
-            cutoff = now.timestamp() - self.tick_buffer_sec
-            if now.timestamp() >= cutoff:
-                target_minute = self._last_flush_minute
-                await self._flush_minute(target_minute)
-                self._last_flush_minute = minute_bucket
-
-    async def _flush_minute(self, minute_bucket: int) -> None:
-        # Move out buffered ticks that belong to minute_bucket and write bars (and optionally ticks) to DB
-        start_ts = datetime.fromtimestamp(minute_bucket * 60, tz=timezone.utc)
-        end_ts = datetime.fromtimestamp((minute_bucket + 1) * 60, tz=timezone.utc)
-        writes: List[Tick] = []
-        for token, buf in self._buffers.items():
-            keep: List[Tick] = []
-            for t in buf:
-                if start_ts <= t.ts < end_ts:
-                    writes.append(t)
-                else:
-                    keep.append(t)
-            self._buffers[token] = keep
-        if not writes:
-            return
-        # Group by token and compute 1m OHLCV
-        by_token: Dict[str, List[Tick]] = {}
-        for t in writes:
-            by_token.setdefault(t.token, []).append(t)
-        bar_rows: List[Dict[str, Any]] = []
-        for token, ticks in by_token.items():
-            ticks_sorted = sorted(ticks, key=lambda x: x.ts)
-            open_p = float(ticks_sorted[0].price)
-            close_p = float(ticks_sorted[-1].price)
-            high_p = max(float(t.price) for t in ticks)
-            low_p = min(float(t.price) for t in ticks)
-            quote_vol = sum(float(t.price) * float(t.size) for t in ticks)
-            bar_rows.append({
-                "token": token,
-                "ts": start_ts.isoformat(),
-                "open": open_p,
-                "high": high_p,
-                "low": low_p,
-                "close": close_p,
-                "volume": quote_vol,
-                "source": "hyperliquid",
-            })
-        await self._write_bars(bar_rows)
-        if self._save_ticks:
-            await self._write_ticks(writes)
-
     async def _write_ticks(self, ticks: List[Tick]) -> None:
+        # Deduplicate ticks by (token, ts, trade_id) before writing
+        seen = set()
+        unique_ticks = []
+        for t in ticks:
+            key = (t.token, t.ts.isoformat(), t.trade_id)
+            if key not in seen:
+                seen.add(key)
+                unique_ticks.append(t)
+        
+        if not unique_ticks:
+            return
+        
         # Batched upsert into public.majors_trades_ticks
         rows = [
             {
@@ -298,26 +262,16 @@ class HyperliquidWSIngester:
                 "trade_id": t.trade_id,
                 "source": "hyperliquid",
             }
-            for t in ticks
+            for t in unique_ticks
         ]
         # Supabase upsert; log errors if any
         try:
             res = self.sb.table("majors_trades_ticks").upsert(rows, on_conflict="token,ts,trade_id").execute()
             if self._debug:
-                logger.info("Upserted %d ticks (status ok)", len(rows))
+                logger.info("Upserted %d ticks (status ok) - %d duplicates filtered", len(rows), len(ticks) - len(unique_ticks))
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed upsert %d ticks: %s", len(rows), exc)
 
-    async def _write_bars(self, rows: List[Dict[str, Any]]) -> None:
-        if not rows:
-            return
-        try:
-            self.sb.table("majors_price_data_1m").upsert(rows, on_conflict="token,ts").execute()
-            if self._debug:
-                tokens = {r["token"] for r in rows}
-                logger.info("Upserted %d bars for %s", len(rows), ",".join(sorted(tokens)))
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed upsert bars %d: %s", len(rows), exc)
 
 
 async def main() -> None:

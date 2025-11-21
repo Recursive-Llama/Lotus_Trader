@@ -23,30 +23,37 @@ CREATE TABLE lowcap_positions (
     
     -- STATUS (NEW - dormant/watchlist/active flow)
     status TEXT NOT NULL DEFAULT 'watchlist', -- "dormant", "watchlist", "active", "paused", "archived"
+    current_trade_id UUID,                   -- Active trade cycle identifier (set when position becomes active)
     
     -- DATA AVAILABILITY GATING
     bars_count INTEGER DEFAULT 0,           -- Number of OHLC bars available for this timeframe
-    bars_threshold INTEGER DEFAULT 350,     -- Minimum bars required to trade (configurable per TF)
+    bars_threshold INTEGER DEFAULT 300,     -- Minimum bars required to trade (configurable per TF)
     
     -- ALLOCATION (timeframe-specific)
-    alloc_cap_usd NUMERIC NOT NULL,         -- Allocation cap for this timeframe position
     alloc_policy JSONB,                     -- Timeframe-specific config (allocation splits, thresholds, etc.)
     
     -- POSITION TRACKING
     total_quantity FLOAT DEFAULT 0,         -- Total tokens held (sum of all entries - exits)
-    total_allocation_pct FLOAT,             -- Total allocation percentage (from Decision Maker, for reference)
-    total_allocation_usd NUMERIC,           -- Total allocation USD (from Decision Maker, for reference)
+    total_allocation_pct FLOAT,             -- Total allocation percentage (from Decision Maker, split across timeframes)
+    total_allocation_usd NUMERIC DEFAULT 0, -- Total USD actually invested in this position (cumulative, updated by Executor/PM on execution)
+    total_extracted_usd NUMERIC DEFAULT 0,  -- Total USD extracted from this position (cumulative, updated by Executor/PM on exits)
+    usd_alloc_remaining NUMERIC,            -- Remaining USD allocation available for this position (recalculated by PM before decisions)
     
-    -- AGGREGATE PERFORMANCE
-    total_pnl_usd FLOAT DEFAULT 0,         -- Total P&L in USD
-    total_pnl_pct FLOAT DEFAULT 0,         -- Total P&L percentage
-    avg_entry_price FLOAT,                  -- Weighted average entry price
-    avg_exit_price FLOAT,                   -- Weighted average exit price
-    total_tokens_bought FLOAT DEFAULT 0,    -- Total tokens bought across all entries
-    total_tokens_sold FLOAT DEFAULT 0,      -- Total tokens sold across all exits
-    total_investment_native FLOAT DEFAULT 0, -- Total native currency invested
-    total_extracted_native FLOAT DEFAULT 0,  -- Total native currency extracted
-    total_pnl_native FLOAT DEFAULT 0,       -- Total P&L in native currency
+    -- TOKEN QUANTITIES (cumulative, from executor transactions)
+    total_tokens_bought FLOAT DEFAULT 0,    -- Total tokens bought across all entries (exact from executor tx)
+    total_tokens_sold FLOAT DEFAULT 0,      -- Total tokens sold across all exits (exact from executor tx)
+    
+    -- PRICE TRACKING (calculated from cumulative quantities)
+    avg_entry_price FLOAT,                  -- Weighted average entry price (calculated: total_allocation_usd / total_tokens_bought)
+    avg_exit_price FLOAT,                   -- Weighted average exit price (calculated: total_extracted_usd / total_tokens_sold)
+    
+    -- P&L TRACKING (stored but recalculated when needed - hybrid approach)
+    rpnl_usd FLOAT DEFAULT 0,               -- Realized P&L in USD (total_tokens_sold * avg_exit_price - total_tokens_sold * avg_entry_price)
+    rpnl_pct FLOAT DEFAULT 0,               -- Realized P&L percentage ((rpnl_usd / total_allocation_usd) * 100)
+    total_pnl_usd FLOAT DEFAULT 0,         -- Total P&L in USD (rpnl_usd + current_usd_value)
+    total_pnl_pct FLOAT DEFAULT 0,         -- Total P&L percentage ((total_pnl_usd / total_allocation_usd) * 100)
+    current_usd_value FLOAT DEFAULT 0,     -- Current USD value of position (total_quantity * market_price, updated when price changes)
+    pnl_last_calculated_at TIMESTAMP WITH TIME ZONE,  -- When P&L was last recalculated (for hybrid approach)
     first_entry_timestamp TIMESTAMP WITH TIME ZONE,
     last_activity_timestamp TIMESTAMP WITH TIME ZONE,
     
@@ -61,12 +68,6 @@ CREATE TABLE lowcap_positions (
     tax_pct FLOAT,                          -- Tax percentage detected for this token
     
     -- JSONB DATA STORAGE
-    entries JSONB,                          -- Array of standard entry data
-    exits JSONB,                            -- Array of standard exit data
-    exit_rules JSONB,                       -- Standard exit strategy rules
-    trend_entries JSONB,                    -- Array of trend entry data
-    trend_exits JSONB,                      -- Array of trend exit data
-    trend_exit_rules JSONB,                 -- Trend exit strategy rules
     curator_sources JSONB,                  -- Curator source information
     
     -- SOURCE TRACKING
@@ -86,12 +87,13 @@ CREATE TABLE lowcap_positions (
     
     -- LEARNING SYSTEM FIELDS (v4)
     entry_context JSONB,                    -- Lever values at entry (curator, chain, mcap_bucket, vol_bucket, age_bucket, intent, mapping_confidence, etc.)
-    completed_trades JSONB DEFAULT '[]'::jsonb  -- Array of completed trade summaries (R/R metrics, entry/exit prices, timestamps)
+    completed_trades JSONB DEFAULT '[]'::jsonb  -- Array of completed trade cycle summaries (per-cycle actions + summary stats)
 );
 
 -- Create indexes for performance
 CREATE INDEX idx_lowcap_positions_token_timeframe ON lowcap_positions(token_chain, token_contract, timeframe);
 CREATE INDEX idx_lowcap_positions_status_timeframe ON lowcap_positions(status, timeframe);
+CREATE INDEX idx_lowcap_positions_current_trade_id ON lowcap_positions(current_trade_id);
 CREATE INDEX idx_lowcap_positions_timeframe ON lowcap_positions(timeframe);
 CREATE INDEX idx_lowcap_positions_ticker ON lowcap_positions(token_ticker);
 CREATE INDEX idx_lowcap_positions_created ON lowcap_positions(created_at);
@@ -127,10 +129,18 @@ ALTER TABLE lowcap_positions ADD CONSTRAINT check_timeframe
 -- Comments for documentation
 COMMENT ON TABLE lowcap_positions IS 'Multi-timeframe positions: 4 positions per token (1m, 15m, 1h, 4h), each with independent allocation and tracking';
 COMMENT ON COLUMN lowcap_positions.timeframe IS 'Timeframe for this position: 1m, 15m, 1h, or 4h';
-COMMENT ON COLUMN lowcap_positions.status IS 'Position status: dormant (< 350 bars), watchlist (ready to trade), active (holding), paused, archived';
+COMMENT ON COLUMN lowcap_positions.status IS 'Position status: dormant (< 300 bars), watchlist (ready to trade), active (holding), paused, archived';
 COMMENT ON COLUMN lowcap_positions.bars_count IS 'Number of OHLC bars available for this timeframe (gates trading)';
-COMMENT ON COLUMN lowcap_positions.alloc_cap_usd IS 'Allocation cap for this timeframe position (calculated from total_allocation_usd * timeframe_percentage)';
 COMMENT ON COLUMN lowcap_positions.alloc_policy IS 'Timeframe-specific config JSONB (allocation splits, thresholds, etc.)';
+COMMENT ON COLUMN lowcap_positions.total_allocation_usd IS 'Total USD actually invested in this position (cumulative, updated by Executor/PM on execution)';
+COMMENT ON COLUMN lowcap_positions.total_extracted_usd IS 'Total USD extracted from this position (cumulative, updated by Executor/PM on exits)';
+COMMENT ON COLUMN lowcap_positions.usd_alloc_remaining IS 'Remaining USD allocation available for this position (recalculated by PM before decisions: (total_allocation_pct * wallet_balance) - (total_allocation_usd - total_extracted_usd))';
+COMMENT ON COLUMN lowcap_positions.rpnl_usd IS 'Realized P&L in USD (calculated from sells: total_tokens_sold * avg_exit_price - total_tokens_sold * avg_entry_price)';
+COMMENT ON COLUMN lowcap_positions.rpnl_pct IS 'Realized P&L percentage ((rpnl_usd / total_allocation_usd) * 100)';
+COMMENT ON COLUMN lowcap_positions.total_pnl_usd IS 'Total P&L in USD (rpnl_usd + current_usd_value - unrealized_cost)';
+COMMENT ON COLUMN lowcap_positions.total_pnl_pct IS 'Total P&L percentage ((total_pnl_usd / total_allocation_usd) * 100)';
+COMMENT ON COLUMN lowcap_positions.current_usd_value IS 'Current USD value of position (total_quantity * market_price, updated when price data changes)';
+COMMENT ON COLUMN lowcap_positions.pnl_last_calculated_at IS 'Timestamp when P&L was last recalculated (for hybrid update approach)';
 COMMENT ON COLUMN lowcap_positions.entry_context IS 'Learning system: Lever values at entry (curator, chain, mcap_bucket, vol_bucket, age_bucket, intent, mapping_confidence, etc.) - populated when DM creates position';
 COMMENT ON COLUMN lowcap_positions.completed_trades IS 'Learning system: Array of completed trade summaries (R/R metrics, entry/exit prices, timestamps) - populated when position closes';
 

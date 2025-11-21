@@ -58,6 +58,15 @@ class SpiralPersist:
         except Exception:
             pass
 
+    def write_phase_state_bucket(self, bucket: str, horizon: str, ts: datetime, payload: Dict[str, Any]) -> None:
+        row = {
+            "bucket": bucket,
+            "horizon": horizon,
+            "ts": ts.replace(second=0, microsecond=0, tzinfo=timezone.utc).isoformat(),
+            **payload,
+        }
+        self.sb.table("phase_state_bucket").upsert([row], on_conflict="bucket,horizon,ts").execute()
+
     def get_latest_phase_state(self, token: str, horizon: str) -> Dict[str, Any] | None:
         res = (
             self.sb.table("phase_state")

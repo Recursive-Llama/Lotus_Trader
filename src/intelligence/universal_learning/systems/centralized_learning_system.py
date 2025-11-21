@@ -94,13 +94,14 @@ class CentralizedLearningSystem:
     
     async def process_learning_queue(self, limit: int = 10) -> Dict[str, int]:
         """
-        Process strands from the learning queue
+        DEPRECATED: Learning queue has been removed. Strands are now processed directly.
+        This method is kept for backward compatibility but will always return empty results.
         
         Args:
-            limit: Maximum number of strands to process
+            limit: Maximum number of strands to process (ignored)
             
         Returns:
-            Dictionary with processing statistics
+            Dictionary with processing statistics (always empty)
         """
         return await self.learning_pipeline.process_learning_queue(limit)
     

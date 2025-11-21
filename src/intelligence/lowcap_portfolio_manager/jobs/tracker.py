@@ -15,17 +15,42 @@ from src.intelligence.lowcap_portfolio_manager.spiral.phase import compute_phase
 from src.intelligence.lowcap_portfolio_manager.spiral.persist import SpiralPersist
 from src.intelligence.lowcap_portfolio_manager.pm.config import load_pm_config
 from src.intelligence.lowcap_portfolio_manager.events import bus
+from src.intelligence.lowcap_portfolio_manager.spiral.bucket_series import BucketSeriesComputer
 
 
 def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     now = datetime.now(timezone.utc)
+    pm_cfg = load_pm_config()
+    bucket_min_population = int(pm_cfg.get("bucket_phase_min_population", 8))
+    composite_weights = pm_cfg.get("composite_bucket_weights") or {
+        "nano": 0.15,
+        "micro": 0.30,
+        "mid": 0.25,
+        "big": 0.20,
+        "large": 0.10,
+    }
 
     rc = ReturnsComputer()
     rr = rc.compute(now)
 
+    # Prepare bucket-aware series
+    bucket_result = None
+    bucket_series = {}
+    bucket_population = {}
+    try:
+        if rr.series_ts:
+            bsc = BucketSeriesComputer(rr.series_ts, composite_weights, bucket_min_population)
+            bucket_result = bsc.compute()
+            bucket_series = bucket_result.series_by_bucket
+            bucket_population = bucket_result.population_by_bucket
+    except Exception as exc:
+        logging.getLogger(__name__).warning("bucket series computation failed: %s", exc)
+
+    composite_series = (bucket_result.composite_series if bucket_result and bucket_result.composite_series else None)
+
     # Prepare series
-    port_series = rr.series_nav_usd or []
+    port_series = composite_series or rr.series_nav_usd or []
     btc_series = rr.series_btc_close or []
     alt_series = rr.series_alt_close or []
     btc_vol = rr.series_btc_volume or []
@@ -135,12 +160,16 @@ def main() -> None:
     horizon_labels = {}
     lens_by_horizon = {}
     streams_cache = {}
+    global_rotation_metrics = {}
+    global_btc_metrics = {}
 
     for hz, params in presets.items():
         m_port_btc = stream_metrics(series_port_btc, params)
         m_port_alt = stream_metrics(series_port_alt, params)
         m_rotation = stream_metrics(series_rotation, params)
         m_btc = stream_metrics(btc_series, params)
+        global_rotation_metrics[hz] = m_rotation
+        global_btc_metrics[hz] = m_btc
         streams_cache[hz] = {
             "port_btc_level": m_port_btc["level"],
             "port_btc_slope": m_port_btc["slope"],
@@ -236,7 +265,74 @@ def main() -> None:
             )
             bus.emit("phase_transition", {"token": "PORTFOLIO", "horizon": horizon, "prev": prev_label, "next": label_to_write, "score": score, "ts": now.isoformat()})
 
+    bucket_snapshot_for_context: dict = {}
+    # Bucket phase computation (no dwell/hysteresis yet)
+    if bucket_series and btc_series and alt_series:
+        for bucket, series in bucket_series.items():
+            population = bucket_population.get(bucket, 0)
+            if population < bucket_min_population or not series:
+                continue
+
+            bucket_scores = {}
+            bucket_labels = {}
+            metrics_cache = {}
+
+            for hz, params in presets.items():
+                series_bucket_btc = [p - b for p, b in zip(series, btc_series)]
+                series_bucket_alt = [p - a for p, a in zip(series, alt_series)]
+                if not series_bucket_btc or not series_bucket_alt:
+                    continue
+                m_port_btc = stream_metrics(series_bucket_btc, params)
+                m_port_alt = stream_metrics(series_bucket_alt, params)
+                m_rotation = global_rotation_metrics.get(hz) or stream_metrics(series_rotation, params)
+                m_btc = global_btc_metrics.get(hz) or stream_metrics(btc_series, params)
+                lens_scores = compute_lens_scores({
+                    **{f"port_btc_{k}": v for k, v in m_port_btc.items()},
+                    **{f"port_alt_{k}": v for k, v in m_port_alt.items()},
+                    **{f"rotation_{k}": v for k, v in m_rotation.items()},
+                    **{f"btc_{k}": v for k, v in m_btc.items()},
+                })
+                ps = compute_phase_scores(lens_scores.__dict__)
+                score = getattr(ps, hz)
+                label = label_from_score(score)
+                bucket_scores[hz] = score
+                bucket_labels[hz] = label
+                metrics_cache[hz] = m_port_btc
+
+            for horizon in ["macro", "meso", "micro"]:
+                if horizon not in bucket_scores:
+                    continue
+                score = bucket_scores[horizon]
+                label = bucket_labels[horizon]
+                metrics = metrics_cache.get(horizon, {})
+                conf = max(0.0, min(1.0, band_distance(score) / 0.8))
+                payload = {
+                    "phase": label,
+                    "score": score,
+                    "slope": metrics.get("slope"),
+                    "curvature": metrics.get("curv"),
+                    "delta_res": metrics.get("delta"),
+                    "confidence": conf,
+                    "population_count": population,
+                }
+                sp.write_phase_state_bucket(bucket, horizon, now, payload)
+            if bucket_scores:
+                bucket_snapshot_for_context[bucket] = {
+                    "population": population,
+                    "macro": {"phase": bucket_labels.get("macro"), "score": bucket_scores.get("macro")},
+                    "meso": {"phase": bucket_labels.get("meso"), "score": bucket_scores.get("meso")},
+                    "micro": {"phase": bucket_labels.get("micro"), "score": bucket_scores.get("micro")},
+                }
+
     # Persist shared portfolio-context features for active positions
+    bucket_rank_context = sorted(
+        [
+            (b, data.get("meso", {}).get("score", float("-inf")))
+            for b, data in bucket_snapshot_for_context.items()
+        ],
+        key=lambda item: item[1],
+        reverse=True,
+    )
     context_features = {
         "r_btc": rr.r_btc,
         "r_alt": rr.r_alt,
@@ -281,6 +377,10 @@ def main() -> None:
                 "score": horizon_scores["micro"],
                 "label": horizon_labels["micro"],
             },
+        },
+        "bucket_regime": {
+            "phases": bucket_snapshot_for_context,
+            "rank": [b for b, _ in bucket_rank_context],
         },
         "updated_at": now.isoformat(),
     }
@@ -432,8 +532,7 @@ def main() -> None:
                         if px is not None:
                             diag_levels_output.setdefault("diag_support", {"price": px, "strength": float(best_low[1].get("confidence", 1.0))})
 
-                cfg = load_pm_config()
-                geom_cfg = (cfg.get("geom") or {})
+                geom_cfg = (pm_cfg.get("geom") or {})
                 tol = float(geom_cfg.get("break_tol_pct", 0.0075))  # default 0.75%
                 retr_min = float(geom_cfg.get("retrace_min", 0.68))
                 retr_max = float(geom_cfg.get("retrace_max", 1.00))

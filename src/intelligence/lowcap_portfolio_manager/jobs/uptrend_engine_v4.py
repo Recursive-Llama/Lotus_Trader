@@ -101,20 +101,36 @@ class UptrendEngineV4:
     Architecture: Engine emits signals; Portfolio Manager/Backtester makes decisions.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, timeframe: str = "1h") -> None:
+        """
+        Initialize Uptrend Engine v4.
+        
+        Args:
+            timeframe: Timeframe to process ("1m", "15m", "1h", "4h")
+        """
         url = os.getenv("SUPABASE_URL", "")
         key = os.getenv("SUPABASE_KEY", "")
         if not url or not key:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are required")
         self.sb: Client = create_client(url, key)
+        self.timeframe = timeframe
+        # Map timeframe to TA suffix (e.g., "1m" -> "_1m", "1h" -> "_1h")
+        self.ta_suffix = f"_{timeframe}"
 
     # --------------- Data access helpers ---------------
     
     def _active_positions(self) -> List[Dict[str, Any]]:
+        """Get positions for this timeframe (watchlist, active - skip dormant/paused/archived).
+        
+        Note: Dormant positions (< 350 bars) are skipped - not enough data for analysis.
+        Watchlist positions (≥ 350 bars) are processed for bootstrap/warmup (no signals).
+        Active positions are processed normally (signals enabled).
+        """
         res = (
             self.sb.table("lowcap_positions")
-            .select("id,token_contract,token_chain,features")
-            .eq("status", "active")
+            .select("id,token_contract,token_chain,features,status")
+            .eq("timeframe", self.timeframe)
+            .in_("status", ["watchlist", "active"])  # Skip dormant - not enough data
             .limit(2000)
             .execute()
         )
@@ -168,36 +184,38 @@ class UptrendEngineV4:
         return list(levels)
 
     def _get_ema_values(self, ta: Dict[str, Any]) -> Dict[str, float]:
-        """Extract EMA values from TA block."""
+        """Extract EMA values from TA block (timeframe-specific)."""
         ema = ta.get("ema") or {}
+        suffix = self.ta_suffix
         return {
-            "ema20": float(ema.get("ema20_1h") or 0.0),
-            "ema30": float(ema.get("ema30_1h") or 0.0),
-            "ema60": float(ema.get("ema60_1h") or 0.0),
-            "ema144": float(ema.get("ema144_1h") or 0.0),
-            "ema250": float(ema.get("ema250_1h") or 0.0),
-            "ema333": float(ema.get("ema333_1h") or 0.0),
+            "ema20": float(ema.get(f"ema20{suffix}") or 0.0),
+            "ema30": float(ema.get(f"ema30{suffix}") or 0.0),
+            "ema60": float(ema.get(f"ema60{suffix}") or 0.0),
+            "ema144": float(ema.get(f"ema144{suffix}") or 0.0),
+            "ema250": float(ema.get(f"ema250{suffix}") or 0.0),
+            "ema333": float(ema.get(f"ema333{suffix}") or 0.0),
         }
     
     def _get_ema_slopes(self, ta: Dict[str, Any]) -> Dict[str, float]:
         """Extract EMA slopes from TA block (already normalized %/bar from ta_tracker)."""
         slopes = ta.get("ema_slopes") or {}
+        suffix = self.ta_suffix
         return {
-            "ema20_slope": float(slopes.get("ema20_slope") or 0.0),
-            "ema60_slope": float(slopes.get("ema60_slope") or 0.0),
-            "ema144_slope": float(slopes.get("ema144_slope") or 0.0),
-            "ema250_slope": float(slopes.get("ema250_slope") or 0.0),
-            "ema333_slope": float(slopes.get("ema333_slope") or 0.0),
+            "ema20_slope": float(slopes.get(f"ema20_slope{suffix}") or 0.0),
+            "ema60_slope": float(slopes.get(f"ema60_slope{suffix}") or 0.0),
+            "ema144_slope": float(slopes.get(f"ema144_slope{suffix}") or 0.0),
+            "ema250_slope": float(slopes.get(f"ema250_slope{suffix}") or 0.0),
+            "ema333_slope": float(slopes.get(f"ema333_slope{suffix}") or 0.0),
         }
 
     def _latest_close_1h(self, contract: str, chain: str) -> Dict[str, Any]:
-        """Get latest close price (bar close for deterministic checks)."""
+        """Get latest close price (bar close for deterministic checks) - timeframe-specific."""
         row = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, close_native, low_native")
+            .select("timestamp, close_usd, low_usd")
             .eq("token_contract", contract)
             .eq("chain", chain)
-            .eq("timeframe", "1h")
+            .eq("timeframe", self.timeframe)
             .order("timestamp", desc=True)
             .limit(1)
             .execute()
@@ -208,24 +226,25 @@ class UptrendEngineV4:
             r = row[0]
             return {
                 "ts": str(r.get("timestamp")),
-                "close": float(r.get("close_native") or 0.0),
-                "low": float(r.get("low_native") or 0.0),
+                "close": float(r.get("close_usd") or 0.0),
+                "low": float(r.get("low_usd") or 0.0),
             }
         return {"ts": None, "close": 0.0, "low": 0.0}
 
     def _get_atr(self, ta: Dict[str, Any]) -> float:
-        """Get ATR from TA."""
+        """Get ATR from TA (timeframe-specific)."""
         atr_data = ta.get("atr") or {}
-        return float(atr_data.get("atr_1h") or 0.0)
+        suffix = self.ta_suffix
+        return float(atr_data.get(f"atr{suffix}") or 0.0)
 
     def _fetch_recent_ohlc(self, contract: str, chain: str, limit: int = 400) -> List[Dict[str, Any]]:
-        """Fetch recent OHLC bars."""
+        """Fetch recent OHLC bars (timeframe-specific)."""
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
             .eq("token_contract", contract)
             .eq("chain", chain)
-            .eq("timeframe", "1h")
+            .eq("timeframe", self.timeframe)
             .order("timestamp", desc=True)
             .limit(limit)
             .execute()
@@ -236,13 +255,13 @@ class UptrendEngineV4:
         return rows
 
     def _fetch_ohlc_since(self, contract: str, chain: str, since_iso: str, limit: int = 500) -> List[Dict[str, Any]]:
-        """Fetch OHLC bars since a timestamp (for S3 window calculations)."""
+        """Fetch OHLC bars since a timestamp (for S3 window calculations) - timeframe-specific."""
         rows = (
             self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, open_native, high_native, low_native, close_native, volume")
+            .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
             .eq("token_contract", contract)
             .eq("chain", chain)
-            .eq("timeframe", "1h")
+            .eq("timeframe", self.timeframe)
             .gte("timestamp", since_iso)
             .order("timestamp", desc=False)
             .limit(limit)
@@ -691,9 +710,9 @@ class UptrendEngineV4:
             return (0.5, {"error": "insufficient_data", "bars": len(all_bars)})
         
         # Extract data
-        closes = [float(b.get("close_native") or 0.0) for b in all_bars]
-        highs = [float(b.get("high_native") or 0.0) for b in all_bars]
-        lows = [float(b.get("low_native") or 0.0) for b in all_bars]
+        closes = [float(b.get("close_usd") or 0.0) for b in all_bars]
+        highs = [float(b.get("high_usd") or 0.0) for b in all_bars]
+        lows = [float(b.get("low_usd") or 0.0) for b in all_bars]
         volumes = [float(b.get("volume") or 0.0) for b in all_bars]
         
         # Calculate ATR series for ZigZag
@@ -713,9 +732,9 @@ class UptrendEngineV4:
                 return ([], [], [], [], [])
             window_bars = all_bars[-bars_count:] if bars_count > 0 else []
             return (
-                [float(b.get("close_native") or 0.0) for b in window_bars],
-                [float(b.get("high_native") or 0.0) for b in window_bars],
-                [float(b.get("low_native") or 0.0) for b in window_bars],
+                [float(b.get("close_usd") or 0.0) for b in window_bars],
+                [float(b.get("high_usd") or 0.0) for b in window_bars],
+                [float(b.get("low_usd") or 0.0) for b in window_bars],
                 [float(b.get("volume") or 0.0) for b in window_bars],
                 atr_series[-bars_count:] if bars_count <= len(atr_series) else atr_series,
             )
@@ -751,8 +770,8 @@ class UptrendEngineV4:
             
             # ADX trend (slope of ADX series)
             bars_dicts = [{"h": h, "l": l, "c": c} for h, l, c in 
-                         zip([float(b.get("high_native") or 0.0) for b in window_bars],
-                             [float(b.get("low_native") or 0.0) for b in window_bars],
+                         zip([float(b.get("high_usd") or 0.0) for b in window_bars],
+                             [float(b.get("low_usd") or 0.0) for b in window_bars],
                              window_closes)]
             adx_series_vals = adx_series_wilder(bars_dicts, period=14)
             if len(adx_series_vals) >= 10:
@@ -973,8 +992,8 @@ class UptrendEngineV4:
         slow_down = sigmoid(-(ema250_slope) / Constants.S3_EDX_SLOW_K, 1.0) * 0.5 + sigmoid(-(ema333_slope) / Constants.S3_EDX_SLOW_333_K, 1.0) * 0.5
         
         rows = self._fetch_recent_ohlc(contract, chain, limit=50)
-        closes = [float(r.get("close_native") or 0.0) for r in rows]
-        lows = [float(r.get("low_native") or 0.0) for r in rows]
+        closes = [float(r.get("close_usd") or 0.0) for r in rows]
+        lows = [float(r.get("low_usd") or 0.0) for r in rows]
         ema60 = ema_vals.get("ema60", 0.0)
         below_mid_ratio = 0.0
         if ema60 > 0.0 and closes:
@@ -985,8 +1004,9 @@ class UptrendEngineV4:
         struct = 0.5 * sigmoid((ll_ratio - 0.5) / 0.2, 1.0) + 0.5 * sigmoid((below_mid_ratio - 0.4) / 0.2, 1.0)
         
         vol = ta.get("volume") or {}
-        vo_z_1h = float(vol.get("vo_z_1h") or 0.0)
-        part_decay = sigmoid(-(vo_z_1h) / 1.0, 1.0)
+        suffix = self.ta_suffix
+        vo_z = float(vol.get(f"vo_z{suffix}") or 0.0)
+        part_decay = sigmoid(-(vo_z) / 1.0, 1.0)
         
         sep = ta.get("separations") or {}
         dsep_fast = float(sep.get("dsep_fast_5") or 0.0)
@@ -1020,8 +1040,9 @@ class UptrendEngineV4:
         mom = ta.get("momentum") or {}
         
         px = price
-        atr_1h = float(atr.get("atr_1h") or 0.0)
-        atr_mean_20 = float(atr.get("atr_mean_20") or (atr_1h if atr_1h else 1.0))
+        atr_val = self._get_atr(ta)
+        suffix = self.ta_suffix
+        atr_mean_20 = float(atr.get("atr_mean_20") or (atr_val if atr_val else 1.0))
         ema20 = ema_vals.get("ema20", 0.0)
         ema60 = ema_vals.get("ema60", 0.0)
         ema144 = ema_vals.get("ema144", 0.0)
@@ -1035,13 +1056,13 @@ class UptrendEngineV4:
             return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
         
         # OX: rails distance + expansion + ATR surge + fragility (same as S3)
-        rail_fast = sigmoid(((px - ema20) / max(atr_1h * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_mid = sigmoid(((px - ema60) / max(atr_1h * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_144 = sigmoid(((px - ema144) / max(atr_1h * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_250 = sigmoid(((px - ema250) / max(atr_1h * Constants.S3_RAIL_250_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        rail_fast = sigmoid(((px - ema20) / max(atr_val * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_mid = sigmoid(((px - ema60) / max(atr_val * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_144 = sigmoid(((px - ema144) / max(atr_val * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_250 = sigmoid(((px - ema250) / max(atr_val * Constants.S3_RAIL_250_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
         exp_fast = sigmoid(dsep_fast / Constants.S3_EXP_FAST_K, 1.0)
         exp_mid = sigmoid(dsep_mid / Constants.S3_EXP_MID_K, 1.0)
-        atr_surge = sigmoid((atr_1h / max(atr_mean_20, 1e-9)) - 1.0, 1.0)
+        atr_surge = sigmoid((atr_val / max(atr_mean_20, 1e-9)) - 1.0, 1.0)
         fragility = sigmoid(-ema20_slope / Constants.S1_CURVATURE_K, 1.0)
         ox_base = (
             0.35 * rail_fast + 0.20 * rail_mid + 0.10 * rail_144 + 0.10 * rail_250 +
@@ -1075,11 +1096,12 @@ class UptrendEngineV4:
         atr = ta.get("atr") or {}
         mom = ta.get("momentum") or {}
         vol = ta.get("volume") or {}
-        vo_z_1h = float(vol.get("vo_z_1h") or 0.0)
+        suffix = self.ta_suffix
+        vo_z = float(vol.get(f"vo_z{suffix}") or 0.0)
         
         px = price
-        atr_1h = float(atr.get("atr_1h") or 0.0)
-        atr_mean_20 = float(atr.get("atr_mean_20") or (atr_1h if atr_1h else 1.0))
+        atr_val = self._get_atr(ta)
+        atr_mean_20 = float(atr.get("atr_mean_20") or (atr_val if atr_val else 1.0))
         ema20 = ema_vals.get("ema20", 0.0)
         ema60 = ema_vals.get("ema60", 0.0)
         ema144 = ema_vals.get("ema144", 0.0)
@@ -1119,13 +1141,13 @@ class UptrendEngineV4:
         diagnostics_dict = {**edx_diagnostics}
         
         # OX: rails distance + expansion + ATR surge + fragility (unchanged from v2)
-        rail_fast = sigmoid(((px - ema20) / max(atr_1h * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_mid = sigmoid(((px - ema60) / max(atr_1h * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_144 = sigmoid(((px - ema144) / max(atr_1h * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
-        rail_250 = sigmoid(((px - ema250) / max(atr_1h * Constants.S3_RAIL_250_K, 1e-9)), 1.0) if atr_1h > 0 else 0.0
+        rail_fast = sigmoid(((px - ema20) / max(atr_val * Constants.S3_RAIL_FAST_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_mid = sigmoid(((px - ema60) / max(atr_val * Constants.S3_RAIL_MID_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_144 = sigmoid(((px - ema144) / max(atr_val * Constants.S3_RAIL_144_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
+        rail_250 = sigmoid(((px - ema250) / max(atr_val * Constants.S3_RAIL_250_K, 1e-9)), 1.0) if atr_val > 0 else 0.0
         exp_fast = sigmoid(dsep_fast / Constants.S3_EXP_FAST_K, 1.0)
         exp_mid = sigmoid(dsep_mid / Constants.S3_EXP_MID_K, 1.0)
-        atr_surge = sigmoid((atr_1h / max(atr_mean_20, 1e-9)) - 1.0, 1.0)
+        atr_surge = sigmoid((atr_val / max(atr_mean_20, 1e-9)) - 1.0, 1.0)
         fragility = sigmoid(-ema20_slope / Constants.S1_CURVATURE_K, 1.0)
         ox_base = (
             0.35 * rail_fast + 0.20 * rail_mid + 0.10 * rail_144 + 0.10 * rail_250 +
@@ -1197,6 +1219,26 @@ class UptrendEngineV4:
 
     # --------------- State Machine Logic ---------------
 
+    def _disable_signals_for_watchlist(self, extra_data: Dict[str, Any], is_watchlist: bool) -> Dict[str, Any]:
+        """Disable all signals for watchlist positions (warmup mode).
+        
+        Watchlist positions have enough data (≥ 350 bars) but haven't entered yet.
+        We bootstrap state and write diagnostics, but don't emit signals until active.
+        """
+        if is_watchlist:
+            extra_data["warmup"] = True
+            # Ensure all signal flags are False
+            if "flags" not in extra_data:
+                extra_data["flags"] = {}
+            extra_data["flags"]["buy_flag"] = False
+            extra_data["flags"]["trim_flag"] = False
+            extra_data["flags"]["emergency_exit"] = False
+            extra_data["flags"]["reclaimed_ema333"] = False
+            # Also disable buy_signal if present
+            if "buy_signal" in extra_data:
+                extra_data["buy_signal"] = False
+        return extra_data
+
     def _build_payload(
         self,
         state: str,
@@ -1231,6 +1273,7 @@ class UptrendEngineV4:
                 pid = p.get("id")
                 contract = p.get("token_contract")
                 chain = p.get("token_chain")
+                position_status = p.get("status", "active")  # Get position status
                 features = p.get("features") or {}
                 prev_payload = dict(features.get("uptrend_engine_v4") or {})
                 prev_state = str(prev_payload.get("state") or "")
@@ -1249,6 +1292,10 @@ class UptrendEngineV4:
                 
                 sr_levels = self._read_sr_levels(features)
                 
+                # Check if position is watchlist (bootstrap/warmup mode - no signals until active)
+                # Dormant positions are skipped entirely (not enough data)
+                is_watchlist = (position_status == "watchlist")
+                
                 # Bootstrap logic: only S0 or S3, otherwise no state
                 if not prev_state or prev_state == "":
                     if self._check_s3_order(ema_vals):
@@ -1259,6 +1306,27 @@ class UptrendEngineV4:
                         # Compute S3 scores for bootstrap
                         s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
                         
+                        # For dormant positions: write warmup diagnostics, no signals
+                        extra_data = {
+                            "trending": True,
+                            "scores": {
+                                "ox": s3_scores.get("ox", 0.0),
+                                "dx": s3_scores.get("dx", 0.0),
+                                "edx": s3_scores.get("edx", 0.0),
+                            },
+                            "diagnostics": s3_scores.get("diagnostics", {}),
+                        }
+                        
+                        # Disable all signals for watchlist positions (warmup mode)
+                        if is_watchlist:
+                            extra_data["warmup"] = True
+                            extra_data["flags"] = {
+                                "buy_flag": False,
+                                "trim_flag": False,
+                                "emergency_exit": False,
+                                "reclaimed_ema333": False,
+                            }
+                        
                         payload = self._build_payload(
                             "S3",
                             contract,
@@ -1266,22 +1334,39 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {
-                                "trending": True,
-                                "scores": {
-                                    "ox": s3_scores.get("ox", 0.0),
-                                    "dx": s3_scores.get("dx", 0.0),
-                                    "edx": s3_scores.get("edx", 0.0),
-                                },
-                                "diagnostics": s3_scores.get("diagnostics", {}),
-                            },
+                            extra_data,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
                         updated += 1
                         continue
                     elif self._check_s0_order(ema_vals):
-                        prev_state = "S0"
+                        # Bootstrap to S0: write state with warmup flag if watchlist
+                        if is_watchlist:
+                            payload = self._build_payload(
+                                "S0",
+                                contract,
+                                chain,
+                                price,
+                                ema_vals,
+                                features,
+                                {
+                                    "warmup": True,
+                                    "flags": {
+                                        "buy_flag": False,
+                                        "trim_flag": False,
+                                        "emergency_exit": False,
+                                        "reclaimed_ema333": False,
+                                    },
+                                    "diagnostics": {"bootstrap": "S0_watchlist"},
+                                },
+                            )
+                            features["uptrend_engine_v4"] = payload
+                            self._write_features(pid, features)
+                            updated += 1
+                            continue
+                        else:
+                            prev_state = "S0"
                     else:
                         # No state - wait until clear trend emerges
                         payload = self._build_payload(
@@ -1291,7 +1376,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {"watch_only": True},
+                            {"watch_only": True, "warmup": is_watchlist},
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1329,6 +1414,12 @@ class UptrendEngineV4:
                             price, ema_vals.get("ema60", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=False
                         )
                         
+                        extra_data = {
+                            "buy_signal": buy_check.get("buy_signal", False),
+                            "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
+                        }
+                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
+                        
                         payload = self._build_payload(
                             "S1",
                             contract,
@@ -1336,10 +1427,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {
-                                "buy_signal": buy_check.get("buy_signal", False),
-                                "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
-                            },
+                            extra_data,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1386,6 +1474,12 @@ class UptrendEngineV4:
                         updated += 1
                     else:
                         # Stay in S1 (always populate buy_check diagnostics)
+                        extra_data = {
+                            "buy_signal": buy_check.get("buy_signal", False),
+                            "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
+                        }
+                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
+                        
                         payload = self._build_payload(
                             "S1",
                             contract,
@@ -1393,10 +1487,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {
-                                "buy_signal": buy_check.get("buy_signal", False),
-                                "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
-                            },
+                            extra_data,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1464,6 +1555,16 @@ class UptrendEngineV4:
                             price, ema_vals.get("ema333", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=True
                         )
                         
+                        extra_data = {
+                            "trim_flag": trim_flag,
+                            "buy_flag": retest_check.get("buy_signal", False),
+                            "scores": {"ox": ox},
+                            "diagnostics": {
+                                "s2_retest_check": retest_check.get("diagnostics", {}),
+                            },
+                        }
+                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
+                        
                         payload = self._build_payload(
                             "S2",
                             contract,
@@ -1471,14 +1572,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {
-                                "trim_flag": trim_flag,
-                                "buy_flag": retest_check.get("buy_signal", False),
-                                "scores": {"ox": ox},
-                                "diagnostics": {
-                                    "s2_retest_check": retest_check.get("diagnostics", {}),
-                                },
-                            },
+                            extra_data,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1623,37 +1717,30 @@ class UptrendEngineV4:
                                     break
                         trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
                         
-                        payload = self._build_payload(
-                            "S3",
-                            contract,
-                            chain,
-                            price,
-                            ema_vals,
-                            features,
-                            {
-                                "trim_flag": trim_flag,
-                                "buy_flag": dx_buy_ok,
-                                "first_dip_buy_flag": first_dip_buy_flag,
-                                "emergency_exit": emergency_exit,
-                                "reclaimed_ema333": reclaimed_ema333,
-                                "scores": {
-                                    "ox": ox,
+                        extra_data = {
+                            "trim_flag": trim_flag,
+                            "buy_flag": dx_buy_ok,
+                            "first_dip_buy_flag": first_dip_buy_flag,
+                            "emergency_exit": emergency_exit,
+                            "reclaimed_ema333": reclaimed_ema333,
+                            "scores": {
+                                "ox": ox,
+                                "dx": dx,
+                                "edx": edx,
+                                "ts": ts_score,
+                                "ts_with_boost": ts_with_boost,
+                                "sr_boost": sr_boost,
+                            },
+                            "diagnostics": {
+                                **s3_scores.get("diagnostics", {}),
+                                "s3_buy_check": {
+                                    "price": price,
+                                    "ema144": ema144_val,
+                                    "ema333": ema333_val,
+                                    "price_in_discount_zone": price_in_discount_zone,
                                     "dx": dx,
-                                    "edx": edx,
-                                    "ts": ts_score,
-                                    "ts_with_boost": ts_with_boost,
-                                    "sr_boost": sr_boost,
-                                },
-                                "diagnostics": {
-                                    **s3_scores.get("diagnostics", {}),
-                                    "s3_buy_check": {
-                                        "price": price,
-                                        "ema144": ema144_val,
-                                        "ema333": ema333_val,
-                                        "price_in_discount_zone": price_in_discount_zone,
-                                        "dx": dx,
-                                        "dx_threshold_base": Constants.DX_BUY_THRESHOLD,
-                                        "edx_suppression": edx_suppression,
+                                    "dx_threshold_base": Constants.DX_BUY_THRESHOLD,
+                                    "edx_suppression": edx_suppression,
                                         "dx_threshold_adjusted": dx_threshold_adjusted,
                                         "price_position_boost": price_position_boost,
                                         "dx_threshold_final": dx_threshold_final,
@@ -1671,6 +1758,16 @@ class UptrendEngineV4:
                                     "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
                                 },
                             },
+                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
+                        
+                        payload = self._build_payload(
+                            "S3",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            extra_data,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1688,13 +1785,17 @@ class UptrendEngineV4:
         return updated
 
 
-def main() -> None:
-    """Entry point for running engine."""
+def main(timeframe: str = "1h") -> None:
+    """Entry point for running engine.
+    
+    Args:
+        timeframe: Timeframe to process ("1m", "15m", "1h", "4h")
+    """
     import logging
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    engine = UptrendEngineV4()
+    engine = UptrendEngineV4(timeframe=timeframe)
     updated = engine.run()
-    logger.info("Uptrend Engine v4 updated %d positions", updated)
+    logger.info("Uptrend Engine v4 (%s) updated %d positions", timeframe, updated)
 
 
 if __name__ == "__main__":

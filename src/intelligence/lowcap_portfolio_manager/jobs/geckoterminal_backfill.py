@@ -4,9 +4,9 @@ GeckoTerminal OHLCV backfill job - Clean, Simple Version
 
 - Uses canonical pool from lowcap_positions.features if present
 - Otherwise searches pools by mint+chain, prefers native-quoted highest-liquidity
-- Supports 15m granularity only (writes to lowcap_price_data_ohlc with timeframe='15m')
-- Smart chunking: calculates actual 15m bars needed, makes minimal API calls
-- Computes native prices using SOL/USDC reference series
+- Supports all timeframes (1m, 15m, 1h, 4h) - writes to lowcap_price_data_ohlc
+- Fetches 666 bars per timeframe (target), minimum 333 bars (single API call per timeframe)
+- Uses USD prices only (native prices set to 0.0, convert on-demand when needed)
 - Idempotent: skips existing timestamps
 """
 
@@ -70,12 +70,27 @@ def _fetch_gt_pools_by_token(network: str, token_mint: str) -> Dict[str, Any]:
     return resp.json()
 
 
-def _fetch_gt_ohlcv_by_pool(network: str, pool_address: str, limit: int = 1000, to_ts: Optional[int] = None) -> Dict[str, Any]:
-    """Fetch OHLCV data for a pool from GeckoTerminal with retry logic"""
+def _fetch_gt_ohlcv_by_pool(network: str, pool_address: str, limit: int = 1000, to_ts: Optional[int] = None, timeframe: str = 'hour', aggregate: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Fetch OHLCV data for a pool from GeckoTerminal with retry logic
+    
+    Args:
+        network: Network name (solana, ethereum, base, bsc)
+        pool_address: Pool address
+        limit: Maximum number of bars to fetch
+        to_ts: Unix timestamp to fetch up to (optional)
+        timeframe: Timeframe for OHLCV data ('minute', 'hour', 'day')
+        aggregate: Aggregation interval (1, 5, 15 for minute; 1, 4, 12 for hour)
+    
+    Returns:
+        JSON response from GeckoTerminal API
+    """
     params = [f"limit={limit}"]
     if to_ts is not None:
         params.append(f"to={to_ts}")
-    url = f"{GT_BASE}/networks/{network}/pools/{pool_address}/ohlcv/hour?" + "&".join(params)
+    if aggregate is not None:
+        params.append(f"aggregate={aggregate}")
+    url = f"{GT_BASE}/networks/{network}/pools/{pool_address}/ohlcv/{timeframe}?" + "&".join(params)
     
     # Retry with exponential backoff
     for attempt in range(3):
@@ -240,114 +255,24 @@ def _get_existing_timestamps_15m(supabase: SupabaseManager, token_contract: str,
         return set()
 
 
-def _fetch_sol_reference_15m(chain: str, start_ts: datetime, end_ts: datetime) -> Dict[str, float]:
-    """Fetch SOL/USDC 15m reference series for native price conversion"""
-    logger.info(f"Starting SOL reference fetch for {chain} from {start_ts} to {end_ts}")
-    network = NETWORK_MAP.get(chain, chain)
-    native_address = NATIVE_ADDRESS_BY_CHAIN.get(chain)
-    
-    if not native_address:
-        logger.warning(f"No native address for chain {chain}")
-        return {}
-    
-    # Find SOL/USDC pool
-    logger.info(f"Finding SOL pool for {native_address}")
-    try:
-        picked = _select_canonical_pool_from_gt(chain, native_address)
-        if not picked:
-            logger.warning(f"No SOL pool found for {chain}")
-            return {}
-        pool_addr, _, _ = picked
-        logger.info(f"Found SOL pool: {pool_addr}")
-    except Exception as e:
-        logger.error(f"Failed to find SOL pool: {e}")
-        return {}
-    
-    sol_map = {}
-    try:
-        # Fetch SOL data in chunks (max 1000 bars per call)
-        window_end = end_ts
-        total_minutes = int((end_ts - start_ts).total_seconds() / 60)
-        fetched_minutes = 0
-        chunk_count = 0
-        
-        logger.info(f"Starting SOL fetch: {total_minutes} total minutes")
-        
-        while fetched_minutes < total_minutes:
-            chunk_count += 1
-            remaining_minutes = total_minutes - fetched_minutes
-            chunk_bars = min(500, (remaining_minutes // 60) + 1)
-            to_ts = _unix(window_end)
-            
-            logger.info(f"SOL chunk {chunk_count}: fetching {chunk_bars} bars, to_ts={to_ts}")
-            
-            data = _fetch_gt_ohlcv_by_pool(network, pool_addr, limit=chunk_bars)
-            
-            if not data or not data.get('data'):
-                logger.warning(f"SOL chunk {chunk_count}: No data returned")
-                break
-                
-            ohlcv_list = (data.get('data', {}) or {}).get('attributes', {}).get('ohlcv_list', []) or []
-            if not ohlcv_list:
-                logger.warning(f"SOL chunk {chunk_count}: Empty OHLCV list")
-                break
-            
-            logger.info(f"SOL chunk {chunk_count}: Got {len(ohlcv_list)} bars")
-            
-            # Store 15-minute SOL data directly
-            for entry in ohlcv_list:
-                try:
-                    ts_sec = int(entry[0])
-                    close_usd = float(entry[4])  # Close price in USD
-                    ts_dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
-                    ts_iso = ts_dt.isoformat()
-                    
-                    sol_map[ts_iso] = close_usd
-                except Exception as e:
-                    logger.debug(f"Skip malformed SOL entry: {e}")
-                    continue
-            
-            # Update progress (1-hour bars)
-            chunk_minutes = len(ohlcv_list) * 60
-            fetched_minutes += chunk_minutes
-            
-            logger.info(f"SOL chunk {chunk_count}: fetched {chunk_minutes} minutes, total progress: {fetched_minutes}/{total_minutes}")
-            
-            # If we consumed a full 1000-bar chunk, pause to respect GT throttling
-            if chunk_bars >= 1000:
-                logger.info(f"SOL chunk {chunk_count}: Pausing 33s after 1000-bar chunk")
-                time.sleep(33)
-                logger.info(f"SOL chunk {chunk_count}: Resume after pause")
-
-            # Move to next chunk
-            oldest_ts = datetime.fromtimestamp(int(ohlcv_list[-1][0]), tz=timezone.utc)
-            window_end = oldest_ts - timedelta(minutes=1)
-                
-            # Be polite to the API
-            time.sleep(0.5)
-                
-    except Exception as e:
-        logger.error(f"Failed to fetch SOL reference: {e}")
-    
-    # Clean up temporary keys
-    clean_sol_map = {k: v for k, v in sol_map.items() if not k.endswith('_latest')}
-    
-    logger.info(f"SOL reference fetch complete: {len(clean_sol_map)} prices")
-    return clean_sol_map
-
-
-def _build_rows_for_insert_1h(
+def _build_rows_for_insert(
     token_contract: str,
     chain: str,
     pool_addr: str,
     dex_id: str,
     quote_symbol: str,
     ohlcv_list: List[List[Any]],
-    sol_usd_map: Dict[str, float],
+    timeframe: str,
+    window_start: datetime,
+    window_end: datetime,
 ) -> List[Dict[str, Any]]:
-    """Build database rows for 1h OHLCV data with safeguards"""
+    """
+    Build database rows for OHLCV data using USD prices.
+    Native prices are set to 0.0 (convert on-demand when needed).
+    """
     rows = []
     skipped_count = 0
+    
     for entry in ohlcv_list:
         try:
             # [ts, o, h, l, c, v] - GeckoTerminal returns [timestamp, open, high, low, close, volume]
@@ -372,24 +297,6 @@ def _build_rows_for_insert_1h(
                 logger.warning(f"Skip entry {ts_iso}: invalid OHLC relationship (high={high_usd}, low={low_usd}, open={open_usd}, close={close_usd})")
                 continue
 
-            # Compute native prices using SOL reference
-            sol_usd = sol_usd_map.get(ts_iso, 0.0)
-            if sol_usd <= 0:
-                skipped_count += 1
-                logger.debug(f"Skip entry {ts_iso}: no SOL reference price")
-                continue
-            
-            open_native = open_usd / sol_usd
-            high_native = high_usd / sol_usd
-            low_native = low_usd / sol_usd
-            close_native = close_usd / sol_usd
-
-            # Check native prices are valid (should be positive after conversion)
-            if open_native <= 0 or high_native <= 0 or low_native <= 0 or close_native <= 0:
-                skipped_count += 1
-                logger.warning(f"Skip entry {ts_iso}: non-positive native prices after conversion")
-                continue
-
             # Check for extreme jumps (>100x change) - likely bad data
             # Compare close to open as a sanity check
             if close_usd > 0 and open_usd > 0:
@@ -399,10 +306,16 @@ def _build_rows_for_insert_1h(
                     logger.warning(f"Skip entry {ts_iso}: extreme price jump (ratio={price_change_ratio:.2f})")
                     continue
 
+            # Native prices: Set to 0.0 (convert on-demand when needed for display/reporting)
+            open_native = 0.0
+            high_native = 0.0
+            low_native = 0.0
+            close_native = 0.0
+
             rows.append({
                 'token_contract': token_contract,
                 'chain': chain,
-                'timeframe': '1h',
+                'timeframe': timeframe,
                 'timestamp': ts_iso,
                 'open_native': open_native,
                 'high_native': high_native,
@@ -425,40 +338,105 @@ def _build_rows_for_insert_1h(
     return rows
 
 
-def backfill_token_1h(token_contract: str, chain: str, lookback_minutes: int = 10080) -> Dict[str, Any]:
+def _update_bars_count_after_backfill(supabase: SupabaseManager, token_contract: str, chain: str, timeframe: str, inserted_rows: int):
     """
-    Backfill 1h OHLCV data for a token from GeckoTerminal.
+    Update bars_count for positions after backfill completes
+    
+    Args:
+        supabase: Supabase manager instance
+        token_contract: Token contract address
+        chain: Chain name
+        timeframe: Timeframe (1m, 15m, 1h, 4h)
+        inserted_rows: Number of rows inserted (used to update bars_count)
+    """
+    try:
+        # Get current bars_count for this token/chain/timeframe
+        result = supabase.client.table('lowcap_price_data_ohlc').select(
+            'timestamp', count='exact'
+        ).eq('token_contract', token_contract).eq('chain', chain).eq('timeframe', timeframe).execute()
+        
+        bars_count = result.count if hasattr(result, 'count') else len(result.data) if result.data else 0
+        
+        # Update all positions for this token/chain/timeframe
+        positions_result = supabase.client.table('lowcap_positions').select('id,status').eq(
+            'token_contract', token_contract
+        ).eq('token_chain', chain).eq('timeframe', timeframe).execute()
+        
+        if positions_result.data:
+            for pos in positions_result.data:
+                position_id = pos['id']
+                current_status = pos.get('status', 'dormant')
+                
+                # Update bars_count
+                supabase.client.table('lowcap_positions').update({
+                    'bars_count': bars_count
+                }).eq('id', position_id).execute()
+                
+                # Auto-flip dormant → watchlist if bars_count >= 333 (minimum required)
+                if current_status == 'dormant' and bars_count >= 333:
+                    supabase.client.table('lowcap_positions').update({
+                        'status': 'watchlist'
+                    }).eq('id', position_id).execute()
+                    logger.info(f"Auto-flipped position {position_id} from dormant to watchlist (bars_count={bars_count})")
+        
+    except Exception as e:
+        logger.warning(f"Failed to update bars_count for {token_contract} {timeframe}: {e}")
+
+
+def backfill_token_timeframe(
+    token_contract: str, 
+    chain: str, 
+    timeframe: str, 
+    lookback_minutes: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Generic backfill function for any timeframe (1m, 15m, 1h, 4h)
     
     Args:
         token_contract: Token contract address
-        chain: Chain name (e.g., 'solana')
-        lookback_minutes: Minutes to look back (default 7 days)
+        chain: Chain name (solana, ethereum, base, bsc)
+        timeframe: Timeframe ('1m', '15m', '1h', '4h')
+        lookback_minutes: Minutes to look back (default 14 days)
     
     Returns:
         Dict with results summary
     """
+    # Map timeframe to GeckoTerminal API endpoint (verified endpoints from test_geckoterminal_timeframes.py)
+    gt_endpoint_map = {
+        '1m': ('minute', 1),   # /ohlcv/minute?aggregate=1
+        '15m': ('minute', 15), # /ohlcv/minute?aggregate=15
+        '1h': ('hour', 1),     # /ohlcv/hour?aggregate=1
+        '4h': ('hour', 4),    # /ohlcv/hour?aggregate=4
+    }
+    
+    gt_timeframe, gt_aggregate = gt_endpoint_map.get(timeframe, ('hour', 1))
+    
     supabase = SupabaseManager()
     chain = (chain or '').lower()
     network = NETWORK_MAP.get(chain, chain)
     
     if network not in NETWORK_MAP.values():
         raise ValueError(f"Unsupported chain/network: {chain}")
-
+    
+    if timeframe not in ['1m', '15m', '1h', '4h']:
+        raise ValueError(f"Unsupported timeframe: {timeframe}")
+    
     # Get canonical pool from position features
     try:
-        pos = supabase.client.table('lowcap_positions').select('features').eq('token_contract', token_contract).eq('token_chain', chain).limit(1).execute()
+        pos = supabase.client.table('lowcap_positions').select('features').eq(
+            'token_contract', token_contract
+        ).eq('token_chain', chain).limit(1).execute()
         features = (pos.data[0].get('features') if pos.data else None) or {}
     except Exception:
         features = {}
-
+    
     canonical = _get_canonical_pool_from_features(features)
     pool_addr: Optional[str] = None
     dex_id: str = ''
     quote_symbol: str = ''
-
+    
     if canonical:
         pool_addr, dex_id = canonical
-        # Get quote symbol from pool listing
         try:
             data = _fetch_gt_pools_by_token(network, token_contract)
             for p in data.get('data', []) or []:
@@ -468,112 +446,41 @@ def backfill_token_1h(token_contract: str, chain: str, lookback_minutes: int = 1
         except Exception:
             quote_symbol = NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
     else:
-        # Find canonical pool
         picked = _select_canonical_pool_from_gt(chain, token_contract)
         if not picked:
             raise RuntimeError("No pools found on GeckoTerminal for token")
         pool_addr, dex_id, quote_symbol = picked
         _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id)
+    
+    timeframe_minutes_map = {'1m': 1, '15m': 15, '1h': 60, '4h': 240}
+    timeframe_minutes = timeframe_minutes_map[timeframe]
+    bars_target = int(os.getenv("BACKFILL_BARS_TARGET", "666"))  # Target 666 bars
+    bars_min = int(os.getenv("BACKFILL_BARS_MIN", "333"))  # Minimum 333 bars (same for all timeframes)
+    buffer_bars = int(os.getenv("BACKFILL_BARS_BUFFER", "10"))
 
-    # Determine time window
+    if lookback_minutes is None or lookback_minutes <= 0:
+        lookback_minutes = timeframe_minutes * (bars_target + buffer_bars)
+
     end_dt = _minute_floor(_now_utc() - timedelta(minutes=2))
     start_dt = end_dt - timedelta(minutes=lookback_minutes)
-
-    # Fetch SOL reference series for native price conversion
-    sol_usd_map = _fetch_sol_reference_15m(chain, start_dt, end_dt)
-
-    # Calculate how many 15m bars we need
-    duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
-    bars_needed = (duration_minutes // 15) + 1
     
-    logger.info(f"Need {bars_needed} 15m bars for {duration_minutes} minutes")
+    logger.info(f"Fetching {bars_target} {timeframe} bars (lookback_minutes={lookback_minutes})")
 
-    # Fetch token OHLCV data
-    logger.info("Starting token OHLCV fetch")
-    rows_to_insert = []
-    newest_inserted_ts = None
-    
+    limit = bars_target + buffer_bars
     try:
-        # Fetch token data in chunks (max 1000 bars per call)
-        window_end = end_dt
-        total_minutes = int((end_dt - start_dt).total_seconds() / 60)
-        fetched_minutes = 0
-        chunk_count = 0
-        
-        logger.info(f"Starting token fetch: {total_minutes} total minutes")
-        
-        while fetched_minutes < total_minutes:
-            chunk_count += 1
-            remaining_minutes = total_minutes - fetched_minutes
-            chunk_bars = min(500, (remaining_minutes // 60) + 1)
-            to_ts = _unix(window_end)
-            
-            logger.info(f"Token chunk {chunk_count}: fetching {chunk_bars} bars, to_ts={to_ts}")
-            
-            data = _fetch_gt_ohlcv_by_pool(network, pool_addr, limit=chunk_bars)
-            
-            if not data or not data.get('data'):
-                logger.warning(f"Token chunk {chunk_count}: No data returned")
-                break
-                
-            ohlcv_list = (data.get('data', {}) or {}).get('attributes', {}).get('ohlcv_list', []) or []
-            if not ohlcv_list:
-                logger.warning(f"Token chunk {chunk_count}: Empty OHLCV list")
-                break
-            
-            logger.info(f"Token chunk {chunk_count}: Got {len(ohlcv_list)} bars")
-            
-            # Build rows for insertion
-            batch_rows = _build_rows_for_insert_1h(
-                token_contract, chain, pool_addr, dex_id, quote_symbol, ohlcv_list, sol_usd_map
-            )
-            
-            # Deduplicate by timestamp (keep the last occurrence)
-            seen_timestamps = set()
-            deduplicated_rows = []
-            for row in reversed(batch_rows):  # Process in reverse to keep last occurrence
-                if row['timestamp'] not in seen_timestamps:
-                    deduplicated_rows.append(row)
-                    seen_timestamps.add(row['timestamp'])
-            batch_rows = list(reversed(deduplicated_rows))  # Restore original order
-            
-            # Include all rows (will upsert existing ones)
-            rows_to_insert.extend(batch_rows)
-            
-            logger.info(f"Token chunk {chunk_count}: {len(batch_rows)} rows to upsert")
-            
-            if batch_rows:
-                # Track newest timestamp
-                for r in batch_rows:
-                    ts_dt = datetime.fromisoformat(r['timestamp'])
-                    if newest_inserted_ts is None or ts_dt > newest_inserted_ts:
-                        newest_inserted_ts = ts_dt
-            
-            # Update progress
-            # Update progress (1-hour bars)
-            chunk_minutes = len(ohlcv_list) * 60
-            fetched_minutes += chunk_minutes
-            
-            logger.info(f"Token chunk {chunk_count}: fetched {chunk_minutes} minutes, total progress: {fetched_minutes}/{total_minutes}")
-            
-            # If we consumed a full 1000-bar chunk, pause to respect GT throttling
-            if chunk_bars >= 1000:
-                logger.info(f"Token chunk {chunk_count}: Pausing 33s after 1000-bar chunk")
-                time.sleep(33)
-                logger.info(f"Token chunk {chunk_count}: Resume after pause")
-
-            # Move to next chunk
-            oldest_ts = datetime.fromtimestamp(int(ohlcv_list[-1][0]), tz=timezone.utc)
-            window_end = oldest_ts - timedelta(minutes=1)
-                
-            # Be polite to the API
-            time.sleep(0.5)
-
+        data = _fetch_gt_ohlcv_by_pool(
+            network,
+            pool_addr,
+            limit=limit,
+            timeframe=gt_timeframe,
+            aggregate=gt_aggregate
+        )
     except Exception as e:
         logger.error(f"Failed to fetch token OHLCV: {e}")
         return {
             'token_contract': token_contract,
             'chain': chain,
+            'timeframe': timeframe,
             'pool_address': pool_addr,
             'dex_id': dex_id,
             'inserted_rows': 0,
@@ -581,42 +488,118 @@ def backfill_token_1h(token_contract: str, chain: str, lookback_minutes: int = 1
             'window_end': end_dt.isoformat(),
             'error': str(e)
         }
+    
+    ohlcv_list = (data.get('data', {}) or {}).get('attributes', {}).get('ohlcv_list', []) or []
+    if not ohlcv_list:
+        logger.warning(f"No OHLCV data returned for {token_contract} {timeframe}")
+        return {
+            'token_contract': token_contract,
+            'chain': chain,
+            'timeframe': timeframe,
+            'pool_address': pool_addr,
+            'dex_id': dex_id,
+            'inserted_rows': 0,
+            'window_start': start_dt.isoformat(),
+            'window_end': end_dt.isoformat(),
+            'error': 'no_data'
+        }
 
-    # Deduplicate rows across all chunks before upserting
-    # Unique constraint: (token_contract, chain, timeframe, timestamp)
-    if rows_to_insert:
-        seen_keys = {}
-        for row in rows_to_insert:
-            key = (row['token_contract'], row['chain'], row['timeframe'], row['timestamp'])
-            seen_keys[key] = row  # Keep last occurrence if duplicates exist
-        rows_to_insert = list(seen_keys.values())
-        logger.info(f"Deduplicated to {len(rows_to_insert)} unique rows (by token_contract,chain,timeframe,timestamp)")
+    rows_to_insert = _build_rows_for_insert(
+        token_contract,
+        chain,
+        pool_addr,
+        dex_id,
+        quote_symbol,
+        ohlcv_list,
+        timeframe,
+        start_dt,
+        end_dt
+    )
 
-    # Insert rows in batches
+    if not rows_to_insert:
+        logger.warning(f"No valid rows built for {token_contract} {timeframe}")
+        return {
+            'token_contract': token_contract,
+            'chain': chain,
+            'timeframe': timeframe,
+            'pool_address': pool_addr,
+            'dex_id': dex_id,
+            'inserted_rows': 0,
+            'window_start': start_dt.isoformat(),
+            'window_end': end_dt.isoformat(),
+            'error': 'no_valid_rows'
+        }
+
+    rows_to_insert.sort(key=lambda r: r['timestamp'])
+    # Keep up to bars_target rows, but ensure we have at least bars_min
+    if len(rows_to_insert) > bars_target:
+        rows_to_insert = rows_to_insert[-bars_target:]
+    elif len(rows_to_insert) < bars_min:
+        logger.warning(f"Only got {len(rows_to_insert)} bars for {timeframe}, minimum is {bars_min}")
+        # Still proceed, but log the warning
+
+    # Deduplicate rows by (token_contract, chain, timeframe, timestamp) before inserting
+    seen = set()
+    unique_rows = []
+    for r in rows_to_insert:
+        key = (r['token_contract'], r['chain'], r['timeframe'], r['timestamp'])
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(r)
+    
+    if len(unique_rows) < len(rows_to_insert):
+        logger.warning(f"Deduplicated {len(rows_to_insert)} rows to {len(unique_rows)} unique rows")
+    rows_to_insert = unique_rows
+
     inserted = 0
-    if rows_to_insert:
-        BATCH_SIZE = 500
-        for i in range(0, len(rows_to_insert), BATCH_SIZE):
-            chunk = rows_to_insert[i:i+BATCH_SIZE]
-            try:
-                supabase.client.table('lowcap_price_data_ohlc').upsert(chunk).execute()
-                inserted += len(chunk)
-                logger.info(f"Upserted batch of {len(chunk)} rows")
-            except Exception as e:
-                logger.error(f"Insert chunk failed: {e}")
+    BATCH_SIZE = 500
+    for i in range(0, len(rows_to_insert), BATCH_SIZE):
+        chunk = rows_to_insert[i:i + BATCH_SIZE]
+        try:
+            supabase.client.table('lowcap_price_data_ohlc').upsert(chunk).execute()
+            inserted += len(chunk)
+            logger.info(f"Upserted batch of {len(chunk)} rows")
+        except Exception as e:
+            logger.error(f"Insert chunk failed: {e}")
+    
+    logger.info(f"{timeframe} backfill complete: {inserted} rows upserted")
+    
+    _update_bars_count_after_backfill(supabase, token_contract, chain, timeframe, inserted)
 
-    logger.info(f"Backfill complete: {inserted} rows upserted")
-
+    window_start_ts = rows_to_insert[0]['timestamp']
+    window_end_ts = rows_to_insert[-1]['timestamp']
+    
     return {
         'token_contract': token_contract,
         'chain': chain,
+        'timeframe': timeframe,
         'pool_address': pool_addr,
         'dex_id': dex_id,
         'inserted_rows': inserted,
-        'window_start': start_dt.isoformat(),
-        'window_end': end_dt.isoformat(),
-        'sol_reference_bars': len(sol_usd_map),
+        'window_start': window_start_ts,
+        'window_end': window_end_ts,
     }
+
+
+# Wrapper functions for each timeframe
+def backfill_token_1m(token_contract: str, chain: str, lookback_minutes: Optional[int] = None) -> Dict[str, Any]:
+    """Backfill 1m OHLCV data"""
+    return backfill_token_timeframe(token_contract, chain, '1m', lookback_minutes)
+
+
+def backfill_token_15m(token_contract: str, chain: str, lookback_minutes: Optional[int] = None) -> Dict[str, Any]:
+    """Backfill 15m OHLCV data"""
+    return backfill_token_timeframe(token_contract, chain, '15m', lookback_minutes)
+
+
+def backfill_token_1h(token_contract: str, chain: str, lookback_minutes: Optional[int] = None) -> Dict[str, Any]:
+    """Backfill 1h OHLCV data"""
+    return backfill_token_timeframe(token_contract, chain, '1h', lookback_minutes)
+
+
+def backfill_token_4h(token_contract: str, chain: str, lookback_minutes: Optional[int] = None) -> Dict[str, Any]:
+    """Backfill 4h OHLCV data"""
+    return backfill_token_timeframe(token_contract, chain, '4h', lookback_minutes)
 
 
 def main():

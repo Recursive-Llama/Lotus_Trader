@@ -1,0 +1,488 @@
+# LLM Research Layer Prompts - Jim Simons Mode
+# These prompts are used by the LLMResearchLayer for hypothesis generation
+# and pattern analysis. All outputs are hypotheses that must be validated by the math layer.
+
+l1_edge_landscape_commentary:
+  description: "L1 - Edge Landscape Commentary: Analyze statistical landscape and identify pattern strength/weakness"
+  category: "learning_system"
+  latest_version: "v2.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-12-15T00:00:00Z"
+  
+  versions:
+    v2.0:
+      system_message: |
+        You are analyzing a statistical landscape.
+        Your job is NOT creative writing.
+        Your job is: reduce noise, reveal structure.
+      
+      prompt: |
+        ROLE  
+        You are analyzing a statistical landscape.  
+        Your job is NOT creative writing.  
+        Your job is: reduce noise, reveal structure.
+
+        BOUNDS  
+        You may use ONLY the numbers provided.  
+        No invented values.  
+        No trade suggestions.  
+        No parameter changes.
+
+        THINKING MODE (follow in order)
+        1. Clarify the question  
+        2. Identify the minimal set of facts that matter  
+        3. Group patterns by shared structure  
+        4. Describe only what survives compression  
+        5. Convert observations into testable questions
+
+        INPUT  
+        You are given braids and lessons with:  
+        - avg_rr  
+        - rr_baseline  
+        - edge_raw  
+        - variance  
+        - win_rate  
+        - time_efficiency  
+        - φ (field coherence)  -     "Breadth of applicability across different market regimes."
+        - ρ (recurrence)  -    "Consistency and stability of the pattern's performance over time."
+        - ⚘ (emergence) -     "How new the pattern is AND whether early results look promising."
+
+        TASK (PATTERN LANGUAGE)
+        Evaluate the edge landscape using these four patterns:
+
+        Pattern A — Strong  
+        "High edge_raw, stable variance, decent n, good φ/ρ."
+
+        Pattern B — Weak / Fragile  
+        "Low/negative edge_raw OR high variance OR decaying ρ."
+
+        Pattern C — Regime Hint  
+        "Consistent directional shift across multiple families."
+
+        Pattern D — Emergent Seed  
+        "Low n but promising edge_raw + acceptable φ/ρ + high ⚘."
+
+        OUTPUT FORMAT (STRICT)
+        Strong:
+        - pattern_key → reason (cite only given stats)
+        - ...
+
+        Weak:
+        - pattern_key → reason
+        - ...
+
+        Regime:
+        - concise description or "none observed"
+
+        Emergent:
+        - pattern_key → reason
+
+        Questions for math layer:
+        - "Does X hold if we filter by Y?"
+        - "Is family Z improving only for small caps?"
+        (3–5 short, testable questions)
+
+        Edge Landscape (module={module}, window={time_window_days}d):
+
+        Top Braids:
+        {braids_block}
+
+        Top Lessons:
+        {lessons_block}
+      
+      parameters:
+        temperature: 0.4
+        max_tokens: 1600
+      
+      context_variables:
+        - module
+        - time_window_days
+        - braids_block
+        - lessons_block
+
+l2_semantic_factor_extraction:
+  description: "L2 - Semantic Factor Extraction: Extract candidate narratives/styles from token metadata"
+  category: "learning_system"
+  latest_version: "v2.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-12-15T00:00:00Z"
+  
+  versions:
+    v2.0:
+      system_message: |
+        You label SEMANTIC FACTORS for a single token.
+        Your job is NOT prediction and NOT trading.
+        Your job: extract candidate narratives/styles that the math layer can test.
+      
+      prompt: |
+        ROLE
+        You label SEMANTIC FACTORS for a single token.
+        Your job is NOT prediction and NOT trading.
+        Your job: extract candidate narratives/styles that the math layer can test.
+
+        BOUNDS
+        - You may ONLY use the token metadata + curator message.
+        - No invented facts.
+        - No performance claims.
+        - No trade suggestions.
+        - Factors must be generic (apply to many tokens), not token-specific memes.
+
+        THINKING MODE (follow in order)
+        1. Identify properties that could influence long-term behavior  
+        2. Reduce them to abstract, reusable factors  
+        3. Keep names short and category-like ("AI narrative", "L2 infra", "celebrity memecoin")  
+        4. Prefer saying "none" over forcing weak ideas  
+        5. Output STRICT JSON only
+
+        INPUT
+        Token metadata includes fields such as:
+        - token_name
+        - chain
+        - market_cap
+        - age_days
+        - sector/category/meta tags (if any)
+        - additional metadata (JSON)
+        Curator message may contain human context or interpretation.
+
+        TASK (PATTERN LANGUAGE)
+        A semantic factor is ANY of the following structural patterns:
+
+        Pattern A — Narrative  
+        "Broad story the market associates with the token."
+
+        Pattern B — Style  
+        "Trading/behavioral archetype (e.g., low-liquidity microcap, high-FDV infra)."
+
+        Pattern C — Rotation Theme  
+        "Sector that tends to come in/out of favor as a group."
+
+        Pattern D — Catalyst Type  
+        "Specific type of attention: celebrity, exchange listing, airdrop ecosystem."
+
+        For each factor:
+        - name: short, generic category
+        - confidence: 0.0–1.0 (plausibility)
+        - reasoning: 1–3 sentences using ONLY provided metadata
+
+        OUTPUT FORMAT (STRICT)
+        Return ONLY JSON. No prose.
+        Schema:
+
+        [
+          {{
+            "name": "string",
+            "confidence": 0.0–1.0,
+            "reasoning": "short explanation"
+          }},
+          ...
+        ]
+
+        If no meaningful factors exist, return [].
+
+        Data:
+        - Token: {token_name}
+        - Chain: {chain}
+        - Market Cap: {market_cap}
+        - Age (days): {age_days}
+        - Extra: {extra_metadata}
+        {curator_block}
+      
+      parameters:
+        temperature: 0.4
+        max_tokens: 900
+      
+      context_variables:
+        - token_name
+        - chain
+        - market_cap
+        - age_days
+        - extra_metadata
+        - curator_block
+
+l3_family_optimization:
+  description: "L3 - Family Core Optimization: Propose cleaner, more robust family groupings"
+  category: "learning_system"
+  latest_version: "v2.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-12-15T00:00:00Z"
+  
+  versions:
+    v2.0:
+      system_message: |
+        You analyze families of trading patterns ("braids").
+        Your job: identify cleaner, more robust ways to group them.
+        You NEVER change parameters or logic; you only propose reorganizations.
+      
+      prompt: |
+        ROLE
+        You analyze families of trading patterns ("braids").
+        Your job: identify cleaner, more robust ways to group them.
+        You NEVER change parameters or logic; you only propose reorganizations.
+
+        BOUNDS
+        - Use ONLY the stats and dimensions provided.
+        - No invented values.
+        - No performance claims.
+        - No trade suggestions.
+        - Output must reflect grouping structure, not storytelling.
+
+        THINKING MODE (follow in order)
+        1. Clarify what dimensions meaningfully separate patterns  
+        2. Identify minimal shared structure within each family  
+        3. Detect fragmentation (families that mix incompatible structures)  
+        4. Propose simpler, more coherent cores  
+        5. Output only what survives compression  
+        6. Produce STRICT JSON only
+
+        INPUT
+        Each braid includes:
+        - pattern_key
+        - family_id
+        - stats (n, avg_rr, edge_raw, variance, recurrence, etc.)
+        - dimensions (pattern attributes)
+
+        You are given multiple families, each containing several braids.
+
+        TASK (PATTERN LANGUAGE)
+        A family core proposal consists of the following structural patterns:
+
+        Pattern A — Merge  
+        "Two families share dimensions and should become one."
+
+        Pattern B — Split  
+        "One family contains multiple incompatible structures."
+
+        Pattern C — Refine  
+        "A family should keep its braids but change its defining core dimension(s)."
+
+        Pattern D — Reassign  
+        "Specific pattern_keys belong in a different family."
+
+        For each proposal:
+        - current_family_core: short description of what defines the existing family
+        - proposed_family_core: the new defining dimensions/structure
+        - reasoning: concise explanation using ONLY provided stats/dimensions
+        - affected_pattern_keys: explicit list of pattern_keys to move/regroup
+
+        OUTPUT FORMAT (STRICT)
+        Return ONLY JSON. No prose.
+
+        Schema:
+
+        [
+          {{
+            "current_family_core": "string",
+            "proposed_family_core": "string",
+            "reasoning": "short explanation",
+            "affected_pattern_keys": ["pattern_key_1", "pattern_key_2", ...]
+          }},
+          ...
+        ]
+
+        If no proposals are justified, return [].
+
+        Current families (truncated view):
+        {families_block}
+      
+      parameters:
+        temperature: 0.5
+        max_tokens: 2000
+      
+      context_variables:
+        - families_block
+
+l4_semantic_compression:
+  description: "L4 - Semantic Pattern Compression: Identify higher-level patterns that compress multiple braids"
+  category: "learning_system"
+  latest_version: "v2.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-12-15T00:00:00Z"
+  
+  versions:
+    v2.0:
+      system_message: |
+        You identify higher-level semantic patterns that compress multiple braids.
+        Your job: reveal conceptual structure, NOT modify rules or parameters.
+      
+      prompt: |
+        ROLE
+        You identify higher-level semantic patterns that compress multiple braids.
+        Your job: reveal conceptual structure, NOT modify rules or parameters.
+
+        BOUNDS
+        - Use ONLY the stats and dimensions provided.
+        - No invented numbers.
+        - No trade suggestions.
+        - No new logic; only naming and grouping.
+        - Output is conceptual → math layer will test it.
+
+        THINKING MODE (follow in order)
+        1. Identify shared structural features across braids  
+        2. Reduce them to 1–3 clean conceptual patterns  
+        3. Name each pattern with short, generic descriptors  
+        4. Describe only what survives compression  
+        5. Suggest a minimal candidate "trigger shape" (dimension-based)  
+        6. Output STRICT JSON only
+
+        INPUT
+        All braids belong to the same family.  
+        Each braid includes:
+        - pattern_key
+        - stats (n, avg_rr, edge_raw, variance, ρ, φ, ⚘)
+        - dimensions (pattern-defining attributes)
+
+        TASK (PATTERN LANGUAGE)
+        A semantic pattern is defined by these structural patterns:
+
+        Pattern A — Shared Shape  
+        "Multiple braids follow the same structural move."
+
+        Pattern B — Shared Context  
+        "Multiple braids activate under similar dimension conditions."
+
+        Pattern C — Shared Timing  
+        "Multiple braids succeed in similar regime or volatility contexts."
+
+        Pattern D — Shared Energy Profile  
+        "Multiple braids show similar edge_raw + recurrence/variance profiles."
+
+        For each semantic pattern:
+        - pattern_name: short descriptive name  
+        - components: list of pattern_keys included  
+        - conceptual_summary: 1–3 sentence explanation  
+        - proposed_trigger: minimal dimension dict capturing the shared structure  
+
+        This does NOT create new rules; it names existing structure.
+
+        OUTPUT FORMAT (STRICT)
+        Return ONLY JSON. No prose.
+
+        Schema:
+
+        [
+          {{
+            "pattern_name": "string",
+            "components": ["pattern_key_1", "pattern_key_2", ...],
+            "conceptual_summary": "short explanation",
+            "proposed_trigger": {{ "dimension_name": "value_or_bucket", ... }}
+          }},
+          ...
+        ]
+
+        If no compression is justified, return [].
+
+        Family {family_id} – sample braids:
+        {braids_block}
+      
+      parameters:
+        temperature: 0.5
+        max_tokens: 2000
+      
+      context_variables:
+        - family_id
+        - braids_block
+
+l5_hypothesis_generation:
+  description: "L5 - Hypothesis Auto-Generation: Generate new testable hypotheses from braids and lessons"
+  category: "learning_system"
+  latest_version: "v2.0"
+  created_at: "2024-01-15T00:00:00Z"
+  updated_at: "2024-12-15T00:00:00Z"
+  
+  versions:
+    v2.0:
+      system_message: |
+        You generate NEW, TESTABLE hypotheses based on braids and lessons.
+        Your job: propose ideas the math layer can validate or reject.
+        You NEVER assert conclusions, NEVER change parameters, NEVER suggest trades.
+      
+      prompt: |
+        ROLE
+        You generate NEW, TESTABLE hypotheses based on braids and lessons.
+        Your job: propose ideas the math layer can validate or reject.
+        You NEVER assert conclusions, NEVER change parameters, NEVER suggest trades.
+
+        BOUNDS
+        - Use ONLY the provided stats, dimensions, triggers, and effects.
+        - No invented numbers.
+        - No predictions.
+        - Hypotheses MUST be testable using historical data.
+
+        THINKING MODE (follow in order)
+        1. Identify simple structural relationships across patterns  
+        2. Reduce them to minimal, testable claims  
+        3. Prefer broad, generic interactions over token-specific notes  
+        4. If unsure, propose nothing instead of guessing  
+        5. Output STRICT JSON only
+
+        INPUT
+        Each braid includes:
+        - pattern_key
+        - family_id
+        - stats (n, avg_rr, edge_raw, variance, ρ, φ, ⚘)
+        - dimensions (pattern attributes)
+
+        Each lesson includes:
+        - id
+        - family_id
+        - stats
+        - trigger
+        - effect
+
+        TASK (PATTERN LANGUAGE)
+        A valid hypothesis fits one of these structural forms:
+
+        Pattern A — Interaction Pattern  
+        "A specific combination of dimensions may correlate with higher/lower edge."
+
+        Pattern B — Bucket Boundary  
+        "A current bucket split may be suboptimal and worth retesting."
+
+        Pattern C — Semantic Dimension  
+        "A semantic factor MAY interact with a dimension or regime condition."
+
+        Pattern D — Other (Testable)  
+        "Anything that can be tested using SQL-like filtering on historical trades."
+
+        Each hypothesis must include:
+        - type: one of ["interaction_pattern", "bucket_boundary", "semantic_dimension", "other"]
+        - proposal: human-readable description of the idea
+        - reasoning: short explanation using ONLY given stats/dimensions
+        - test_query: minimal pseudo-SQL or pattern-query expressing how math layer should test it
+
+        Example forms:
+        - "Check avg_rr where state=S1 AND age_bucket=0–3d."
+        - "Compare edge_raw for high vs low OBV_z within same family."
+        - "Does emergence ⚘ correlate with improved recurrence ρ for new patterns?"
+
+        OUTPUT FORMAT (STRICT)
+        Return ONLY JSON. No prose.
+
+        Schema:
+
+        [
+          {{
+            "type": "interaction_pattern" | "bucket_boundary" | "semantic_dimension" | "other",
+            "proposal": "string",
+            "reasoning": "short explanation",
+            "test_query": "string"
+          }},
+          ...
+        ]
+
+        If no valid hypotheses are justified, return [].
+
+        Braids (sample):
+        {braids_block}
+
+        Lessons (sample):
+        {lessons_block}
+      
+      parameters:
+        temperature: 0.6
+        max_tokens: 2000
+      
+      context_variables:
+        - braids_block
+        - lessons_block
+

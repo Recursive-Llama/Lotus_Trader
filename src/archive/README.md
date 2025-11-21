@@ -62,6 +62,24 @@ If you need to reference archived code:
 3. Do NOT restore archived files to active directories without discussion
 4. If you need patterns from archived code, extract them to new files rather than restoring old ones
 
+### Legacy Trader Service Methods
+
+**Location**: `src/archive/trader_service_legacy_methods.py`
+
+- **Old PositionMonitor-based methods** - Methods from `trader_service.py` that were part of the old system
+  - **Replaced by**: v4 Portfolio Manager (PM handles all execution and position state)
+  - **Status**: Archived - no longer used
+  - **Methods archived**:
+    - `execute_individual_entry()` - Old PositionMonitor entry execution
+    - `spawn_trend_from_exit()` - Old trend batch system
+    - `plan_buyback()` / `perform_buyback()` - Lotus buyback logic
+    - Position aggregate update methods - PM handles this now
+    - Exit recalculation helpers - PM handles this
+    - Wallet reconciliation helpers - PM handles this
+    - Position cap management - Should be in PM or separate module
+    - Verification methods - PM handles this
+    - Exit rules builders - PM handles this
+
 ## Future Cleanup
 
 After v4 implementation is complete and tested:

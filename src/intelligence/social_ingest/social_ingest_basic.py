@@ -9,11 +9,12 @@ import logging
 import asyncio
 import json
 import aiohttp
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 import yaml
 import os
 import re
+from src.intelligence.lowcap_portfolio_manager.regime.bucket_context import fetch_bucket_phase_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -49,31 +50,8 @@ class SocialIngestModule:
         # DexScreener API configuration
         self.dexscreener_base_url = "https://api.dexscreener.com/latest/dex/search"
         
-        # Token ignore list - tokens to skip due to ambiguity, major tokens, or other issues
-        self.ignored_tokens = {
-            # Major tokens (not suitable for lowcap trading)
-            'SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'STETH', 'BNB',
-            'BITCOIN', 'ETHEREUM', 'SOLANA',  # Full names for major tokens
-            'HYPE', 'TAO', 'DAI', 'OHM',
-            
-            # Problematic/ambiguous tokens
-            'TRUMP',
-            'YZI', 'YZILABS',  # Specific tokens to avoid
-            'DOGE',  # Major meme token
-            'PEPE',  # Major meme token
-            'BONK',  # Major meme token
-            'WLFI',  # Specific token to avoid
-            'APEX',  # ApeX Token - only has USDT pairs, no WETH pairs
-            'XPL',   # Specific token to avoid
-            'WEED',  # Specific token to avoid
-            'BLV',   # Specific token to avoid
-            'LIGHTER',  # Specific token to avoid
-            'BSC',    # BSC token - avoid confusion with BSC chain
-            '$4',     # Specific token to avoid
-            '4',      # Specific token to avoid
-            'XING',   # Specific token to avoid
-            'JEWCOIN',  # Specific token to avoid
-        }
+        # Token ignore list - load from learning_configs, fallback to hardcoded
+        self.ignored_tokens = self._load_ignored_tokens()
         # Allowed chains and minimum volume thresholds (USD) for early filtering
         self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
         self.min_volume_requirements = {
@@ -217,7 +195,7 @@ class SocialIngestModule:
                     continue
                 
                 # Verify token with DexScreener API
-                verified_token = await self._verify_token_with_dexscreener(token_info)
+                verified_token = await self._verify_token_with_dexscreener(token_info, curator_id)
                 if not verified_token:
                     print(f"   ❌ Token verification failed for {token_info.get('token_name', 'unknown')}")
                     self.logger.debug(f"Token verification failed for {token_info.get('token_name', 'unknown')}")
@@ -394,11 +372,21 @@ class SocialIngestModule:
             print(f"   ❌ Parser error: {e}")
             return None
     
-    async def _verify_token_with_dexscreener(self, token_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _verify_token_with_dexscreener(self, token_info: Dict[str, Any], curator_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Verify token using DexScreener API"""
         try:
             token_name = token_info.get('token_name', '').upper()
-            network = self._detect_chain(token_info)
+            # Get curator for chain detection (if available)
+            curator_obj = None
+            if curator_id:
+                try:
+                    curator_result = self.supabase_manager.client.table('curators').select('*').eq('curator_id', curator_id).limit(1).execute()
+                    if curator_result.data:
+                        curator_obj = curator_result.data[0]
+                except Exception as e:
+                    self.logger.debug(f"Could not fetch curator for chain detection: {e}")
+            
+            network, mapping_reason = self._detect_chain(token_info, curator_obj)
             
             if not token_name:
                 self.logger.debug("No token name provided for verification")
@@ -427,18 +415,28 @@ class SocialIngestModule:
                                 # Extract token details from DexScreener result
                                 token_details = self._extract_dexscreener_token_details(best_match)
                                 if token_details:
-                                    # Calculate confidence level
-                                    confidence = self._calculate_token_confidence(token_info, token_details)
-                                    print(f"   🎯 Token confidence: {confidence}")
+                                    # Calculate identification source (how token was identified)
+                                    identification_source = self._calculate_token_identification_source(token_info, token_details)
+                                    print(f"   🎯 Token identification source: {identification_source}")
                                     
-                                    # Early filter: only trade on allowed chains
+                                    # Map identification source to confidence level for threshold relaxation
+                                    # (keeping the relaxation logic but using source-based mapping)
+                                    confidence_map = {
+                                        "contract_address": "highest",
+                                        "ticker_exact": "high",
+                                        "ticker_approximate": "medium",
+                                        "ticker_bare": "low"
+                                    }
+                                    confidence = confidence_map.get(identification_source, "low")
+                                    
+                                    # Early filter: only trade on allowed chains (still blocks)
                                     chain = token_details.get('chain', 'unknown').lower()
                                     vol24 = float(token_details.get('volume_24h', 0))
                                     liq = float(token_details.get('liquidity', 0))
                                     min_vol = self.min_volume_requirements.get(chain, None)
                                     min_liq = self.min_liquidity_requirements.get(chain, None)
                                     
-                                    # Apply confidence-based filter relaxation
+                                    # Apply confidence-based filter relaxation (using mapped confidence)
                                     relaxed_min_vol = self._get_relaxed_volume_threshold(min_vol, confidence) if min_vol else None
                                     relaxed_min_liq = self._get_relaxed_liquidity_threshold(min_liq, confidence) if min_liq else None
 
@@ -447,39 +445,74 @@ class SocialIngestModule:
                                         self.logger.info(f"Skipping token on unsupported chain: {chain}")
                                         return None
 
+                                    # Calculate health metrics (NOTE, don't BLOCK)
+                                    volume_health = {
+                                        "vol24h": vol24,
+                                        "min_required": relaxed_min_vol if relaxed_min_vol else min_vol,
+                                        "meets_threshold": relaxed_min_vol is None or vol24 >= relaxed_min_vol
+                                    }
+                                    
+                                    liquidity_health = {
+                                        "liquidity": liq,
+                                        "min_required": relaxed_min_liq if relaxed_min_liq else min_liq,
+                                        "meets_threshold": relaxed_min_liq is None or liq >= relaxed_min_liq
+                                    }
+                                    
+                                    # Store health metrics in token_details (DM can evaluate)
+                                    token_details['volume_health'] = volume_health
+                                    token_details['liquidity_health'] = liquidity_health
+                                    
+                                    # Log health status (but don't block)
                                     if relaxed_min_vol is not None and vol24 < relaxed_min_vol:
-                                        print(f"   ⚠️  Skipping low-volume token: ${vol24:,.0f} < ${relaxed_min_vol:,.0f} required for {chain} (confidence: {confidence})")
-                                        self.logger.info(f"Skipping low-volume token on {chain}: {vol24} < {relaxed_min_vol} (confidence: {confidence})")
-                                        return None
-
+                                        print(f"   ⚠️  Low volume: ${vol24:,.0f} < ${relaxed_min_vol:,.0f} required for {chain} (confidence: {confidence}) - NOTE only, not blocking")
+                                        self.logger.info(f"Low volume token on {chain}: {vol24} < {relaxed_min_vol} (confidence: {confidence}) - NOTE only")
+                                    else:
+                                        print(f"   ✅ Volume: ${vol24:,.0f} (required: ${relaxed_min_vol:,.0f} for {chain})")
+                                    
                                     if relaxed_min_liq is not None and liq < relaxed_min_liq:
-                                        print(f"   ⚠️  Skipping low-liquidity token: ${liq:,.0f} < ${relaxed_min_liq:,.0f} required for {chain} (confidence: {confidence})")
-                                        self.logger.info(f"Skipping low-liquidity token on {chain}: {liq} < {relaxed_min_liq} (confidence: {confidence})")
-                                        return None
+                                        print(f"   ⚠️  Low liquidity: ${liq:,.0f} < ${relaxed_min_liq:,.0f} required for {chain} (confidence: {confidence}) - NOTE only, not blocking")
+                                        self.logger.info(f"Low liquidity token on {chain}: {liq} < {relaxed_min_liq} (confidence: {confidence}) - NOTE only")
+                                    else:
+                                        print(f"   ✅ Liquidity: ${liq:,.0f} (required: ${relaxed_min_liq:,.0f} for {chain})")
 
-                                    # Liquidity-to-market cap ratio check (hard filter)
+                                    # Liquidity-to-market cap ratio (NOTE, don't BLOCK)
                                     market_cap = float(token_details.get('market_cap', 0))
                                     if market_cap > 0:
                                         liq_mcap_ratio = (liq / market_cap) * 100  # Convert to percentage
                                         required_ratio = self._get_required_liq_mcap_ratio(market_cap)
                                         relaxed_required_ratio = self._get_relaxed_liq_mcap_ratio(required_ratio, confidence)
                                         
+                                        # Store ratio in token_details
+                                        token_details['liq_mcap_ratio'] = liq_mcap_ratio
+                                        
+                                        # Log ratio status (but don't block)
                                         if liq_mcap_ratio < relaxed_required_ratio:
-                                            print(f"   ⚠️  Skipping token with low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f}, confidence: {confidence})")
-                                            self.logger.info(f"Skipping token with low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% (mcap: ${market_cap:,.0f}, confidence: {confidence})")
-                                            return None
+                                            print(f"   ⚠️  Low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f}, confidence: {confidence}) - NOTE only, not blocking")
+                                            self.logger.info(f"Low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% (mcap: ${market_cap:,.0f}, confidence: {confidence}) - NOTE only")
+                                        else:
+                                            print(f"   ✅ Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {relaxed_required_ratio:.1f}%)")
                                         
                                         # Add liquidity health bonus to token details for scoring
                                         ratio_excess = liq_mcap_ratio - required_ratio
                                         liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))  # Max 10% bonus
                                         token_details['liquidity_health_bonus'] = liquidity_bonus
-                                        
-                                        print(f"   ✅ Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {required_ratio:.1f}%, bonus: +{liquidity_bonus:.1%})")
                                     else:
-                                        print(f"   ⚠️  Skipping token with zero market cap")
-                                        self.logger.info(f"Skipping token with zero market cap on {chain}")
-                                        return None
+                                        print(f"   ⚠️  Zero market cap - NOTE only, not blocking")
+                                        self.logger.info(f"Zero market cap on {chain} - NOTE only")
+                                        token_details['liq_mcap_ratio'] = 0.0
 
+                                    # Store mapping_reason in token_details for strand creation
+                                    token_details['mapping_reason'] = mapping_reason if mapping_reason else 'ticker_only'
+                                    # Store identification source for signal_pack
+                                    token_details['identification_source'] = identification_source
+                                    # Determine mapping_status
+                                    if not network:
+                                        token_details['mapping_status'] = 'chain_unresolved'
+                                    elif token_info.get('contract_address'):
+                                        token_details['mapping_status'] = 'resolved'
+                                    else:
+                                        token_details['mapping_status'] = 'resolved'  # Default to resolved if we got this far
+                                    
                                     self.logger.info(f"✅ Found verified token: {token_details['ticker']} on {token_details['chain']}")
                                     return token_details
                                 else:
@@ -795,35 +828,70 @@ class SocialIngestModule:
         cid = (chain_id or '').lower()
         return chain_mapping.get(cid, cid or 'unknown')
     
-    def _detect_chain(self, token_info: Dict[str, Any]) -> str:
-        """Detect blockchain network from token info and context"""
+    def _detect_chain(self, token_info: Dict[str, Any], curator: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+        """
+        Detect blockchain network from token info and context.
+        
+        Args:
+            token_info: Token information from LLM extraction
+            curator: Optional curator dict with chain_counts for prior weighting
+            
+        Returns:
+            Tuple of (detected_chain, mapping_reason)
+            - detected_chain: Chain name or empty string if unresolved
+            - mapping_reason: How chain was resolved ("contract_link", "ticker+chain_phrase", "curator_chain_prior", "ticker_only", "")
+        """
         try:
-            # Check if network was explicitly mentioned
+            mapping_reason = ""
+            chain_score = {}
+            
+            # Check if network was explicitly mentioned (highest priority)
             network = token_info.get('network', '').lower()
             if network in ['solana', 'ethereum', 'base', 'polygon', 'arbitrum', 'bsc', 'bnb', 'tron']:
-                return network
+                return network, "ticker+chain_phrase"
             
             # Check for chain-specific keywords in additional info
             additional_info = token_info.get('additional_info', '').lower()
             if any(keyword in additional_info for keyword in ['sol', 'solana', 'raydium', 'jupiter']):
-                return 'solana'
+                chain_score['solana'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
             elif any(keyword in additional_info for keyword in ['eth', 'ethereum', 'uniswap', '1inch']):
-                return 'ethereum'
+                chain_score['ethereum'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
             elif any(keyword in additional_info for keyword in ['base', 'baseswap']):
-                return 'base'
+                chain_score['base'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
             elif any(keyword in additional_info for keyword in ['polygon', 'matic']):
-                return 'polygon'
+                chain_score['polygon'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
             elif any(keyword in additional_info for keyword in ['bsc', 'bnb', 'pancakeswap']):
-                return 'bsc'
+                chain_score['bsc'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
             elif any(keyword in additional_info for keyword in ['trx', 'tron', 'sunswap', 'wtrx']):
-                return 'tron'
+                chain_score['tron'] = 1.0
+                mapping_reason = "ticker+chain_phrase"
+            
+            # Add curator chain prior as small weight (if available and no explicit chain found)
+            if curator and not chain_score:
+                chain_counts = curator.get('chain_counts', {})
+                if chain_counts and isinstance(chain_counts, dict):
+                    total_count = sum(chain_counts.values())
+                    if total_count > 0:
+                        for chain, count in chain_counts.items():
+                            chain_score[chain] = 0.1 * (count / total_count)  # Small weight (0.1x normalized)
+                        mapping_reason = "curator_chain_prior"
+            
+            # Return best chain if we have scores
+            if chain_score:
+                best_chain = max(chain_score.items(), key=lambda x: x[1])[0]
+                return best_chain, mapping_reason
             
             # Unknown when not sure (avoid defaulting to Solana)
-            return ''
+            return '', ""
             
         except Exception as e:
             self.logger.error(f"Error detecting chain: {e}")
-            return ''
+            return '', ""
     
     def _select_venue(self, chain: str) -> str:
         """Select best venue for the given chain"""
@@ -840,11 +908,42 @@ class SocialIngestModule:
             self.logger.error(f"Error selecting venue: {e}")
             return 'Jupiter'
     
-    def _calculate_token_confidence(self, token_info: Dict[str, Any], verified_token: Dict[str, Any]) -> str:
-        """Calculate confidence level based on extraction and verification results"""
-        # Highest: Contract address
+    def _calculate_confidence_grade(self, token: Dict[str, Any], identifier_used: str) -> str:
+        """
+        Calculate confidence grade for token identification.
+        
+        Args:
+            token: Verified token dict
+            identifier_used: "contract" or "ticker"
+            
+        Returns:
+            "high" | "med" | "low"
+        """
+        # High: Contract address provided (unambiguous)
+        if identifier_used == "contract" or token.get('contract'):
+            return "high"
+        
+        # Med: $TICKER (exact cashtag, less ambiguous)
+        ticker_source = token.get('ticker_source', '')
+        if ticker_source.startswith('$'):
+            return "med"
+        
+        # Low: Bare TICKER (no $, no contract, most ambiguous)
+        return "low"
+    
+    def _calculate_token_identification_source(self, token_info: Dict[str, Any], verified_token: Dict[str, Any]) -> str:
+        """
+        Calculate how token was identified (identification source).
+        
+        Returns:
+            "contract_address" - Contract address was provided
+            "ticker_exact" - Exact ticker ($TICKER) with Twitter match
+            "ticker_approximate" - Exact ticker ($TICKER) without Twitter match
+            "ticker_bare" - Bare ticker (no $, no contract)
+        """
+        # Contract address: most reliable identification
         if token_info.get('contract_address'):
-            return "highest"
+            return "contract_address"
         
         # Check if exact ticker (has $)
         ticker_source = token_info.get('ticker_source', '')
@@ -857,11 +956,11 @@ class SocialIngestModule:
         )
         
         if is_exact_ticker and twitter_match:
-            return "high"
+            return "ticker_exact"
         elif is_exact_ticker:
-            return "medium"
+            return "ticker_approximate"
         else:
-            return "low"
+            return "ticker_bare"
     
     def _check_twitter_handle_match(self, extracted_handles: list, token_socials: dict) -> bool:
         """Check if any extracted Twitter handles match the token's official socials"""
@@ -1041,6 +1140,9 @@ class SocialIngestModule:
             import uuid
             strand_id = str(uuid.uuid4())
             
+            # Get regime context (macro/meso/micro phases)
+            regime_context = self._get_regime_context()
+            
             # Extract confidence and trading signals from LLM response
             token_confidence = 0.7  # Default confidence
             trading_action = "buy"  # Default action
@@ -1064,14 +1166,8 @@ class SocialIngestModule:
                 "symbol": token['ticker'],  # Use proper symbol column
                 "timeframe": None,  # Not applicable for social signals
                 "session_bucket": f"social_{datetime.now(timezone.utc).strftime('%Y%m%d_%H')}",  # Hourly session
-                "regime": None,  # Market regime - not applicable for social signals
                 "tags": ["curated", "social_signal", "dm_candidate", "verified"],
                 "target_agent": "decision_maker_lowcap",  # Target the decision maker
-                "sig_sigma": None,  # Signal strength - not applicable for social signals
-                "sig_confidence": trading_confidence,  # Signal confidence from trading signals
-                "confidence": token_confidence,  # Generic confidence from LLM
-                "sig_direction": trading_action,  # Trading action from LLM (buy/sell)
-                "trading_plan": None,  # Will be filled by decision maker
                 "signal_pack": {
                     "token": {
                         "ticker": token['ticker'],
@@ -1105,7 +1201,15 @@ class SocialIngestModule:
                         "timing": trading_timing,
                         "confidence": trading_confidence
                     },
-                    "intent_analysis": intent_analysis if intent_analysis else None
+                    "intent_analysis": intent_analysis if intent_analysis else None,
+                    # Token identification metadata
+                    "identification_source": token.get('identification_source'),  # How token was identified
+                    "mapping_reason": token.get('mapping_reason', 'ticker_only'),
+                    "confidence_grade": self._calculate_confidence_grade(token, identifier_used),
+                    "volume_health": token.get('volume_health'),
+                    "liquidity_health": token.get('liquidity_health'),
+                    "liq_mcap_ratio": token.get('liq_mcap_ratio'),
+                    "mapping_status": token.get('mapping_status', 'resolved')
                 },
                 "module_intelligence": {
                     "social_signal": {
@@ -1129,16 +1233,39 @@ class SocialIngestModule:
                     "summary": f"Social signal for {token['ticker']} from {curator.get('name', 'Unknown')}",
                     "curator_id": curator['id'],
                     "platform": platform,
-                    "token_ticker": token['ticker'],
-                    "confidence": token_confidence
+                    "token_ticker": token['ticker']
                 },
-                "status": "active"
+                "regime_context": regime_context,  # Macro/meso/micro phases
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
             
             # Create strand in database
             self.logger.debug(f"Creating strand in database...")
             created_strand = await self.supabase_manager.create_strand(strand)
             self.logger.debug(f"Database response: {created_strand}")
+            
+            # Increment curator chain_counts on successful strand creation
+            if created_strand and token.get('chain'):
+                try:
+                    chain = token['chain'].lower()
+                    curator_id = curator['id']
+                    # Get current chain_counts
+                    curator_result = self.supabase_manager.client.table('curators').select('chain_counts').eq('curator_id', curator_id).limit(1).execute()
+                    if curator_result.data:
+                        current_counts = curator_result.data[0].get('chain_counts', {}) or {}
+                        if not isinstance(current_counts, dict):
+                            current_counts = {}
+                        # Increment count for this chain
+                        current_counts[chain] = current_counts.get(chain, 0) + 1
+                        # Update curator
+                        self.supabase_manager.client.table('curators').update({
+                            'chain_counts': current_counts
+                        }).eq('curator_id', curator_id).execute()
+                        self.logger.debug(f"Incremented chain_counts for {curator_id}: {chain} = {current_counts[chain]}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to increment chain_counts for {curator_id}: {e}")
             
             # Show what we found
             token_info = strand['signal_pack']['token']
@@ -1297,3 +1424,113 @@ class SocialIngestModule:
         except Exception as e:
             self.logger.error(f"Failed to insert curator {curator_data['curator_id']}: {e}")
             raise
+    
+    def _get_regime_context(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get macro/meso/micro phases plus bucket snapshot for downstream use.
+        """
+        regime_context = {}
+        
+        for horizon in ["macro", "meso", "micro"]:
+            try:
+                res = (
+                    self.supabase_manager.client.table("phase_state")
+                    .select("phase,score,ts")
+                    .eq("token", "PORTFOLIO")
+                    .eq("horizon", horizon)
+                    .order("ts", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                rows = res.data or []
+                if rows:
+                    regime_context[horizon] = {
+                        "phase": rows[0].get("phase") or "",
+                        "score": float(rows[0].get("score") or 0.0),
+                        "ts": rows[0].get("ts") or datetime.now(timezone.utc).isoformat()
+                    }
+                else:
+                    regime_context[horizon] = {
+                        "phase": "",
+                        "score": 0.0,
+                        "ts": datetime.now(timezone.utc).isoformat()
+                    }
+            except Exception as e:
+                self.logger.warning(f"Error fetching {horizon} phase: {e}")
+                regime_context[horizon] = {
+                    "phase": "",
+                    "score": 0.0,
+                    "ts": datetime.now(timezone.utc).isoformat()
+                }
+        bucket_snapshot = fetch_bucket_phase_snapshot(self.supabase_manager.client)
+        regime_context["bucket_phases"] = bucket_snapshot.get("bucket_phases", {})
+        regime_context["bucket_population"] = bucket_snapshot.get("bucket_population", {})
+        regime_context["bucket_rank"] = bucket_snapshot.get("bucket_rank", [])
+
+        return regime_context
+    
+    def _load_ignored_tokens(self) -> set:
+        """
+        Load ignored tokens from learning_configs table, fallback to hardcoded list.
+        
+        Returns:
+            Set of token names (uppercase) to ignore
+        """
+        try:
+            # Try to load from learning_configs
+            result = (
+                self.supabase_manager.client.table('learning_configs')
+                .select('config_data')
+                .eq('module_id', 'social_ingest')
+                .limit(1)
+                .execute()
+            )
+            
+            if result.data and len(result.data) > 0:
+                config_data = result.data[0].get('config_data', {})
+                ambiguous_terms = config_data.get('ambiguous_terms', {})
+                major_tokens = config_data.get('major_tokens', {})
+                
+                # Combine all tokens from both categories
+                ignored = set()
+                for token, info in ambiguous_terms.items():
+                    if info.get('rule') == 'suppress':
+                        ignored.add(token.upper())
+                for token, info in major_tokens.items():
+                    if info.get('rule') == 'hard_block':
+                        ignored.add(token.upper())
+                
+                if ignored:
+                    self.logger.info(f"Loaded {len(ignored)} ignored tokens from learning_configs")
+                    return ignored
+        
+        except Exception as e:
+            self.logger.warning(f"Failed to load ignored tokens from learning_configs: {e}. Using fallback.")
+        
+        # Fallback to hardcoded list
+        fallback = {
+            # Major tokens (not suitable for lowcap trading)
+            'SOL', 'ETH', 'BTC', 'USDC', 'USDT', 'WETH', 'STETH', 'BNB',
+            'BITCOIN', 'ETHEREUM', 'SOLANA',  # Full names for major tokens
+            'HYPE', 'TAO', 'DAI', 'OHM',
+            
+            # Problematic/ambiguous tokens
+            'TRUMP',
+            'YZI', 'YZILABS',  # Specific tokens to avoid
+            'DOGE',  # Major meme token
+            'PEPE',  # Major meme token
+            'BONK',  # Major meme token
+            'WLFI',  # Specific token to avoid
+            'APEX',  # ApeX Token - only has USDT pairs, no WETH pairs
+            'XPL',   # Specific token to avoid
+            'WEED',  # Specific token to avoid
+            'BLV',   # Specific token to avoid
+            'LIGHTER',  # Specific token to avoid
+            'BSC',    # BSC token - avoid confusion with BSC chain
+            '$4',     # Specific token to avoid
+            '4',      # Specific token to avoid
+            'XING',   # Specific token to avoid
+            'JEWCOIN',  # Specific token to avoid
+        }
+        self.logger.info(f"Using fallback ignored tokens list ({len(fallback)} tokens)")
+        return fallback
