@@ -402,7 +402,8 @@ async def process_position_closed_strand(
         if trade_summary and isinstance(trade_summary, dict):
             rr = float(trade_summary.get('rr', 0.0))
             hold_time_days = float(trade_summary.get('hold_time_days', 0.0))
-            time_to_payback_days = trade_summary.get('time_to_payback_days')
+            # Use time_to_s3 (time from entry to S3 state transition) instead of time_to_payback_days
+            time_to_s3 = trade_summary.get('time_to_s3')
         elif completed_trades_legacy:
             # Legacy format: trade_summary is last entry in completed_trades
             trade_summary = completed_trades_legacy[-1] if isinstance(completed_trades_legacy, list) else completed_trades_legacy
@@ -410,19 +411,19 @@ async def process_position_closed_strand(
                 return 0
             rr = float(trade_summary.get('rr', 0.0))
             hold_time_days = float(trade_summary.get('hold_time_days', 0.0))
-            time_to_payback_days = trade_summary.get('time_to_payback_days')
+            time_to_s3 = trade_summary.get('time_to_s3')
         else:
             return 0
-        if time_to_payback_days is not None:
+        if time_to_s3 is not None:
             try:
-                time_to_payback_days = float(time_to_payback_days)
+                time_to_s3 = float(time_to_s3)
             except Exception:
-                time_to_payback_days = None
+                time_to_s3 = None
         
-        # Compute time efficiency
+        # Compute time efficiency using time_to_s3
         time_efficiency = None
-        if time_to_payback_days is not None:
-            time_efficiency = 1.0 / (1.0 + max(time_to_payback_days, 0.0))
+        if time_to_s3 is not None:
+            time_efficiency = 1.0 / (1.0 + max(time_to_s3, 0.0))
         elif hold_time_days > 0:
             time_efficiency = 1.0 / (1.0 + hold_time_days)
         
@@ -550,25 +551,26 @@ async def process_position_closed_strand(
                         sum_rr_old = stats_old.get('sum_rr', 0.0)
                         sum_rr_squared_old = stats_old.get('sum_rr_squared', 0.0)
                         sum_hold_time_old = stats_old.get('sum_hold_time_days', 0.0)
-                        sum_ttp_old = stats_old.get('sum_time_to_payback_days', 0.0)
+                        # Use time_to_s3 instead of time_to_payback_days
+                        sum_tts3_old = stats_old.get('sum_time_to_s3_days', stats_old.get('sum_time_to_payback_days', 0.0))
                         
                         sum_rr_new = sum_rr_old + rr
                         sum_rr_squared_new = sum_rr_squared_old + (rr * rr)
                         sum_hold_time_new = sum_hold_time_old + hold_time_days
-                        if time_to_payback_days is not None:
-                            sum_ttp_new = sum_ttp_old + time_to_payback_days
+                        if time_to_s3 is not None:
+                            sum_tts3_new = sum_tts3_old + time_to_s3
                         else:
-                            sum_ttp_new = sum_ttp_old
+                            sum_tts3_new = sum_tts3_old
                         
                         avg_rr_new = sum_rr_new / n_new
                         avg_hold_time_new = sum_hold_time_new / n_new
                         variance_new = (sum_rr_squared_new / n_new) - (avg_rr_new * avg_rr_new)
                         
-                        avg_time_to_payback = None
+                        avg_time_to_s3 = None
                         time_efficiency_new = None
-                        if sum_ttp_new > 0 and n_new > 0:
-                            avg_time_to_payback = sum_ttp_new / n_new
-                            time_efficiency_new = 1.0 / (1.0 + max(avg_time_to_payback, 0.0))
+                        if sum_tts3_new > 0 and n_new > 0:
+                            avg_time_to_s3 = sum_tts3_new / n_new
+                            time_efficiency_new = 1.0 / (1.0 + max(avg_time_to_s3, 0.0))
                         else:
                             time_efficiency_new = time_efficiency
                         
@@ -596,12 +598,12 @@ async def process_position_closed_strand(
                             'variance': max(0.0, variance_new),
                             'avg_hold_time_days': avg_hold_time_new,
                             'sum_hold_time_days': sum_hold_time_new,
-                            'sum_time_to_payback_days': sum_ttp_new,
+                            'sum_time_to_s3_days': sum_tts3_new,
                             'edge_raw': edge_raw
                         }
                         
-                        if avg_time_to_payback is not None:
-                            new_stats['avg_time_to_payback_days'] = avg_time_to_payback
+                        if avg_time_to_s3 is not None:
+                            new_stats['avg_time_to_s3_days'] = avg_time_to_s3
                             new_stats['time_efficiency'] = time_efficiency_new
                         
                         if field_coherence is not None:
@@ -658,12 +660,12 @@ async def process_position_closed_strand(
                             'variance': variance_new,
                             'avg_hold_time_days': hold_time_days,
                             'sum_hold_time_days': hold_time_days,
-                            'sum_time_to_payback_days': time_to_payback_days or 0.0,
+                            'sum_time_to_s3_days': time_to_s3 or 0.0,
                             'edge_raw': edge_raw
                         }
                         
-                        if time_to_payback_days is not None:
-                            new_stats['avg_time_to_payback_days'] = time_to_payback_days
+                        if time_to_s3 is not None:
+                            new_stats['avg_time_to_s3_days'] = time_to_s3
                             new_stats['time_efficiency'] = time_efficiency_new
                         
                         sb_client.table('pattern_scope_stats').insert({
@@ -829,7 +831,7 @@ async def run_aggregator(
         for strand in strands:
             updated = await process_position_closed_strand(sb_client, strand)
             total_updated += updated
-
+        
         episode_query = (
             sb_client.table('ad_strands')
             .select('*')

@@ -147,3 +147,33 @@ Following this plan ensures we can repeatedly demonstrate that turning the syste
 - **2025-11-20** – `run_social_trading.py` now schedules `pattern_scope_aggregator`, lesson builder for both modules, and the override materializer.
 - **2025-11-20** – PM tuning channel now only nudges signal thresholds; all legacy execution levers stay fixed at their configured values. Ready to start the staged flow tests (lever audit complete).
 - **2025-11-20** – Added `tests/flow/pm_learning_flow_harness.py` so one command can inject a signal, drive the decision maker, and optionally run aggregator/lesson/materializer with explicit pass/fail checkpoints.
+- **2025-11-21** – Added `tests/flow/majors_feed_harness.py` to validate Hyperliquid WS ingest + rollups + tracker with explicit PASS/FAIL checkpoints on tick ingestion and 1m bar writes.
+- **2025-11-21** – Added `tests/flow/pm_action_harness.py` to force S0→S1→S3→S0 transitions for a real position, run `pm_core_tick`, and print strand/action counts per step.
+- **2025-11-21** – Removed legacy braiding system (`braiding_system.py`, `braiding_lesson_builder.py`). Learning now uses `pattern_scope_aggregator` (real-time) + v5 lesson builder + override materializer. Renamed `braiding_helpers.py` → `bucketing_helpers.py`.
+
+---
+
+### 8. Test Inventory & Harness Map
+
+The single existing harness (“social → decision → trader bootstrap”) does **not** execute `run_social_trading.py`; it stands up Supabase + learning + DM + trader classes directly. That means HL WS, rollups, and other scheduled jobs only run if we invoke them explicitly.
+
+| Subsystem / flow | Evidence needed | Current coverage | Harness / plan |
+| --- | --- | --- | --- |
+| **Social ingest → DM decision** | Social strands become `decision_lowcap`, DM checklist reasons logged, four `lowcap_positions` created | ✅ `pm_learning_flow_harness` proves this | Extend harness with richer signal cases (already-holding, curator score fail, intent fail) |
+| **Trader bootstrap** | Decision approval triggers trader, backfill jobs fire, trade attempt logged | ✅ same harness | Add assertions for notifier / order path once we point to sim executors |
+| **PM action loop (Uptrend engine, buys/sells, position bookkeeping)** | Synthetic price/state data drives S0→S1→S2→S3 flows, `pm_action` / `uptrend_*` strands emitted, quantities update correctly | ✅ `pm_action_harness` covers this | Verifies S1 entry, S3 retest, emergency_exit, S3→S0/S1→S0 transitions, strand counts, position status |
+| **Learning pipeline (aggregator → lessons → overrides)** | `pattern_scope_stats` rows accumulate edge/tuning stats, `learning_lessons` emits dm/pm/tuning lessons, `learning_configs` stores overrides with decay metadata | ⏳ needs harness | **Next**: Build "learning_pipeline_harness": select `position_closed` strands → run `pattern_scope_aggregator`, `lesson_builder_v5`, `override_materializer`, assert DB mutations. Note: braiding system removed, now uses v5 pattern scope aggregation. |
+| **Runtime override application** | Logs show DM alloc multipliers, PM strength (A/E) bias, PM tuning thresholds deviating from neutral, scope-weighted blends | ❌ not covered | Add diagnostic toggle to `DecisionMakerLowcapSimple` & PM runtime to dump applied overrides during harness scenarios |
+| **Hyperliquid WS + majors rollups** | HL ingester connected, 1m points stored, 1m→5m/15m/1h conversions succeed, macro context updates | ✅ `majors_feed_harness` covers this | Validates WS ingest (PASS/FAIL), 1m rollup writes, higher timeframe conversions, phase_state updates |
+| **Lowcap OHLC + TA tracker** | `GenericOHLCRollup` and `ta_tracker` produce EMA/ATR/TS/OX/DX values for the test token, geometry builder outputs shapes | partial (TA snapshot proves tracker ran once, but no assertions) | Add verification step in PM action harness to query TA tables and compare expected metrics; add geometry assertions |
+| **DM allocation learning** | `learning_lessons` rows with `lesson_type='dm_alloc'`, `learning_configs.alloc_overrides` updated, DM decisions reflect new multipliers | ❌ not covered | Extend learning harness with multi-bucket signals and rerun DM decisions to observe allocations |
+| **Diagnostics (strand replay, lesson dry run, materializer dry run)** | Each tool processes real snapshots independently | ❌ not covered | Provide CLI scripts per §4 so we can isolate failures |
+
+**Next actions**
+1. ✅ **PM action harness** - Built and working. Verifies S1 entry, S3 retest, emergency_exit, trade closure, strand emission.
+2. ✅ **Majors feed harness** - Built and working. Validates Hyperliquid WS ingest + rollups with explicit PASS/FAIL.
+3. ⏳ **Learning pipeline harness** - **NEXT PRIORITY**: Build harness to test `pattern_scope_aggregator` → `lesson_builder_v5` → `override_materializer` flow. Should select `position_closed` strands, run each job, assert `pattern_scope_stats` / `learning_lessons` / `learning_configs` updates.
+4. ⏳ **Runtime override verification** - Add diagnostic logging to prove DM/PM apply overrides during harness runs.
+5. ⏳ **Full integration test** - Once all harnesses pass, consider combined "full stack" test via `run_social_trading.py`.
+
+Once each harness is green, we can revisit whether a combined “full stack” rehearsal (possibly via `run_social_trading.py` plus scripted inputs) is needed, but keeping the harnesses modular gives us clearer failure boundaries.

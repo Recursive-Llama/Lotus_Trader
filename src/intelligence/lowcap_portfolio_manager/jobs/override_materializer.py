@@ -392,7 +392,7 @@ def materialize_overrides(
         import traceback
         logger.error(traceback.format_exc())
         if module == 'pm':
-            return {'lessons_processed': 0, 'strength_overrides': 0, 'execution_overrides': 0}
+        return {'lessons_processed': 0, 'strength_overrides': 0, 'execution_overrides': 0}
         return {'lessons_processed': 0, 'alloc_overrides': 0}
 
 

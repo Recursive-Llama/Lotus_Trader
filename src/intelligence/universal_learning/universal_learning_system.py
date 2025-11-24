@@ -23,7 +23,7 @@ from .coefficient_updater import CoefficientUpdater
 from .bucket_vocabulary import BucketVocabulary
 from llm_integration.prompt_manager import PromptManager
 from llm_integration.openrouter_client import OpenRouterClient
-from intelligence.lowcap_portfolio_manager.pm.braiding_system import process_position_closed_for_braiding
+from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import process_position_closed_strand
 from intelligence.lowcap_portfolio_manager.pm.llm_research_layer import LLMResearchLayer
 
 logger = logging.getLogger(__name__)
@@ -104,10 +104,10 @@ class UniversalLearningSystem:
             if not strands:
                 return {}
             
-            # Calculate scores for all strands if not already present
-            for strand in strands:
-                if 'persistence_score' not in strand:
-                    self.scoring.update_strand_scores(strand)
+            # Legacy scoring system disabled - no longer calculating persistence/novelty/surprise scores
+            # for strand in strands:
+            #     if 'persistence_score' not in strand:
+            #         self.scoring.update_strand_scores(strand)
             
             # Create braid from strands
             braid = await self._create_braid_from_strands(strands)
@@ -139,10 +139,10 @@ class UniversalLearningSystem:
             if not strands:
                 return []
             
-            # Step 1: Calculate scores for all strands
-            self.logger.info(f"Calculating scores for {len(strands)} strands")
-            for strand in strands:
-                self.scoring.update_strand_scores(strand)
+            # Step 1: Legacy scoring system disabled - no longer calculating scores
+            # self.logger.info(f"Calculating scores for {len(strands)} strands")
+            # for strand in strands:
+            #     self.scoring.update_strand_scores(strand)
             
             # Step 2: Cluster strands using two-tier clustering
             self.logger.info(f"Clustering {len(strands)} strands at braid level {braid_level}")
@@ -322,20 +322,8 @@ class UniversalLearningSystem:
                 self.logger.info(f"Successfully processed position_closed strand: {strand_id}")
                 return strand
             
-            # Calculate scores for the strand (skip for position_closed - they don't need scoring)
-            print(f"🧠 Calculating scores for strand...")
-            self.scoring.update_strand_scores(strand)
-            
-            # Update strand in database with scores
-            if strand.get('id'):
-                self.supabase_manager.update_strand(
-                    strand['id'], 
-                    {
-                        'persistence_score': strand.get('persistence_score', 0.0),
-                        'novelty_score': strand.get('novelty_score', 0.0),
-                        'surprise_rating': strand.get('surprise_rating', 0.0)
-                    }
-                )
+            # Legacy scoring system removed - no longer updating persistence/novelty/surprise scores
+            # (These columns don't exist in the current schema)
             
             # Check if this strand should trigger the Decision Maker
             print(f"🧠 Checking if should trigger Decision Maker...")
@@ -558,44 +546,16 @@ class UniversalLearningSystem:
                 timeframe=timeframe
             )
             
-            # Process braiding system (pattern discovery)
+            # Process pattern scope aggregation (real-time learning)
             try:
-                await process_position_closed_for_braiding(
+                rows_updated = await process_position_closed_strand(
                     sb_client=self.supabase_manager.client,
                     strand=strand
                 )
-                self.logger.info(f"Successfully processed position_closed strand for braiding")
-                
-                # Build lessons from braids after every closed trade (keeps lessons fresh)
-                try:
-                    from src.intelligence.lowcap_portfolio_manager.pm.braiding_system import build_lessons_from_braids
-                    lessons_created = await build_lessons_from_braids(
-                        sb_client=self.supabase_manager.client,
-                        module='pm',
-                        n_min=10,
-                        edge_min=0.5,
-                        incremental_min=0.1,
-                        max_lessons_per_family=3
-                    )
-                    self.logger.info(f"Built {lessons_created} PM lessons from braids")
-                    
-                    # Also build DM lessons if we have DM data
-                    if entry_context.get('curator'):
-                        lessons_created_dm = await build_lessons_from_braids(
-                            sb_client=self.supabase_manager.client,
-                            module='dm',
-                            n_min=10,
-                            edge_min=0.5,
-                            incremental_min=0.1,
-                            max_lessons_per_family=3
-                        )
-                        self.logger.info(f"Built {lessons_created_dm} DM lessons from braids")
+                self.logger.info(f"Successfully processed position_closed strand for pattern scope aggregation ({rows_updated} rows updated)")
                 except Exception as e:
-                    self.logger.warning(f"Error building lessons from braids: {e}")
-                    # Don't fail the whole process if lesson building fails
-            except Exception as e:
-                self.logger.error(f"Error processing braiding system: {e}")
-                # Don't fail the whole process if braiding fails
+                self.logger.error(f"Error processing pattern scope aggregation: {e}")
+                # Don't fail the whole process if aggregation fails
             
             # Process LLM Learning Layer (semantic and structural intelligence)
             try:

@@ -19,7 +19,7 @@ from src.intelligence.lowcap_portfolio_manager.pm.pattern_keys_v5 import (
     extract_controls_from_action
 )
 from src.intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import Constants
-from src.intelligence.lowcap_portfolio_manager.pm.braiding_helpers import (
+from src.intelligence.lowcap_portfolio_manager.pm.bucketing_helpers import (
     bucket_a_e, bucket_score, bucket_ema_slopes, bucket_size, bucket_bars_since_entry,
     classify_outcome, classify_hold_time
 )
@@ -674,6 +674,7 @@ class PMCoreTick:
                             regime_context=regime_context,
                             token_bucket=token_bucket,
                             now=now,
+                            episode_type="s1_entry",
                         )
                     )
                     meta["s1_episode"] = None
@@ -689,6 +690,7 @@ class PMCoreTick:
                             regime_context=regime_context,
                             token_bucket=token_bucket,
                             now=now,
+                            episode_type="s1_entry",
                         )
                     )
                     meta["s1_episode"] = None
@@ -768,7 +770,7 @@ class PMCoreTick:
                         self._append_window_sample(active_window, sample)
                         changed = True
                 elif active_window:
-                changed |= self._finalize_active_window(s3_episode, now)
+                    changed |= self._finalize_active_window(s3_episode, now)
             else:
                 changed |= self._finalize_active_window(s3_episode, now)
 
@@ -784,6 +786,7 @@ class PMCoreTick:
         regime_context: Dict[str, Any],
         token_bucket: Optional[str],
         now: datetime,
+        episode_type: str = "s1_entry",
     ) -> Dict[str, Any]:
         features = position.get("features") or {}
         uptrend_signals = features.get("uptrend_engine_v4") or {}
@@ -1012,6 +1015,10 @@ class PMCoreTick:
             current_pos = current[0]
             updates: Dict[str, Any] = {}
             
+            # Update last_activity_timestamp on every action
+            now_iso = datetime.now(timezone.utc).isoformat()
+            updates["last_activity_timestamp"] = now_iso
+            
             reasons = action.get("reasons") or {}
             action_flag = (reasons.get("flag") or "").lower()
             size_frac = float(action.get("size_frac", 0.0))
@@ -1066,16 +1073,9 @@ class PMCoreTick:
                 
                 remaining_quantity = updates.get("total_quantity", current_quantity - tokens_sold)
                 
-                should_close_trade = False
-                if action_flag == "exit_position":
-                    should_close_trade = True
-                elif decision_type == "trim" and size_frac >= 0.999:
-                    should_close_trade = True
-                elif remaining_quantity <= 0 and action_flag != "emergency_exit":
-                    should_close_trade = True
-                
-                if should_close_trade:
-                    updates["status"] = "watchlist"
+                # Note: Trade closure is handled separately in _check_position_closure
+                # based on state == S0 AND current_trade_id exists
+                # We don't close here - just update quantities
             
             if updates:
                 self.sb.table("lowcap_positions").update(updates).eq("id", position_id).execute()
@@ -1457,36 +1457,36 @@ class PMCoreTick:
         action: Dict[str, Any]
     ) -> bool:
         """
-        Check if position is fully closed and handle closure (R/R calculation, completed_trades, position_closed strand).
+        Check if position should be closed and handle closure.
+        
+        Simple rule: If state is S0 AND current_trade_id exists → close the trade.
+        
+        This handles:
+        - S1 → S0 (fast_band_at_bottom)
+        - S3 → S0 (all EMAs below EMA333)
         
         Args:
             position: Position dict
-            decision_type: "trim", "emergency_exit"
-            execution_result: Result from executor.execute()
-            action: Action dict with size_frac
+            decision_type: Unused (kept for compatibility)
+            execution_result: Unused (kept for compatibility)
+            action: Unused (kept for compatibility)
         
         Returns:
             True if position was closed, False otherwise
         """
-        if execution_result.get("status") != "success":
-            return False
-        
-        # Check if this was a full exit
-        size_frac = float(action.get("size_frac", 0.0))
-        reasons = action.get("reasons") or {}
-        flag = (reasons.get("flag") or "").lower()
-        is_structural_exit = flag == "exit_position"
-        is_manual_full_trim = (decision_type == "trim" and size_frac >= 0.999)
-        is_full_exit = is_structural_exit or is_manual_full_trim
-        
-        if not is_full_exit:
-            return False
-        
-        # Check if position is now closed (total_quantity = 0)
         position_id = position.get("id")
+        features = position.get("features") or {}
+        uptrend = features.get("uptrend_engine_v4") or {}
+        state = uptrend.get("state", "")
+        
+        # Simple rule: state == S0 AND current_trade_id exists → close
+        if state != "S0":
+            return False
+        
+        # Check current position state
         current = (
             self.sb.table("lowcap_positions")
-            .select("total_quantity,entry_context")
+            .select("status,current_trade_id")
             .eq("id", position_id)
             .limit(1)
             .execute()
@@ -1496,43 +1496,105 @@ class PMCoreTick:
             return False
         
         current_pos = current[0]
-        total_quantity = float(current_pos.get("total_quantity", 0.0))
         
-        if total_quantity > 0:
-            return False  # Not fully closed yet
+        # If already closed, skip
+        if current_pos.get("status") == "watchlist":
+            return False
         
-        # Position is closed - compute R/R and write learning data
+        # If no trade_id, nothing to close
+        if not current_pos.get("current_trade_id"):
+            return False
+        
+        # State is S0 and we have an open trade → close it
+        return self._close_trade_on_s0_transition(position_id, current_pos, uptrend)
+    
+    def _close_trade_on_s0_transition(
+        self,
+        position_id: int,
+        current_pos: Dict[str, Any],
+        uptrend: Dict[str, Any]
+    ) -> bool:
+        """
+        Close trade when state transitions to S0 (after emergency_exit or structural exit).
+        
+        Args:
+            position_id: Position ID
+            current_pos: Current position row from DB
+            uptrend: Uptrend engine state dict
+        
+        Returns:
+            True if trade was closed, False otherwise
+        """
         try:
-            entry_context = current_pos.get("entry_context") or {}
-            exit_price = float(execution_result.get("price", 0.0))
-            exit_timestamp = datetime.now(timezone.utc)
-            
-            # Get position details for R/R calculation
+            # Get position details for R/R calculation (including features for S3 timestamp)
             position_details = (
                 self.sb.table("lowcap_positions")
-                .select("first_entry_timestamp,avg_entry_price,created_at,token_contract,token_chain,timeframe,current_trade_id,completed_trades")
+                .select("first_entry_timestamp,avg_entry_price,created_at,token_contract,token_chain,timeframe,current_trade_id,completed_trades,entry_context,total_quantity,features")
                 .eq("id", position_id)
                 .limit(1)
                 .execute()
             ).data
             
             if not position_details:
-                logger.error(f"Could not fetch position details for R/R calculation: {position_id}")
                 return False
             
             pos_details = position_details[0]
+            total_quantity = float(pos_details.get("total_quantity", 0.0))
+            
+            # Only close if position is empty (emergency_exit already sold everything)
+            if total_quantity > 0:
+                return False
+            
+            # Get latest price for exit
+            token_contract = pos_details.get("token_contract")
+            chain = pos_details.get("token_chain")
+            timeframe = pos_details.get("timeframe", self.timeframe)
+            
+            try:
+                ohlc_result = (
+                    self.sb.table("lowcap_price_data_ohlc")
+                    .select("close_usd")
+                    .eq("token_contract", token_contract)
+                    .eq("chain", chain)
+                    .eq("timeframe", timeframe)
+                    .order("timestamp", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                exit_price = float(ohlc_result.data[0].get("close_usd", 0.0)) if ohlc_result.data else 0.0
+            except Exception:
+                exit_price = 0.0
+            
+            exit_timestamp = datetime.now(timezone.utc)
             entry_price = float(pos_details.get("avg_entry_price", 0.0))
+            entry_context = pos_details.get("entry_context") or {}
             
             # Use first_entry_timestamp if available, otherwise created_at
             entry_timestamp_str = pos_details.get("first_entry_timestamp") or pos_details.get("created_at")
             if isinstance(entry_timestamp_str, str):
                 entry_timestamp = datetime.fromisoformat(entry_timestamp_str.replace('Z', '+00:00'))
             else:
-                entry_timestamp = exit_timestamp  # Fallback to exit time if no entry time
+                entry_timestamp = exit_timestamp
             
-            token_contract = pos_details.get("token_contract")
-            chain = pos_details.get("token_chain")
-            timeframe = pos_details.get("timeframe", self.timeframe)
+            # Get decision_type from exit_reason (if available) or default to "emergency_exit"
+            decision_type = uptrend.get("exit_reason", "emergency_exit")
+            # Normalize exit_reason to decision_type format
+            if decision_type == "fast_band_at_bottom" or decision_type == "all_emas_below_333":
+                decision_type = "emergency_exit"
+            
+            # Calculate time_to_s3: time from entry to S3 state transition
+            time_to_s3 = None
+            features = pos_details.get("features") or {}
+            uptrend_meta = features.get("uptrend_engine_v4_meta") or {}
+            s3_start_ts_str = uptrend_meta.get("s3_start_ts")
+            
+            if s3_start_ts_str:
+                try:
+                    s3_start_ts = datetime.fromisoformat(s3_start_ts_str.replace('Z', '+00:00'))
+                    if s3_start_ts >= entry_timestamp:
+                        time_to_s3 = (s3_start_ts - entry_timestamp).total_seconds() / (24 * 3600)
+                except Exception:
+                    pass
             
             # Calculate R/R from OHLCV data
             rr_metrics = self._calculate_rr_metrics(
@@ -1555,41 +1617,22 @@ class PMCoreTick:
             # Classify outcome
             rr_value = rr_metrics.get("rr")
             if rr_value is None:
-                # This is a real problem - we should have OHLC data
-                # Log detailed diagnostics to understand why
-                logger.error(f"CRITICAL: No R/R data for position {position_id}")
-                logger.error(f"  - Token: {token_contract} on {chain}")
-                logger.error(f"  - Timeframe: {timeframe}")
-                logger.error(f"  - Entry timestamp: {entry_timestamp.isoformat()}")
-                logger.error(f"  - Exit timestamp: {exit_timestamp.isoformat()}")
-                logger.error(f"  - Entry price: {entry_price}")
-                logger.error(f"  - Exit price: {exit_price}")
-                # Check what OHLC data actually exists
-                existing_ohlc = (
-                    self.sb.table("lowcap_price_data_ohlc")
-                    .select("timestamp")
-                    .eq("token_contract", token_contract)
-                    .eq("chain", chain)
-                    .eq("timeframe", timeframe)
-                    .order("timestamp", desc=True)
-                    .limit(5)
-                    .execute()
-                ).data
-                if existing_ohlc:
-                    logger.error(f"  - Latest OHLC bar: {existing_ohlc[0].get('timestamp')}")
-                    logger.error(f"  - Total OHLC bars found: {len(existing_ohlc)}")
+                logger.warning(f"Could not calculate R/R for position {position_id} on S0 transition")
+                rr = 0.0
                 else:
-                    logger.error(f"  - NO OHLC BARS FOUND for this token/timeframe")
-                raise ValueError(f"Cannot calculate R/R: No OHLC data available for {token_contract} {timeframe} between {entry_timestamp.isoformat()} and {exit_timestamp.isoformat()}")
             rr = float(rr_value)
+            
             outcome_class = classify_outcome(rr)
             hold_time_class = classify_hold_time(hold_time_days)
+            
+            # Calculate counterfactuals (could_enter_better, could_exit_better)
             min_price = float(rr_metrics.get("min_price", entry_price))
             max_price = float(rr_metrics.get("max_price", exit_price))
             best_entry_price = float(rr_metrics.get("best_entry_price", min_price)) if rr_metrics.get("best_entry_price") is not None else min_price
             best_exit_price = float(rr_metrics.get("best_exit_price", max_price)) if rr_metrics.get("best_exit_price") is not None else max_price
             best_entry_ts = rr_metrics.get("best_entry_timestamp") or entry_timestamp.isoformat()
             best_exit_ts = rr_metrics.get("best_exit_timestamp") or exit_timestamp.isoformat()
+            
             risk = entry_price - min_price
             if risk <= 0:
                 risk = None
@@ -1601,8 +1644,11 @@ class PMCoreTick:
             else:
                 missed_entry_rr = 0.0
                 missed_exit_rr = 0.0
+            
+            from intelligence.lowcap_portfolio_manager.pm.outcome_classification import bucket_cf_improvement
             cf_entry_bucket = bucket_cf_improvement(missed_entry_rr)
             cf_exit_bucket = bucket_cf_improvement(missed_exit_rr)
+            
             could_enter_better = {
                 "best_entry_price": best_entry_price,
                 "best_entry_timestamp": best_entry_ts,
@@ -1615,11 +1661,8 @@ class PMCoreTick:
             }
             
             # Get v5 fields from pm_action strands for this position
-            # Each completed_trades entry should have v5 fields from its corresponding pm_action strand
-            # For the trade_summary (final exit), get v5 fields from the most recent pm_action strand
             v5_fields = {}
             try:
-                # Get all pm_action strands for this position, ordered by time
                 action_strands = (
                     self.sb.table("ad_strands")
                     .select("content,created_at")
@@ -1630,7 +1673,6 @@ class PMCoreTick:
                     .execute()
                 )
                 if action_strands.data and len(action_strands.data) > 0:
-                    # For trade_summary, use the most recent pm_action strand (the exit action)
                     action_content = action_strands.data[0].get("content", {})
                     if action_content.get("pattern_key"):
                         v5_fields["pattern_key"] = action_content["pattern_key"]
@@ -1643,7 +1685,7 @@ class PMCoreTick:
             except Exception as e:
                 logger.warning(f"Error fetching v5 fields from pm_action strands: {e}")
             
-            # Create trade summary with R/R metrics and outcome classification
+            # Build trade summary (same structure as original _check_position_closure)
             trade_summary = {
                 "entry_context": entry_context,
                 "entry_price": entry_price,
@@ -1659,12 +1701,11 @@ class PMCoreTick:
                 "could_exit_better": could_exit_better,
                 "cf_entry_improvement_bucket": cf_entry_bucket,
                 "cf_exit_improvement_bucket": cf_exit_bucket,
-                # Outcome classification for braiding
                 "outcome_class": outcome_class,
                 "hold_time_bars": None,  # TODO: Calculate from OHLCV if needed
                 "hold_time_days": hold_time_days,
                 "hold_time_class": hold_time_class,
-                "time_to_payback_days": time_to_payback_days,
+                "time_to_s3": time_to_s3,  # Time from entry to S3 state transition (None if never reached S3)
                 # Include v5 fields for aggregation
                 **v5_fields
             }
@@ -1674,7 +1715,7 @@ class PMCoreTick:
                 trade_id = str(uuid.uuid4())
             trade_summary["trade_id"] = trade_id
             
-            # Build actions summary for this trade cycle (for audit + completed_trades record)
+            # Build actions summary
             actions_summary: List[Dict[str, Any]] = []
             try:
                 action_rows = (
@@ -1711,47 +1752,46 @@ class PMCoreTick:
             self.sb.table("lowcap_positions").update({
                 "completed_trades": completed_trades,
                 "status": "watchlist",
-                "closed_at": datetime.now(timezone.utc).isoformat(),
-                "current_trade_id": None
+                "closed_at": exit_timestamp.isoformat(),
+                "current_trade_id": None,
+                "last_activity_timestamp": exit_timestamp.isoformat()
             }).eq("id", position_id).execute()
-            position["current_trade_id"] = None
-            
-            # Get regime context for position_closed strand
-            regime_context = self._get_regime_context()
             
             # Emit position_closed strand
-            # Store all position-specific data in content JSONB field (ad_strands table has limited columns)
+            regime_context = self._get_regime_context()
             position_closed_strand = {
-                "id": f"position_closed_{position_id}_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+                "id": f"position_closed_{position_id}_{int(exit_timestamp.timestamp() * 1000)}",
                 "module": "pm",
                 "kind": "position_closed",
-                "symbol": position.get("token_ticker") or position.get("token_contract"),
-                "timeframe": position.get("timeframe"),
-                "position_id": position_id,  # Top-level column for querying
+                "symbol": current_pos.get("token_ticker") or token_contract,
+                "timeframe": timeframe,
+                "position_id": position_id,
                 "trade_id": trade_id,
                 "content": {
-                    "position_id": position_id,  # Also in content for consistency
-                    "token_contract": position.get("token_contract"),
-                    "chain": position.get("token_chain"),
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "position_id": position_id,
+                    "token_contract": token_contract,
+                    "chain": chain,
+                    "ts": exit_timestamp.isoformat(),
                     "entry_context": entry_context,
                     "trade_id": trade_id,
                     "trade_summary": trade_summary,
                     "decision_type": decision_type,
+                    "exit_reason": uptrend.get("exit_reason", "state_transition_to_s0"),
                 },
-                "regime_context": regime_context,  # Macro/meso/micro phases
+                "regime_context": regime_context,
                 "tags": ["position_closed", "pm", "learning"],
                 "target_agent": "learning_system",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": exit_timestamp.isoformat(),
+                "updated_at": exit_timestamp.isoformat(),
             }
             
             self.sb.table("ad_strands").insert(position_closed_strand).execute()
+            logger.info(f"Position {position_id} closed on S0 transition - emitted position_closed strand")
+            return True
             
-            logger.info(f"Position {position_id} closed - emitted position_closed strand")
-            
-            # CRITICAL: Trigger learning system to process position_closed strand
-            # This closes the feedback loop - learning system updates coefficients from closed trades
+        except Exception as e:
+            logger.error(f"Error closing trade on S0 transition for position {position_id}: {e}")
+            return False
             if self.learning_system:
                 try:
                     # Process strand in learning system (async call from sync context)
@@ -2144,16 +2184,16 @@ class PMCoreTick:
                             p.get("id"), decision_type, exec_result, act, p, a_final, e_final
                         )
                         self._update_execution_history(p.get("id"), decision_type, exec_result, act)
-                        
-                        # Check for position closure
-                        self._check_position_closure(p, decision_type, exec_result, act)
-                    
                 except Exception as e:
                     logger.error(f"Error executing action for position {p.get('id')}: {e}")
                     execution_results[f"{p.get('id')}:{decision_type}"] = {
                         "status": "error",
                         "error": str(e)
                     }
+            
+            # Check for position closure after all actions (state-based, not action-based)
+            # This handles S0 transitions regardless of which action triggered it
+            self._check_position_closure(p, "", {}, {})
             
             # Write strands with execution results
             self._write_strands(p, str(token), now, a_final, e_final, str(phase), cp, actions, execution_results, regime_context, token_bucket)

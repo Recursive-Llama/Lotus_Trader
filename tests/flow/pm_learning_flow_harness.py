@@ -96,8 +96,8 @@ class PMLearningFlowHarness:
         now = datetime.now(timezone.utc)
         strand_id = f"flowtest-{uuid.uuid4()}"
         token = {
-            "ticker": "POLYTALE",
-            "contract": "POLYTALE_CONTRACT",
+            "ticker": "Lumen",
+            "contract": "BkpaxHhE6snExazrPkVAjxDyZa8Nq3oDEzm5GQm2pump",
             "chain": "solana",
             "dex": "Raydium",
             "liquidity": 75000,

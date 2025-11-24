@@ -6,39 +6,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 from supabase import create_client, Client  # type: ignore
 from .config import load_pm_config
-from .braiding_helpers import bucket_a_e, bucket_score
-from .braiding_system import apply_lessons_to_action_size
+from .bucketing_helpers import bucket_a_e, bucket_score
 from .overrides import apply_pattern_strength_overrides, apply_pattern_execution_overrides
 from .pattern_keys_v5 import generate_canonical_pattern_key, extract_scope_from_context
-
-
-def _apply_lessons_sync(sb_client: Optional[Client], base_size_frac: float, context: Dict[str, Any]) -> float:
-    """
-    Synchronous wrapper for apply_lessons_to_action_size.
-    
-    Args:
-        sb_client: Supabase client (optional, creates if None)
-        base_size_frac: Base size fraction
-        context: Context dict
-    
-    Returns:
-        Final size fraction after lesson adjustments
-    """
-    if sb_client is None:
-        return base_size_frac
-    
-    try:
-        # Run async function in sync context
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're already in an async context, we can't use asyncio.run()
-            # Just return base size for now (lessons will be applied later)
-            return base_size_frac
-        else:
-            return asyncio.run(apply_lessons_to_action_size(sb_client, base_size_frac, context))
-    except Exception:
-        # If anything fails, return base size
-        return base_size_frac
 
 
 def _apply_v5_overrides_to_action(
@@ -536,9 +506,10 @@ def plan_actions_v4(
         )
         return [action]
     
-    # Emergency Exit Handling (S3 only)
-    # v4 simplified: emergency_exit = full exit (no bounce protocol)
-    if state == "S3" and uptrend.get("emergency_exit"):
+    # Emergency Exit Handling (any state)
+    # emergency_exit = full exit (sell all tokens)
+    # Trade closure happens when state transitions to S0
+    if uptrend.get("emergency_exit"):
         # No lesson matching for full exits (always 100%)
         action = {
             "decision_type": "emergency_exit",
@@ -614,9 +585,6 @@ def plan_actions_v4(
                 'ox_score_bucket': bucket_score(scores.get('ox', 0.0)),
             }
             
-            # Apply lessons
-            trim_size = _apply_lessons_sync(sb_client, trim_size, context)
-            
             action = {
                 "decision_type": "trim",
                 "size_frac": trim_size,
@@ -661,9 +629,6 @@ def plan_actions_v4(
                     'buy_flag': False,
                     'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
                 }
-                
-                # Apply lessons
-                entry_size = _apply_lessons_sync(sb_client, entry_size, context)
                 
                 decision_type = "entry" if is_new_trade else "add"
                 action = {
@@ -728,9 +693,6 @@ def plan_actions_v4(
                     'dx_score_bucket': bucket_score(scores.get('dx', 0.0)),
                 }
                 
-                # Apply lessons
-                entry_size = _apply_lessons_sync(sb_client, entry_size, context)
-                
                 decision_type = "entry" if is_new_trade else "add"
                 action = {
                     "decision_type": decision_type,
@@ -769,9 +731,6 @@ def plan_actions_v4(
                     'reclaimed_ema333': True,
                     'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
                 }
-                
-                # Apply lessons
-                rebuy_size = _apply_lessons_sync(sb_client, rebuy_size, context)
                 
                 decision_type = "entry" if is_new_trade else "add"
                 action = {

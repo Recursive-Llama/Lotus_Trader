@@ -1,9 +1,13 @@
 """
-Helper functions for PM braiding system: bucketing and outcome classification.
+Helper functions for PM: bucketing and outcome classification.
 
 These functions are used to:
 1. Bucket continuous values into discrete categories for pattern matching
-2. Classify trade outcomes for braiding
+2. Classify trade outcomes for learning systems
+
+Used by:
+- actions.py: Building action context for pattern matching
+- pm_core_tick.py: Building action context for learning strands
 """
 
 from typing import Dict, Any, Optional
