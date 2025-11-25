@@ -25,5 +25,34 @@
     "break_tol_pct": 0.0075,
     "retrace_min": 0.68,
     "retrace_max": 1.00
+  },
+  "exposure_skew": {
+    "mask_defs": [
+      ["mcap_bucket"],
+      ["mcap_bucket", "timeframe"],
+      ["mcap_bucket", "timeframe", "macro_phase"]
+    ],
+    "scope_dim_weights": {
+      "curator": 1.0,
+      "chain": 1.0,
+      "mcap_bucket": 1.0,
+      "vol_bucket": 1.0,
+      "age_bucket": 1.0,
+      "intent": 1.0,
+      "mcap_vol_ratio_bucket": 1.0,
+      "market_family": 1.0,
+      "timeframe": 1.0,
+      "A_mode": 1.0,
+      "E_mode": 1.0,
+      "macro_phase": 1.0,
+      "meso_phase": 1.0,
+      "micro_phase": 1.0,
+      "bucket_leader": 1.0,
+      "bucket_rank_position": 1.0
+    },
+    "alpha": 0.5,
+    "scope_weight": 1.0,
+    "pattern_weight": 0.5,
+    "max_concentration_pct": 100.0
   }
 }

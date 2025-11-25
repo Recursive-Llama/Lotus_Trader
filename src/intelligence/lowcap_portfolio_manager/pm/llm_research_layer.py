@@ -360,7 +360,7 @@ class LLMResearchLayer:
                 
                 # Use pattern with highest edge_raw (already sorted)
                 if pattern_key not in pattern_map:
-                    stats = row.get("stats") or {}
+            stats = row.get("stats") or {}
                     scope_values = row.get("scope_values") or {}
                     scope_mask = row.get("scope_mask", 0)
                     
@@ -395,28 +395,28 @@ class LLMResearchLayer:
             # Convert to BraidStats
             for pattern_data in list(pattern_map.values())[:30]:
                 stats = pattern_data["stats"]
-                try:
-                    top_braids.append(
-                        BraidStats(
+            try:
+                top_braids.append(
+                    BraidStats(
                             pattern_key=pattern_data["pattern_key"],
                             family_id=pattern_data["family_id"],
                             module=module,
                             n=pattern_data["n"],
-                            avg_rr=float(stats.get("avg_rr", 0.0)),
-                            variance=float(stats.get("variance", 0.0)),
-                            win_rate=float(stats.get("win_rate", 0.0)),
+                        avg_rr=float(stats.get("avg_rr", 0.0)),
+                        variance=float(stats.get("variance", 0.0)),
+                        win_rate=float(stats.get("win_rate", 0.0)),
                             rr_baseline=0.0,  # Not in pattern_scope_stats, would need separate lookup
-                            edge_raw=float(stats.get("edge_raw", 0.0)),
-                            time_efficiency=stats.get("time_efficiency"),
-                            field_coherence=stats.get("field_coherence"),
-                            recurrence_score=stats.get("recurrence_score"),
-                            emergence_score=stats.get("emergence_score"),
+                        edge_raw=float(stats.get("edge_raw", 0.0)),
+                        time_efficiency=stats.get("time_efficiency"),
+                        field_coherence=stats.get("field_coherence"),
+                        recurrence_score=stats.get("recurrence_score"),
+                        emergence_score=stats.get("emergence_score"),
                             action_category=pattern_data["action_category"],
                             scope_dims=pattern_data["scope_dims"],
                             scope_values=pattern_data["scope_values"],
-                        )
                     )
-                except Exception as e:
+                )
+            except Exception as e:
                     logger.warning(f"Skipping pattern_scope_stats row in snapshot: {e}")
 
         # Query lessons with v5 fields

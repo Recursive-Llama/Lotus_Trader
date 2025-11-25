@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from supabase import Client
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -25,3 +29,36 @@ def load_pm_config() -> Dict[str, Any]:
         }
 
 
+def fetch_and_merge_db_config(file_config: Dict[str, Any], sb_client: Optional[Client]) -> Dict[str, Any]:
+    """
+    Fetch module_id='pm' config from learning_configs and merge it over the file config.
+    
+    Args:
+        file_config: The base config loaded from file
+        sb_client: Supabase client
+    
+    Returns:
+        Merged config dict
+    """
+    if not sb_client:
+        return file_config
+
+    try:
+        res = (
+            sb_client.table("learning_configs")
+            .select("config_data")
+            .eq("module_id", "pm")
+            .execute()
+        )
+        if res.data and len(res.data) > 0:
+            db_config = res.data[0].get("config_data", {})
+            if db_config:
+                # Shallow merge is usually enough for top-level keys like "exposure_skew"
+                # If we need deep merge, we can add it, but for now top-level replacement is safer/simpler
+                merged = dict(file_config)
+                merged.update(db_config)
+                return merged
+    except Exception as e:
+        logger.warning(f"Error loading PM config from DB: {e}")
+    
+    return file_config

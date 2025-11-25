@@ -127,6 +127,15 @@ The Overseer operates by asking Level 1 these fundamental questions:
   - Regime shifts
 - Based on answer, Overseer may ask Level 3 (structure) or Level 5 (timing) to investigate
 
+#### **Q6: "Where are we concentrated or under-exposed?"**
+- Asks Level 1 for exposure/crowding analysis
+- Wants to understand:
+  - Which scopes/patterns consume most capital
+  - Whether those crowded zones still have meaningful edge
+  - Where high-edge regions are under-allocated
+  - Diversification pressure vs conviction zones
+- Based on answer, Overseer may ask Level 3 (structure) to rebalance scopes, or Level 2 (semantic) to explain why capital clusters exist
+
 ### Questions Overseer Asks to Other Parts of the System
 
 Based on Level 1's answers, the Overseer asks targeted questions to other parts of the system:
@@ -359,10 +368,11 @@ Level 1 always covers these three regions:
 ### Launch Goal: "How are we doing?" (General Overview)
 
 **Input Bundles (prepared by Level 6):**
-- `global_edge_summary` - Edge by module/action_category
-- `pattern_edge_summary` - Edge by pattern_key + top/bottom scopes
-- `scope_delta_summary` - Sibling scopes with large edge differences
-- `edge_history_summary` - Edge trends over time (decay/emergence)
+- `lesson_edge_summary` - Edge/EV/reliability vectors from `learning_lessons`
+- `lesson_decay_summary` - Decay states, slopes, half-lives per slice
+- `scope_delta_summary` - Sibling scopes with large edge differences (derived from lessons/events)
+- `exposure_crowding_summary` - Crowding/exposure_skew metrics from runtime caches
+- `raw_event_sample_summary` (optional) - Targeted slices from `pattern_trade_events` for zoom follow-ups
 
 **Output Schema:**
 ```json
@@ -436,6 +446,8 @@ Level 1 always covers these three regions:
   }
 }
 ```
+
+Each `strong_zones`/`weak_zones` entry now carries the full lesson payload: averaged RR, `edge_raw`, the six edge component scores, decay metadata, and exposure context. This mirrors what the miner stores in `learning_lessons`, so Overseer is reasoning directly on top of the ground-truth lesson store rather than legacy aggregates.
 
 **Consumers:**
 - **Overseer** (primary) - Uses this to decide what to investigate next
@@ -1127,6 +1139,32 @@ Example: `token_metadata_bundle` summarizer calls Dexscreener API, fetches websi
   - output JSON (validated)
   - scoring metrics (usefulness, risk)
   - downstream status (e.g. "math test created", "dashboard updated")
+
+### 8.5 Event → Lesson → Override Pipeline (Core Data Flow)
+
+This architecture now treats learning as three explicit layers:
+
+1. **Fact Table – `pattern_trade_events`**
+   - One row per trade/action (the “reality buffer”)
+   - Captures `pattern_key`, `action_category`, full unified scope (entry + action + regime dims), RR, PnL, timestamps, metadata
+   - Written immediately when a trade closes; no aggregation logic lives here
+
+2. **Lesson Miner – `learning_lessons`**
+   - Lesson builder scans `pattern_trade_events` (level-wise) for any slice with `N ≥ 33`
+   - Stores every observed phenomenon, even if neutral/negative edge
+   - `stats` JSON now includes the full edge vector (avg_rr, edge_raw, ev/reliability/support/time/stability scores) plus decay metadata (linear/exponential slopes, half-life, decay_state)
+   - Provides the canonical truth table that the LLM layer reasons about
+
+3. **Override Table – `pm_overrides`**
+   - Override materializer reads `learning_lessons`, filters for actionable edges (e.g., edge significantly above/below baseline, acceptable decay/reliability)
+   - Writes only those slices into a dedicated override table that the PM runtime blends at execution
+   - Prevents runtime from being flooded with neutral lessons while keeping the full memory intact for analysis
+
+This separation keeps observation (events), understanding (lessons), and action (overrides) clean. Summarizers surface data from all three layers depending on the recipe:
+
+- Level 1 primarily reads `learning_lessons` (edge/decay) + exposure caches derived from runtime
+- Levels 2-3 can request raw `pattern_trade_events` slices when needed for zooms
+- Overseer can compare lessons vs active overrides to ask, “What truths exist that we are not acting on?”
 
 ---
 

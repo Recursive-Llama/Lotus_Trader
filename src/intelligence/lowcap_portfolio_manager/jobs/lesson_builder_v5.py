@@ -1,18 +1,21 @@
 """
-Lesson Builder v5 - Build lessons from pattern_scope_stats
+Lesson Builder v5 - Mining from Fact Table
+Replaces legacy stat-reading with raw event mining.
 
-Extends the learning system to build lessons from pattern_scope_stats with:
-- v5.2: Half-life estimation for decay modeling
-- v5.3: Latent factor checking for deduplication
-- Full lever payload: capital + execution levers
+Goals:
+1. Scan pattern_trade_events for slices with N >= N_min.
+2. Compute edge stats (avg_rr, decay slope) for valid slices.
+3. Upsert to learning_lessons.
 """
 
 import logging
 import os
 import json
 import math
+import statistics
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone, timedelta
+from itertools import combinations
 
 from supabase import create_client, Client
 
@@ -23,636 +26,236 @@ try:
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
-    logger.warning("scipy not available, half-life estimation will be limited")
 
 logger = logging.getLogger(__name__)
 
+# Mining Config
+N_MIN_SLICE = 33
+SCOPE_DIMS = [
+    "curator", "chain", "mcap_bucket", "vol_bucket", "age_bucket", "intent",
+    "mcap_vol_ratio_bucket", "market_family", "timeframe",
+    "A_mode", "E_mode", "macro_phase", "meso_phase", "micro_phase",
+    "bucket_leader", "bucket_rank_position"
+]
 
-def estimate_half_life(
-    edge_history: List[Tuple[float, datetime]]
-) -> Optional[float]:
+def _sigmoid(x: float) -> float:
+    try:
+        return 1.0 / (1.0 + math.exp(-x))
+    except OverflowError:
+        return 0.0 if x < 0 else 1.0
+
+def _linear_regression(times: List[float], values: List[float]) -> float:
+    if len(times) < 2:
+        return 0.0
+    n = len(times)
+    sum_t = sum(times)
+    sum_v = sum(values)
+    sum_t2 = sum(t * t for t in times)
+    sum_tv = sum(t * v for t, v in zip(times, values))
+    denom = n * sum_t2 - sum_t * sum_t
+    if abs(denom) < 1e-9:
+        return 0.0
+    return (n * sum_tv - sum_t * sum_v) / denom
+
+def fit_decay_curve(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Estimate half-life from edge history using exponential decay fitting (v5.2).
-    
-    Fits: edge(t) = edge_0 * exp(-lambda * t)
-    Returns: half_life_hours = ln(2) / lambda
-    
-    Args:
-        edge_history: List of (edge_raw, timestamp) tuples
-    
-    Returns:
-        Half-life in hours, or None if insufficient data
+    Fit decay curve to event series (RR over time).
+    Returns decay metadata.
     """
-    if not HAS_SCIPY:
-        # Fallback: simple linear regression on log(edge)
-        if len(edge_history) < 5:
-            return None
+    if len(events) < 5:
+        return {"state": "insufficient", "multiplier": 1.0}
         
-        edge_history = sorted(edge_history, key=lambda x: x[1])
-        first_ts = edge_history[0][1]
-        times = [(ts - first_ts).total_seconds() / 3600.0 for _, ts in edge_history]
-        edges = [max(abs(e), 0.001) for e, _ in edge_history]  # Avoid log(0)
-        
-        # Simple linear fit on log space
-        log_edges = [math.log(e) for e in edges]
-        if len(times) < 2:
-            return None
-        
-        # Linear regression: log(edge) = a + b*t
-        n = len(times)
-        sum_t = sum(times)
-        sum_log_e = sum(log_edges)
-        sum_t2 = sum(t * t for t in times)
-        sum_t_log_e = sum(t * le for t, le in zip(times, log_edges))
-        
-        denom = n * sum_t2 - sum_t * sum_t
-        if abs(denom) < 1e-10:
-            return None
-        
-        b = (n * sum_t_log_e - sum_t * sum_log_e) / denom
-        
-        if b >= 0:
-            return None  # Not decaying
-        
-        # half_life = ln(2) / |b|
-        half_life_hours = math.log(2) / abs(b)
-        return max(1.0, min(half_life_hours, 8760.0))
-    
-    if len(edge_history) < 5:
-        return None  # Insufficient data
-    
     # Sort by timestamp
-    edge_history = sorted(edge_history, key=lambda x: x[1])
+    # events are assumed sorted or we sort them
+    sorted_events = sorted(events, key=lambda x: x['timestamp'])
     
-    # Extract times (hours since first observation)
-    first_ts = edge_history[0][1]
-    times = [(ts - first_ts).total_seconds() / 3600.0 for _, ts in edge_history]
-    edges = [edge for edge, _ in edge_history]
+    # Extract (t, rr)
+    # Normalize t to hours from start
+    t0 = datetime.fromisoformat(sorted_events[0]['timestamp'].replace('Z', '+00:00'))
     
-    # Filter out invalid data
-    valid_indices = [i for i, (t, e) in enumerate(zip(times, edges)) if t >= 0 and not math.isnan(e) and not math.isinf(e)]
-    if len(valid_indices) < 5:
-        return None
+    times = []
+    values = []
     
-    times = [times[i] for i in valid_indices]
-    edges = [edges[i] for i in valid_indices]
-    
-    # Exponential decay model: edge(t) = a * exp(-b * t)
-    def decay_model(t, a, b):
-        return a * np.exp(-b * t)
-    
-    try:
-        # Initial guess: a = first edge, b = small decay rate
-        initial_a = edges[0] if edges[0] > 0 else 1.0
-        initial_b = 0.001  # Small decay rate
+    for e in sorted_events:
+        ts = datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00'))
+        hours = (ts - t0).total_seconds() / 3600.0
+        rr = float(e['rr'])
+        times.append(hours)
+        values.append(rr)
         
-        # Fit curve
-        popt, _ = curve_fit(
-            decay_model,
-            times,
-            edges,
-            p0=[initial_a, initial_b],
-            maxfev=1000,
-            bounds=([0, 0], [np.inf, 1.0])  # a > 0, 0 < b < 1
-        )
-        
-        a, b = popt
-        
-        # Compute half-life: t_half = ln(2) / b
-        if b > 0:
-            half_life_hours = math.log(2) / b
-            # Clamp to reasonable range (1 hour to 1 year)
-            half_life_hours = max(1.0, min(half_life_hours, 8760.0))
-            return half_life_hours
-        else:
-            return None
-    except Exception as e:
-        logger.warning(f"Error fitting decay curve: {e}")
-        return None
-
-
-def get_latent_factor(
-    sb_client: Client,
-    pattern_key: str
-) -> Optional[str]:
-    """
-    Check if pattern_key belongs to an existing latent factor cluster (v5.3).
+    slope = _linear_regression(times, values)
     
-    Args:
-        sb_client: Supabase client
-        pattern_key: Pattern key to check
+    # Exponential fit?
+    # y = A * exp(B * t)
+    # ln(y) = ln(A) + B*t
+    # Only works if rr > 0. Shift if needed?
+    # For now, linear slope on Rolling RR is robust.
     
-    Returns:
-        factor_id if found, None if unique
-    """
-    try:
-        result = (
-            sb_client.table('learning_latent_factors')
-            .select('factor_id,pattern_keys')
-            .execute()
-        )
+    state = "stable"
+    if slope < -0.001:
+        state = "decaying"
+    elif slope > 0.001:
+        state = "improving"
         
-        factors = result.data or []
-        for factor in factors:
-            pattern_keys = factor.get('pattern_keys', [])
-            if pattern_key in pattern_keys:
-                return factor.get('factor_id')
+    # Calculate simple decay multiplier for Override usage
+    # If decaying fast, mult < 1.0
+    mult = 1.0
+    if state == "decaying":
+        # E.g. -0.01 slope -> 0.9x?
+        # Clamp reasonably
+        severity = min(abs(slope) * 100, 0.5) # 0.01 slope -> 1.0 severity? No.
+        mult = max(0.5, 1.0 - severity)
+    elif state == "improving":
+        severity = min(abs(slope) * 100, 0.5)
+        mult = min(1.5, 1.0 + severity)
         
-        return None
-    except Exception as e:
-        logger.warning(f"Error checking latent factors: {e}")
-        return None
-
-
-def _clamp_edge_contribution(edge_raw: float, learning_rate: float, edge_scale: float) -> float:
-    return max(-0.10, min(0.10, (edge_raw / edge_scale) * learning_rate))
-
-
-def map_edge_to_levers_pm(
-    edge_raw: float,
-    action_category: str,
-    stats: Dict[str, Any],
-    learning_rate: float = 0.02,
-    edge_scale: float = 20.0
-) -> Dict[str, Any]:
-    """
-    Map edge to PM capital + execution levers.
-    """
-    edge_contribution = _clamp_edge_contribution(edge_raw, learning_rate, edge_scale)
-    
-    size_mult = max(0.7, min(1.3, 1.0 + edge_contribution))
-    if action_category == "entry":
-        entry_aggression_mult = max(0.8, min(1.2, 1.0 + edge_contribution))
-        exit_aggression_mult = 1.0
-    elif action_category == "add":
-        entry_aggression_mult = max(0.8, min(1.2, 1.0 + edge_contribution))
-        exit_aggression_mult = 1.0
-    elif action_category == "trim":
-        entry_aggression_mult = 1.0
-        exit_aggression_mult = max(0.8, min(1.2, 1.0 - edge_contribution))
-    else:
-        entry_aggression_mult = 1.0
-        exit_aggression_mult = max(0.8, min(1.2, 1.0 - edge_contribution))
-    
-    capital_levers = {
-        "size_mult": size_mult,
-        "entry_aggression_mult": entry_aggression_mult,
-        "exit_aggression_mult": exit_aggression_mult
+    return {
+        "state": state,
+        "slope": slope,
+        "multiplier": mult,
+        "half_life_hours": None # Todo: calc if exp fit
     }
-    
-    execution_levers: Dict[str, Any] = {}
-    cf_entry = stats.get('cf_entry_improvement_bucket')
-    cf_exit = stats.get('cf_exit_improvement_bucket')
-    
-    if action_category in ["entry", "add"]:
-        if cf_entry == "large":
-            execution_levers["entry_delay_bars"] = 0
-        elif cf_entry == "medium":
-            execution_levers["entry_delay_bars"] = 1
-        elif cf_entry == "small":
-            execution_levers["entry_delay_bars"] = 2
+
+def compute_lesson_stats(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute aggregate stats for a set of events."""
+    if not events:
+        return {}
         
-        if edge_raw > 0.5:
-            execution_levers["phase1_frac_mult"] = min(1.5, 1.0 + edge_contribution * 2)
-        elif edge_raw < -0.5:
-            execution_levers["phase1_frac_mult"] = max(0.5, 1.0 + edge_contribution * 2)
+    rrs = [float(e['rr']) for e in events]
+    n = len(rrs)
+    avg_rr = sum(rrs) / n
+    variance = statistics.variance(rrs) if n > 1 else 0.0
     
-    if action_category in ["trim", "exit"]:
-        if cf_exit == "large":
-            execution_levers["trim_delay_mult"] = 0.5
-        elif cf_exit == "medium":
-            execution_levers["trim_delay_mult"] = 0.8
-        elif cf_exit == "small":
-            execution_levers["trim_delay_mult"] = 1.0
-        
-        if edge_raw > 0.5:
-            execution_levers["trail_mult"] = max(0.5, min(2.0, 1.0 + edge_contribution))
-        elif edge_raw < -0.5:
-            execution_levers["trail_mult"] = max(0.5, min(2.0, 1.0 - edge_contribution))
+    decay_meta = fit_decay_curve(events)
     
-    if edge_raw > 0.3:
-        signal_thresholds = {}
-        if action_category in ["entry", "add"]:
-            signal_thresholds["min_ts_for_add"] = 0.55
-        if action_category == "trim":
-            signal_thresholds["min_ox_for_trim"] = 0.40
-        
-        if signal_thresholds:
-            execution_levers["signal_thresholds"] = signal_thresholds
+    # 6-D Edge Components (simplified V5)
+    # EV = avg_rr (or delta from 1.0?)
+    # Let's use raw avg_rr for magnitude
+    
+    ev_score = _sigmoid((avg_rr - 1.0) / 0.5) # Centered at 1.0
+    reliability_score = 1.0 / (1.0 + variance)
+    support_score = 1.0 - math.exp(-n / 50.0)
+    
+    # Edge Raw = Geometric mean? Or weighted sum?
+    # V5 Plan: EV * Rel * Integral
+    # Simple version:
+    edge_raw = (avg_rr - 1.0) * reliability_score * support_score * decay_meta.get('multiplier', 1.0)
     
     return {
-        "capital_levers": capital_levers,
-        "execution_levers": execution_levers
+        "avg_rr": avg_rr,
+        "variance": variance,
+        "n": n,
+        "edge_raw": edge_raw,
+        "ev_score": ev_score,
+        "reliability_score": reliability_score,
+        "support_score": support_score,
+        "decay_meta": decay_meta
     }
 
-
-def map_edge_to_levers_dm(
-    edge_raw: float,
-    learning_rate: float = 0.02,
-    edge_scale: float = 20.0
-) -> Dict[str, Any]:
+async def mine_lessons(sb_client: Client, module: str = 'pm') -> int:
     """
-    Map edge to DM allocation lever.
-    """
-    edge_contribution = _clamp_edge_contribution(edge_raw, learning_rate, edge_scale)
-    alloc_mult = max(0.7, min(1.3, 1.0 + edge_contribution))
-    return {
-        "capital_levers": {"alloc_mult": alloc_mult},
-        "execution_levers": {}
-    }
-
-
-def _extract_tuning_overrides(stats: Dict[str, Any], episode_type: str) -> Dict[str, Any]:
-    tuning = stats.get('tuning') or {}
-    type_stats = tuning.get(episode_type)
-    if not type_stats:
-        return {}
-
-    outcomes = type_stats.get('outcomes') or {}
-    total = sum(outcomes.values())
-    if total <= 0:
-        return {}
-
-    # positive score means tighten, negative means loosen
-    outcome_score = (
-        outcomes.get('failure', 0) * 1.0 +
-        outcomes.get('missed', 0) * 0.7 -
-        outcomes.get('success', 0) * 1.0
-    ) / total
-
-    lever_stats = type_stats.get('levers') or {}
-    overrides: Dict[str, Any] = {}
-
-    for lever_name, bucket in lever_stats.items():
-        count = bucket.get('count', 0)
-        if count <= 0:
-            continue
-        avg_delta = float(bucket.get('sum_delta', 0.0)) / count
-        avg_severity = float(bucket.get('sum_severity', 0.0)) / count
-        avg_conf = float(bucket.get('sum_confidence', 0.0)) / count
-        score = outcome_score * avg_severity * avg_conf
-
-        if abs(score) < 0.05:
-            continue
-
-        target = avg_delta * max(0.2, min(1.0, abs(score)))
-        if lever_name in {"ts_min", "sr_boost", "halo_multiplier", "dx_min", "edx_supp_mult"}:
-            thresholds = overrides.setdefault("signal_thresholds", {})
-            thresholds[lever_name] = target
-
-    return overrides
-
-
-def compute_incremental_edge_vs_parents(
-    pattern_key: str,
-    action_category: str,
-    scope_dims: List[str],
-    edge_raw: float,
-    sb_client: Client
-) -> float:
-    """
-    Compute incremental edge vs parent scope subsets.
-    
-    Args:
-        pattern_key: Pattern key
-        action_category: Action category
-        scope_dims: List of scope dimension names
-        edge_raw: Current edge
-        sb_client: Supabase client
-    
-    Returns:
-        Incremental edge (edge_raw - max(parent_edges))
-    """
-    if len(scope_dims) <= 1:
-        return edge_raw  # No parents
-    
-    # Generate parent subsets (remove one dim at a time)
-    parent_edges = []
-    
-    for i in range(len(scope_dims)):
-        parent_dims = scope_dims[:i] + scope_dims[i+1:]
-        
-        # Query pattern_scope_stats for parent subset
-        try:
-            # Build scope_values from parent_dims (would need actual values, simplified here)
-            # For now, we'll query by pattern_key + action_category and filter in Python
-            result = (
-                sb_client.table('pattern_scope_stats')
-                .select('stats')
-                .eq('pattern_key', pattern_key)
-                .eq('action_category', action_category)
-                .execute()
-            )
-            
-            # Find matching parent subset (simplified - would need proper mask matching)
-            # For now, return edge_raw as incremental (can be refined)
-            if result.data:
-                for row in result.data:
-                    stats = row.get('stats', {})
-                    parent_edge = stats.get('edge_raw', 0.0)
-                    if parent_edge != 0.0:
-                        parent_edges.append(parent_edge)
-        except Exception:
-            pass
-    
-    if not parent_edges:
-        return edge_raw  # No parent data
-    
-    max_parent_edge = max(parent_edges)
-    incremental = edge_raw - max_parent_edge
-    
-    return incremental
-
-
-async def build_lessons_from_pattern_scope_stats(
-    sb_client: Client,
-    module: str = 'pm',
-    n_min: int = 10,
-    edge_min: float = 0.5,
-    incremental_min: float = 0.1,
-    max_lessons_per_pattern: int = 3
-) -> int:
-    """
-    Build lessons from pattern_scope_stats (v5).
-    
-    Args:
-        sb_client: Supabase client
-        module: 'pm' or 'dm'
-        n_min: Minimum sample size
-        edge_min: Minimum edge score
-        incremental_min: Minimum incremental edge vs parents
-        max_lessons_per_pattern: Maximum lessons per (pattern_key, action_category)
-    
-    Returns:
-        Number of lessons created/updated
+    Miner: Scans pattern_trade_events -> writes learning_lessons.
     """
     try:
-        # Query pattern_scope_stats for candidates
-        result = (
-            sb_client.table('pattern_scope_stats')
-            .select('*')
-            .gte('n', n_min)
-            .execute()
-        )
+        # 1. Fetch all events (In production, window this or chunk it)
+        # V1: Fetch all. If > 10k rows, we need pagination/grouping in SQL.
+        # Better V1: Fetch DISTINCT pattern_keys, then process per pattern.
         
-        rows = result.data or []
+        patterns = sb_client.table('pattern_trade_events').select('pattern_key').eq('action_category', 'entry').execute() # Just entries for now? Or trims?
+        # Actually we want to mine trims too.
         
-        if not rows:
-            logger.info(f"No pattern_scope_stats rows found for module {module}")
+        # Get unique (pattern, category) pairs
+        # PostgREST doesn't do distinct nicely without RPC.
+        # Just fetch raw events limit 10000 order desc?
+        
+        # Let's fetch all events for now (assuming low volume start)
+        res = sb_client.table('pattern_trade_events').select('*').order('timestamp', desc=True).limit(2000).execute()
+        events = res.data or []
+        
+        if not events:
+            logger.info("No events to mine.")
             return 0
-        
-        # Group by (pattern_key, action_category)
-        pattern_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-        
-        for row in rows:
-            pattern_key = row.get('pattern_key', '')
-            action_category = row.get('action_category', '')
-            stats = row.get('stats', {})
-            edge_raw = stats.get('edge_raw', 0.0)
             
-            # Filter by edge_min
-            if abs(edge_raw) < edge_min:
-                continue
+        # Group by (pattern_key, category)
+        groups = {}
+        for e in events:
+            key = (e['pattern_key'], e['action_category'])
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(e)
             
-            # Extract scope dimensions from scope_values
-            scope_values = row.get('scope_values', {})
-            scope_dims = list(scope_values.keys())
-            
-            key = (pattern_key, action_category)
-            if key not in pattern_groups:
-                pattern_groups[key] = []
-            
-            pattern_groups[key].append({
-                'row': row,
-                'scope_dims': scope_dims,
-                'scope_values': scope_values,
-                'edge_raw': edge_raw,
-                'stats': stats,
-                'n': row.get('n', 0)
-            })
-        
-        if not pattern_groups:
-            logger.info(f"No candidates found (edge_min={edge_min})")
-            return 0
-        
         lessons_created = 0
         
-        # Process each (pattern_key, action_category) group
-        for (pattern_key, action_category), candidates in pattern_groups.items():
-            # Sort by simplicity (fewer dims first) then by edge_raw
-            candidates.sort(key=lambda x: (len(x['scope_dims']), -abs(x['edge_raw'])))
+        for (pk, cat), group_events in groups.items():
+            # 2. Level 1 Mining: Single Dims
+            # Iterate dimensions, group events by value
             
-            selected = []
+            # Also "Full Pattern" (Global)
+            if len(group_events) >= N_MIN_SLICE:
+                stats = compute_lesson_stats(group_events)
+                await upsert_lesson(sb_client, module, pk, cat, {}, stats)
+                lessons_created += 1
             
-            for candidate in candidates:
-                if len(selected) >= max_lessons_per_pattern:
-                    break
+            # Single Dims
+            for dim in SCOPE_DIMS:
+                # Bucket by value
+                buckets = {}
+                for e in group_events:
+                    val = e.get('scope', {}).get(dim)
+                    if val:
+                        if val not in buckets:
+                            buckets[val] = []
+                        buckets[val].append(e)
                 
-                scope_dims = candidate['scope_dims']
-                scope_values = candidate['scope_values']
-                edge_raw = candidate['edge_raw']
-                stats = candidate['stats']
-                n = candidate['n']
-                
-                # Compute incremental edge vs parents
-                incremental_edge = compute_incremental_edge_vs_parents(
-                    pattern_key,
-                    action_category,
-                    scope_dims,
-                    edge_raw,
-                    sb_client
-                )
-                
-                # Skip if incremental edge is too small
-                if incremental_edge < incremental_min:
-                    continue
-                
-                # Estimate half-life (v5.2)
-                # Query edge history for this pattern+category+scope
-                scope_signature = json.dumps(sorted(scope_values.items()), sort_keys=True)
-                try:
-                    history_result = (
-                        sb_client.table('learning_edge_history')
-                        .select('edge_raw,ts')
-                        .eq('pattern_key', pattern_key)
-                        .eq('action_category', action_category)
-                        .eq('scope_signature', scope_signature)
-                        .order('ts', desc=True)
-                        .limit(20)
-                        .execute()
-                    )
-                    
-                    edge_history = []
-                    for hist_row in (history_result.data or []):
-                        edge_val = hist_row.get('edge_raw', 0.0)
-                        ts_str = hist_row.get('ts')
-                        if ts_str:
-                            try:
-                                ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                                edge_history.append((edge_val, ts))
-                            except Exception:
-                                pass
-                    
-                    half_life_hours = estimate_half_life(edge_history) if edge_history else None
-                except Exception as e:
-                    logger.warning(f"Error estimating half-life: {e}")
-                    half_life_hours = None
-                
-                # Check latent factor (v5.3)
-                latent_factor_id = get_latent_factor(sb_client, pattern_key)
-                
-                # Map edge to levers (module-specific)
-                if module == 'dm':
-                    levers = map_edge_to_levers_dm(edge_raw)
-                    lesson_type = 'dm_alloc'
-                else:
-                    levers = map_edge_to_levers_pm(edge_raw, action_category, stats)
-                    lesson_type = 'pm_strength'
-                
-                # Compute lesson strength (0.0-1.0)
-                edge_scale_for_strength = 20.0
-                lesson_strength = min(1.0, abs(edge_raw) / edge_scale_for_strength if edge_raw != 0 else 0.0)
-                
-                # Determine status
-                edge_promote = 0.5
-                n_promote = 20
-                status = 'active' if (n >= n_promote and abs(edge_raw) > edge_promote) else 'candidate'
-                
-                # Build lesson
-                lesson = {
-                    'module': module,
-                    'pattern_key': pattern_key,  # Store pattern_key for reference
-                    'action_category': action_category,
-                    'scope_dims': scope_dims,
-                    'scope_values': scope_values,
-                    'trigger': scope_values,  # For backward compatibility
-                    'effect': levers,
-                    'lesson_type': lesson_type,
-                    'stats': {
-                        'edge_raw': edge_raw,
-                        'incremental_edge': incremental_edge,
-                        'n': n,
-                        'avg_rr': stats.get('avg_rr', 0.0),
-                        'variance': stats.get('variance', 0.0),
-                        'time_efficiency': stats.get('time_efficiency'),
-                        'field_coherence': stats.get('field_coherence'),
-                        'recurrence_score': stats.get('recurrence_score')
-                    },
-                    'lesson_strength': lesson_strength,
-                    'decay_halflife_hours': int(half_life_hours) if half_life_hours else None,
-                    'latent_factor_id': latent_factor_id,
-                    'status': status,
-                    'created_at': datetime.now(timezone.utc).isoformat()
-                }
-                
-                # Check if lesson exists (by pattern_key + action_category + scope_values)
-                # Note: pattern_key is stored in trigger for backward compatibility, but we use scope_values for matching
-                try:
-                    # Try to find by scope_values match (JSONB containment)
-                    existing = (
-                        sb_client.table('learning_lessons')
-                        .select('id')
-                        .eq('module', module)
-                        .eq('action_category', action_category)
-                        .execute()
-                    )
-                    
-                    # Filter in Python for exact scope_values match
-                    matching_lesson = None
-                    for lesson_row in (existing.data or []):
-                        # Check if scope_values match (would need to query full row)
-                        # For now, use a simpler approach: check by pattern_key if available
-                        pass
-                    
-                    # For simplicity, always update/insert (let DB handle uniqueness)
-                    existing_ids = [row['id'] for row in (existing.data or [])]
-                    
-                    # For now, always insert (can be refined to check for exact matches)
-                    # The unique constraint on (module, action_category, scope_values) will prevent duplicates
-                    try:
-                        sb_client.table('learning_lessons').insert(lesson).execute()
-                    except Exception as insert_error:
-                        # If insert fails due to uniqueness, try update
-                        if 'unique' in str(insert_error).lower() or 'duplicate' in str(insert_error).lower():
-                            # Find existing by scope_values
-                            update_result = (
-                                sb_client.table('learning_lessons')
-                                .select('id')
-                                .eq('module', module)
-                                .eq('action_category', action_category)
-                                .eq('scope_values', scope_values)
-                                .execute()
-                            )
-                            if update_result.data and len(update_result.data) > 0:
-                                sb_client.table('learning_lessons').update({
-                                    **lesson,
-                                    'last_validated': datetime.now(timezone.utc).isoformat()
-                                }).eq('id', update_result.data[0]['id']).execute()
-                            else:
-                                raise
-                        else:
-                            raise
-                    
-                    lessons_created += 1
-                    selected.append(candidate)
-
-                    tuning_overrides = {}
-                    if module == 'pm':
-                        tuning_overrides.update(_extract_tuning_overrides(stats, 's1_entry'))
-                        tuning_overrides.update(_extract_tuning_overrides(stats, 's3_retest'))
-                    if tuning_overrides:
-                        tuning_lesson = dict(lesson)
-                        tuning_lesson['lesson_type'] = 'pm_tuning'
-                        tuning_lesson['effect'] = tuning_overrides
-                        tuning_lesson['lesson_strength'] = min(1.0, abs(edge_raw) / 10.0)
-                        try:
-                            sb_client.table('learning_lessons').insert(tuning_lesson).execute()
-                            lessons_created += 1
-                        except Exception as insert_error:
-                            if 'unique' in str(insert_error).lower() or 'duplicate' in str(insert_error).lower():
-                                update_result = (
-                                    sb_client.table('learning_lessons')
-                                    .select('id')
-                                    .eq('module', module)
-                                    .eq('action_category', action_category)
-                                    .eq('scope_values', scope_values)
-                                    .eq('lesson_type', 'pm_tuning')
-                                    .execute()
-                                )
-                                if update_result.data:
-                                    sb_client.table('learning_lessons').update({
-                                        **tuning_lesson,
-                                        'last_validated': datetime.now(timezone.utc).isoformat()
-                                    }).eq('id', update_result.data[0]['id']).execute()
-                            else:
-                                logger.warning(f"Error creating tuning lesson for {pattern_key}: {insert_error}")
-                    
-                except Exception as e:
-                    logger.warning(f"Error creating lesson for {pattern_key}/{action_category}: {e}")
-                    continue
-        
-        logger.info(f"Created/updated {lessons_created} lessons from pattern_scope_stats for module {module}")
+                for val, slice_events in buckets.items():
+                    if len(slice_events) >= N_MIN_SLICE:
+                        # Found a stable slice!
+                        subset = {dim: val}
+                        stats = compute_lesson_stats(slice_events)
+                        await upsert_lesson(sb_client, module, pk, cat, subset, stats)
+                        lessons_created += 1
+                        
+        logger.info(f"Mined {lessons_created} lessons from {len(events)} events.")
         return lessons_created
-        
+
     except Exception as e:
-        logger.error(f"Error building lessons from pattern_scope_stats: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Mining failed: {e}")
         return 0
 
+async def upsert_lesson(sb: Client, module: str, pk: str, cat: str, subset: Dict, stats: Dict):
+    try:
+        # Payload
+        decay_meta = stats.get('decay_meta', {})
+        
+        payload = {
+            "module": module,
+            "pattern_key": pk,
+            "action_category": cat,
+            "scope_subset": subset,
+            "lesson_type": "pm_strength",
+            "n": stats['n'],
+            "stats": stats,
+            "decay_halflife_hours": decay_meta.get('half_life_hours'),
+            "status": "active",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Upsert using the new V5 constraint
+        # UNIQUE (module, pattern_key, action_category, scope_subset)
+        sb.table("learning_lessons").upsert(
+            payload, 
+            on_conflict="module,pattern_key,action_category,scope_subset"
+        ).execute()
+        
+    except Exception as e:
+        logger.warning(f"Lesson upsert failed: {e}")
+
+async def build_lessons_from_pattern_scope_stats(sb_client: Client, module: str = 'pm', **kwargs) -> int:
+    """Wrapper for backward compat."""
+    return await mine_lessons(sb_client, module)
 
 if __name__ == "__main__":
-    # Standalone execution
     import asyncio
     logging.basicConfig(level=logging.INFO)
-    
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not supabase_url or not supabase_key:
-        logger.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
-        exit(1)
-    
-    sb_client = create_client(supabase_url, supabase_key)
-    result = asyncio.run(build_lessons_from_pattern_scope_stats(sb_client, module='pm'))
-    print(f"Lessons created: {result}")
-
+    result = asyncio.run(mine_lessons(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))))
+    print(result)

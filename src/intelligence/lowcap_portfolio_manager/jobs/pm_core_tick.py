@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import os
 import logging
-from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime, timezone
 import uuid
 import statistics
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
 
 from supabase import create_client, Client  # type: ignore
 from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions, plan_actions_v4
 from src.intelligence.lowcap_portfolio_manager.pm.levers import compute_levers
 from src.intelligence.lowcap_portfolio_manager.pm.executor import PMExecutor
-from src.intelligence.lowcap_portfolio_manager.pm.config import load_pm_config
+from src.intelligence.lowcap_portfolio_manager.pm.config import load_pm_config, fetch_and_merge_db_config
+from src.intelligence.lowcap_portfolio_manager.pm.exposure import ExposureLookup, ExposureConfig
 from src.intelligence.lowcap_portfolio_manager.regime.bucket_context import fetch_bucket_phase_snapshot
 from src.intelligence.lowcap_portfolio_manager.pm.pattern_keys_v5 import (
     generate_canonical_pattern_key,
@@ -80,6 +81,7 @@ class PMCoreTick:
         
         # Initialize PM Executor (trader=None since we use Li.Fi SDK)
         self.executor = PMExecutor(trader=None, sb_client=self.sb)
+        self._exposure_lookup: Optional["ExposureLookup"] = None
 
     def _latest_phase(self) -> Dict[str, Any]:
         # Use portfolio-level meso phase for now
@@ -141,6 +143,44 @@ class PMCoreTick:
         regime_context["bucket_rank"] = bucket_snapshot.get("bucket_rank", [])
 
         return regime_context
+
+    def _positions_for_exposure(self) -> List[Dict[str, Any]]:
+        try:
+            res = (
+                self.sb.table("lowcap_positions")
+                .select("token_contract,token_chain,timeframe,status,total_allocation_pct,entry_context,features")
+                .in_("status", ["watchlist", "active"])
+                .limit(2000)
+                .execute()
+            )
+            return res.data or []
+        except Exception as exc:
+            logger.warning(f"Exposure lookup positions failed: {exc}")
+            return []
+
+    def _build_exposure_lookup(
+        self,
+        regime_context: Dict[str, Dict[str, Any]],
+        pm_cfg: Dict[str, Any],
+    ) -> Optional[ExposureLookup]:
+        positions = self._positions_for_exposure()
+        if not positions:
+            return None
+        try:
+            exposure_cfg = ExposureConfig.from_pm_config(pm_cfg)
+        except Exception as exc:
+            logger.warning(f"Exposure config failed: {exc}")
+            return None
+        defaults = {
+            "macro_phase": (regime_context.get("macro") or {}).get("phase"),
+            "meso_phase": (regime_context.get("meso") or {}).get("phase"),
+            "micro_phase": (regime_context.get("micro") or {}).get("phase"),
+        }
+        try:
+            return ExposureLookup.build(positions, exposure_cfg, defaults)
+        except Exception as exc:
+            logger.warning(f"Exposure lookup build failed: {exc}")
+            return None
 
     def _latest_cut_pressure(self) -> float:
         res = self.sb.table("portfolio_bands").select("cut_pressure").order("ts", desc=True).limit(1).execute()
@@ -2038,7 +2078,9 @@ class PMCoreTick:
         # Get regime context (macro/meso/micro) for all PM strands
         regime_context = self._get_regime_context()
         pm_cfg = load_pm_config()
+        pm_cfg = fetch_and_merge_db_config(pm_cfg, self.sb)
         bucket_cfg = pm_cfg.get("bucket_order_multipliers") or {}
+        exposure_lookup = self._build_exposure_lookup(regime_context, pm_cfg)
 
         positions = self._active_positions()
         token_keys = [(p.get("token_contract"), p.get("token_chain")) for p in positions]
@@ -2120,20 +2162,17 @@ class PMCoreTick:
             if use_v4 and actions_enabled:
                 # Get feature flags from config (if available)
                 feature_flags = {}
-                try:
-                    config = load_pm_config(self.sb)
-                    feature_flags = config.get("feature_flags", {})
-                except Exception:
-                    pass
+                feature_flags = pm_cfg.get("feature_flags", {})
                 
                 actions = plan_actions_v4(
                     p, a_final, e_final, str(phase), self.sb,
                     regime_context=regime_context,
                     token_bucket=token_bucket,
-                    feature_flags=feature_flags
+                    feature_flags=feature_flags,
+                    exposure_lookup=exposure_lookup
                 )
             elif actions_enabled:
-                actions = plan_actions(p, a_final, e_final, str(phase))
+                actions = plan_actions(p, a_final, e_final, str(phase), exposure_lookup=exposure_lookup)
             else:
                 actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
             

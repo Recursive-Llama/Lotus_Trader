@@ -12,11 +12,8 @@ import logging
 import uuid
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
-from config.allocation_manager import AllocationManager
 from intelligence.universal_learning.coefficient_reader import CoefficientReader
 from intelligence.universal_learning.bucket_vocabulary import BucketVocabulary
-from src.intelligence.lowcap_portfolio_manager.pm.overrides import apply_allocation_overrides
-from src.intelligence.lowcap_portfolio_manager.pm.pattern_keys_v5 import generate_canonical_pattern_key
 from src.intelligence.lowcap_portfolio_manager.regime.bucket_context import fetch_bucket_phase_snapshot
 
 logger = logging.getLogger(__name__)
@@ -44,8 +41,7 @@ class DecisionMakerLowcapSimple:
         
         # Simple configuration
         self.config = config or self._get_default_config()
-        self.learning_feature_flags = self.config.get('learning_overrides', {}) or {}
-        self.allocation_manager = AllocationManager(self.config)
+        self.default_allocation_pct = float(self.config.get('default_allocation_pct', 10.0))
         self.book_id = self.config.get('book_id', 'social')
         
         # Initialize learning system components
@@ -140,7 +136,6 @@ class DecisionMakerLowcapSimple:
             'min_curator_score': 0.6,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
-            # Note: Allocation percentages are now handled by AllocationManager
             'chain_multipliers': {
                 'ethereum': 2.0,  # 2x boost for Ethereum
                 'base': 2.0,      # 2x boost for Base
@@ -254,10 +249,8 @@ class DecisionMakerLowcapSimple:
             # All checks passed → approve
             # Extract intent analysis from signal pack
             intent_analysis = social_signal.get('signal_pack', {}).get('intent_analysis')
-            # Calculate allocation using learned coefficients (Phase 3) - pass curator_id and venue_data
-            allocation_pct = self._calculate_allocation_with_curator(
-                curator_id, curator_score, intent_analysis, token_data, venue_data
-            )
+            # DM now uses a single base allocation percentage (configurable)
+            allocation_pct = self.default_allocation_pct
             decision = await self._create_approval_decision(social_signal, allocation_pct, curator_score, intent_analysis)
             
             # Enhanced logging with intent information
@@ -378,170 +371,7 @@ class DecisionMakerLowcapSimple:
             self.logger.error(f"Error checking portfolio capacity: {e}")
             return True  # Assume we have capital if we can't check
     
-    def _calculate_allocation_with_curator(
-        self,
-        curator_id: str,
-        curator_score: float,
-        intent_analysis: Dict[str, Any] = None,
-        token_data: Dict[str, Any] = None,
-        venue_data: Dict[str, Any] = None
-    ) -> float:
-        """
-        Calculate allocation with curator ID for entry context.
-        
-        Args:
-            curator_id: Curator identifier
-            curator_score: Curator performance score
-            intent_analysis: Intent analysis (optional)
-            token_data: Token data (optional)
-            
-        Returns:
-            Allocation percentage
-        """
-        # Build entry context with curator ID
-        entry_context = self._build_entry_context_for_learning(
-            curator_score, intent_analysis, token_data, venue_data
-        )
-        entry_context['curator'] = curator_id
-        
-        # Calculate allocation using learned coefficients
-        try:
-            # Use centralized allocation manager for base allocation
-            base_allocation = self.allocation_manager.get_social_curator_allocation(
-                curator_score, test_mode=False
-            )
-            
-            # Get learned multiplier from coefficients
-            try:
-                learned_multiplier = self.coefficient_reader.calculate_allocation_multiplier(
-                    entry_context, module='dm'
-                )
-                
-                # Apply learned multiplier
-                allocation = base_allocation * learned_multiplier
-                
-                self.logger.info(f"Learned allocation multiplier: {learned_multiplier:.3f}x")
-                self.logger.info(f"Allocation: {base_allocation:.2f}% × {learned_multiplier:.3f} = {allocation:.2f}%")
-                
-            except Exception as e:
-                self.logger.warning(f"Error getting learned coefficients, falling back to static multipliers: {e}")
-                # Fallback to static multipliers if learning system unavailable
-                allocation = self._calculate_allocation_static_fallback(
-                    base_allocation, intent_analysis, token_data
-                )
-            
-            # Apply allocation overrides (pattern-based learning)
-            try:
-                lesson_context = self._augment_dm_context(entry_context.copy())
-                dm_action_context = lesson_context.copy()
-                dm_action_context.setdefault("state", "allocation")
-                pattern_key, action_category = generate_canonical_pattern_key(
-                    module='dm',
-                    action_type='allocation',
-                    action_context=dm_action_context
-                )
-                scope = {k: v for k, v in lesson_context.items() if v is not None}
-                allocation = apply_allocation_overrides(
-                    pattern_key=pattern_key,
-                    action_category=action_category,
-                    scope=scope,
-                    base_allocation_pct=allocation,
-                    sb_client=self.supabase_manager.client,
-                    feature_flags=self.learning_feature_flags
-                )
-                self.logger.info(f"Applied DM allocation overrides, final allocation: {allocation:.2f}%")
-            except Exception as e:
-                self.logger.warning(f"Error applying allocation overrides, using allocation without adjustments: {e}")
-                # Continue with allocation without lessons if error occurs
-            
-            # Clamp to reasonable bounds
-            allocation = max(0.1, min(20.0, allocation))
-            
-            return allocation
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating allocation: {e}")
-            # Fallback to acceptable allocation if error occurs
-            return self.allocation_manager.get_social_curator_allocation(0.5)  # 0.5 score = acceptable
-    
-    def _calculate_allocation(self, curator_score: float, intent_analysis: Dict[str, Any] = None, token_data: Dict[str, Any] = None) -> float:
-        """
-        Step 4: Calculate allocation percentage using learned coefficients (Phase 3).
-        
-        Formula: allocation = base_allocation × learned_multiplier
-        Where learned_multiplier = ∏(lever_weight) × interaction_weight
-        
-        Args:
-            curator_score: Curator performance score (0.0 to 1.0)
-            intent_analysis: Intent analysis from Stage 2 (optional)
-            token_data: Token data containing market cap, volume, age, chain (optional)
-            
-        Returns:
-            Allocation percentage
-        """
-        try:
-            # Use centralized allocation manager for base allocation
-            base_allocation = self.allocation_manager.get_social_curator_allocation(
-                curator_score, test_mode=False
-            )
-            
-            # Build entry context for learned coefficients (venue_data not available in this context)
-            entry_context = self._build_entry_context_for_learning(
-                curator_score, intent_analysis, token_data, venue_data=None
-            )
-            
-            # Get learned multiplier from coefficients
-            try:
-                learned_multiplier = self.coefficient_reader.calculate_allocation_multiplier(
-                    entry_context, module='dm'
-                )
-                
-                # Apply learned multiplier
-                allocation = base_allocation * learned_multiplier
-                
-                self.logger.info(f"Learned allocation multiplier: {learned_multiplier:.3f}x")
-                self.logger.info(f"Allocation: {base_allocation:.2f}% × {learned_multiplier:.3f} = {allocation:.2f}%")
-                
-            except Exception as e:
-                self.logger.warning(f"Error getting learned coefficients, falling back to static multipliers: {e}")
-                # Fallback to static multipliers if learning system unavailable
-                allocation = self._calculate_allocation_static_fallback(
-                    base_allocation, intent_analysis, token_data
-                )
-            
-            # Apply allocation overrides (pattern-based learning)
-            try:
-                lesson_context = self._augment_dm_context(entry_context.copy())
-                dm_action_context = lesson_context.copy()
-                dm_action_context.setdefault("state", "allocation")
-                pattern_key, action_category = generate_canonical_pattern_key(
-                    module='dm',
-                    action_type='allocation',
-                    action_context=dm_action_context
-                )
-                scope = {k: v for k, v in lesson_context.items() if v is not None}
-                allocation = apply_allocation_overrides(
-                    pattern_key=pattern_key,
-                    action_category=action_category,
-                    scope=scope,
-                    base_allocation_pct=allocation,
-                    sb_client=self.supabase_manager.client,
-                    feature_flags=self.learning_feature_flags
-                )
-                self.logger.info(f"Applied DM allocation overrides, final allocation: {allocation:.2f}%")
-            except Exception as e:
-                self.logger.warning(f"Error applying allocation overrides, using allocation without adjustments: {e}")
-                # Continue with allocation without lessons if error occurs
-            
-            # Clamp to reasonable bounds (AllocationManager handles this, but double-check)
-            allocation = max(0.1, min(20.0, allocation))
-            
-            return allocation
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating allocation: {e}")
-            # Fallback to acceptable allocation if error occurs
-            return self.allocation_manager.get_social_curator_allocation(0.5)  # 0.5 score = acceptable
+    # Legacy allocation-learning helpers removed; DM now uses a single configurable base percentage.
     
     def _build_entry_context_for_learning(
         self,
@@ -616,79 +446,6 @@ class DecisionMakerLowcapSimple:
         
         return entry_context
     
-    def _calculate_allocation_static_fallback(
-        self,
-        base_allocation: float,
-        intent_analysis: Dict[str, Any] = None,
-        token_data: Dict[str, Any] = None
-    ) -> float:
-        """
-        Fallback to static multipliers if learned coefficients unavailable.
-        
-        This preserves the old behavior when learning system is not yet populated.
-        
-        Args:
-            base_allocation: Base allocation percentage
-            intent_analysis: Intent analysis (optional)
-            token_data: Token data (optional)
-            
-        Returns:
-            Allocation percentage with static multipliers applied
-        """
-        allocation = base_allocation
-        
-        # Apply intent multiplier if available
-        if intent_analysis:
-            intent_data = intent_analysis.get('intent_analysis', {})
-            multiplier = intent_data.get('allocation_multiplier', 1.0)
-            allocation = allocation * multiplier
-        
-        # Apply static multipliers if token_data available
-        if token_data:
-            market_cap = token_data.get('market_cap')
-            if market_cap and market_cap > 0:
-                market_cap_multiplier = self._get_market_cap_multiplier(market_cap)
-                allocation = allocation * market_cap_multiplier
-            
-            age_days = token_data.get('age_days')
-            if age_days is not None:
-                age_multiplier = self._get_age_multiplier(age_days)
-                allocation = allocation * age_multiplier
-            
-            chain = token_data.get('chain', '').lower()
-            chain_multiplier = self._get_chain_multiplier(chain)
-            allocation = allocation * chain_multiplier
-        
-        return allocation
-    
-    def _get_market_cap_multiplier(self, market_cap: float) -> float:
-        """Get allocation multiplier based on market cap"""
-        if market_cap < 100_000:  # < $100k
-            return 0.33
-        elif market_cap < 1_000_000:  # $100k - $1M
-            return 0.5
-        elif market_cap < 10_000_000:  # $1M - $10M
-            return 1.0
-        elif market_cap < 100_000_000:  # $10M - $100M
-            return 1.33
-        else:  # $100M+
-            return 1.5
-    
-    def _get_age_multiplier(self, age_days: int) -> float:
-        """Get allocation multiplier based on token age"""
-        if age_days < 1:  # < 24 hours
-            return 0.5
-        elif age_days < 2:  # < 48 hours  
-            return 0.6
-        elif age_days < 3:  # < 72 hours
-            return 0.9
-        else:  # 3+ days
-            return 1.0
-    
-    def _get_chain_multiplier(self, chain: str) -> float:
-        """Get allocation multiplier based on chain"""
-        chain_multipliers = self.config.get('chain_multipliers', {})
-        return chain_multipliers.get(chain.lower(), 1.0)
     
     async def _create_approval_decision(self, social_signal: Dict[str, Any], allocation_pct: float, curator_score: float, intent_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create approval decision strand"""

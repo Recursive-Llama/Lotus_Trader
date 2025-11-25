@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 from supabase import create_client, Client  # type: ignore
@@ -9,6 +10,7 @@ from .config import load_pm_config
 from .bucketing_helpers import bucket_a_e, bucket_score
 from .overrides import apply_pattern_strength_overrides, apply_pattern_execution_overrides
 from .pattern_keys_v5 import generate_canonical_pattern_key, extract_scope_from_context
+from .exposure import ExposureLookup
 
 
 def _apply_v5_overrides_to_action(
@@ -20,24 +22,11 @@ def _apply_v5_overrides_to_action(
     regime_context: Optional[Dict[str, Any]],
     token_bucket: Optional[str],
     sb_client: Optional[Client],
-    feature_flags: Optional[Dict[str, Any]]
+    feature_flags: Optional[Dict[str, Any]],
+    exposure_lookup: Optional[ExposureLookup] = None,
 ) -> Dict[str, Any]:
     """
-    Apply v5 pattern-based overrides to an action.
-    
-    Args:
-        action: Action dict
-        position: Position dict
-        a_final: Final A value
-        e_final: Final E value
-        position_size_frac: Position size fraction
-        regime_context: Regime context
-        token_bucket: Token bucket
-        sb_client: Supabase client
-        feature_flags: Feature flags
-    
-    Returns:
-        Modified action dict
+    Apply v5 pattern-based overrides plus exposure skew to an action.
     """
     if not sb_client or not regime_context:
         return action
@@ -48,7 +37,6 @@ def _apply_v5_overrides_to_action(
         state = uptrend.get("state", "")
         decision_type = action.get("decision_type", "").lower()
         
-        # Map decision_type to action_category
         action_category_map = {
             "add": "entry" if not features.get("pm_execution_history", {}).get("last_s1_buy") else "add",
             "trim": "trim",
@@ -56,7 +44,6 @@ def _apply_v5_overrides_to_action(
         }
         action_category = action_category_map.get(decision_type, "entry")
         
-        # Build action_context for pattern key generation
         action_context = {
             "state": state,
             "timeframe": position.get("timeframe", "1h"),
@@ -69,7 +56,6 @@ def _apply_v5_overrides_to_action(
             "market_family": "lowcaps",
         }
         
-        # Generate pattern key
         pattern_key, _ = generate_canonical_pattern_key(
             module="pm",
             action_type=decision_type,
@@ -80,7 +66,6 @@ def _apply_v5_overrides_to_action(
         if not pattern_key:
             return action
         
-        # Extract scope
         bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
         scope = extract_scope_from_context(
             action_context=action_context,
@@ -89,7 +74,24 @@ def _apply_v5_overrides_to_action(
             bucket_rank=bucket_rank
         )
         
-        # Apply strength overrides (affects size_frac)
+        entry_context = position.get("entry_context") or {}
+        scope = {
+            **scope,
+            "curator": entry_context.get("curator"),
+            "chain": entry_context.get("chain") or position.get("token_chain"),
+            "mcap_bucket": entry_context.get("mcap_bucket") or scope.get("mcap_bucket"),
+            "vol_bucket": entry_context.get("vol_bucket"),
+            "age_bucket": entry_context.get("age_bucket"),
+            "intent": entry_context.get("intent", "unknown"),
+            "mcap_vol_ratio_bucket": entry_context.get("mcap_vol_ratio_bucket"),
+        }
+        
+        learning_mults = action.setdefault("learning_multipliers", {})
+        exposure_skew = 1.0
+        if exposure_lookup:
+            exposure_skew = exposure_lookup.lookup(pattern_key, scope)
+        learning_mults["exposure_skew"] = exposure_skew
+        
         base_levers = {
             "A_value": a_final,
             "E_value": e_final,
@@ -104,12 +106,21 @@ def _apply_v5_overrides_to_action(
             feature_flags=feature_flags
         )
         
-        # Adjust size_frac based on overrides
         if adjusted_levers != base_levers:
             size_mult = adjusted_levers.get("position_size_frac", position_size_frac) / position_size_frac if position_size_frac > 0 else 1.0
-            action["size_frac"] = min(1.0, max(0.0, action.get("size_frac", 0.0) * size_mult))
+        else:
+            size_mult = 1.0
         
-        # Apply execution overrides (affects reasons/controls)
+        final_mult = size_mult * exposure_skew
+        action["size_frac"] = min(1.0, max(0.0, action.get("size_frac", 0.0) * final_mult))
+        
+        learning_mults["pm_strength"] = size_mult
+        learning_mults["combined_multiplier"] = final_mult
+        reasons = action.setdefault("reasons", {})
+        reasons["pm_strength"] = size_mult
+        reasons["exposure_skew"] = exposure_skew
+        reasons["pm_final_multiplier"] = final_mult
+        
         plan_controls = action.get("reasons", {})
         adjusted_controls = apply_pattern_execution_overrides(
             pattern_key=pattern_key,
@@ -120,13 +131,10 @@ def _apply_v5_overrides_to_action(
             feature_flags=feature_flags
         )
         
-        # Merge adjusted controls into reasons
         if adjusted_controls != plan_controls:
             action["reasons"] = {**plan_controls, **adjusted_controls}
         
     except Exception as e:
-        # Log but don't fail
-        import logging
         logging.getLogger(__name__).warning(f"Error applying v5 overrides: {e}")
     
     return action
@@ -148,10 +156,19 @@ def e_slice_from_e(e_final: float) -> float:
     return 0.12
 
 
-def plan_actions(position: Dict[str, Any], a_final: float, e_final: float, phase_meso: str) -> List[Dict[str, Any]]:
-    """Minimal v1 mapping from A/E and geometry flags to actions.
-    Returns a list of decision dicts with keys: decision_type, size_frac, reasons.
-    """
+def plan_actions(
+    position: Dict[str, Any],
+    a_final: float,
+    e_final: float,
+    phase_meso: str,
+    exposure_lookup: Optional[ExposureLookup] = None,
+) -> List[Dict[str, Any]]:
+"""Minimal v1 mapping from A/E and geometry flags to actions.
+Returns a list of decision dicts with keys: decision_type, size_frac, reasons.
+
+Args:
+    exposure_lookup: Optional helper used to apply exposure_skew multipliers.
+"""
     actions: List[Dict[str, Any]] = []
     features = position.get("features") or {}
     geometry = (features.get("geometry") if isinstance(features, dict) else None) or {}
@@ -418,7 +435,8 @@ def plan_actions_v4(
     sb_client: Optional[Client] = None,
     regime_context: Optional[Dict[str, Any]] = None,
     token_bucket: Optional[str] = None,
-    feature_flags: Optional[Dict[str, Any]] = None
+    feature_flags: Optional[Dict[str, Any]] = None,
+    exposure_lookup: Optional[ExposureLookup] = None,
 ) -> List[Dict[str, Any]]:
     """
     New PM action planning using Uptrend Engine v4 signals + A/E scores.
@@ -438,6 +456,7 @@ def plan_actions_v4(
         regime_context: Optional regime context dict (for override matching)
         token_bucket: Optional token bucket (for override matching)
         feature_flags: Optional feature flags dict
+        exposure_lookup: Optional exposure lookup helper (for exposure_skew multiplier)
     
     Returns:
         List of action dicts (empty list = no action, no strand emitted)
@@ -502,7 +521,8 @@ def plan_actions_v4(
         # Apply v5 overrides
         action = _apply_v5_overrides_to_action(
             action, position, a_final, e_final, position_size_frac,
-            regime_context, token_bucket, sb_client, feature_flags
+            regime_context, token_bucket, sb_client, feature_flags,
+            exposure_lookup=exposure_lookup
         )
         return [action]
     
@@ -523,7 +543,8 @@ def plan_actions_v4(
         # Apply v5 overrides
         action = _apply_v5_overrides_to_action(
             action, position, a_final, e_final, position_size_frac,
-            regime_context, token_bucket, sb_client, feature_flags
+            regime_context, token_bucket, sb_client, feature_flags,
+            exposure_lookup=exposure_lookup
         )
         return [action]
     
@@ -601,7 +622,8 @@ def plan_actions_v4(
             # Apply v5 overrides
             action = _apply_v5_overrides_to_action(
                 action, position, a_final, e_final, position_size_frac,
-                regime_context, token_bucket, sb_client, feature_flags
+                regime_context, token_bucket, sb_client, feature_flags,
+                exposure_lookup=exposure_lookup
             )
             return [action]
     
@@ -644,7 +666,8 @@ def plan_actions_v4(
                 # Apply v5 overrides
                 action = _apply_v5_overrides_to_action(
                     action, position, a_final, e_final, position_size_frac,
-                    regime_context, token_bucket, sb_client, feature_flags
+                    regime_context, token_bucket, sb_client, feature_flags,
+                    exposure_lookup=exposure_lookup
                 )
                 return [action]
     
@@ -709,7 +732,8 @@ def plan_actions_v4(
                 # Apply v5 overrides
                 action = _apply_v5_overrides_to_action(
                     action, position, a_final, e_final, position_size_frac,
-                    regime_context, token_bucket, sb_client, feature_flags
+                    regime_context, token_bucket, sb_client, feature_flags,
+                    exposure_lookup=exposure_lookup
                 )
                 return [action]
     

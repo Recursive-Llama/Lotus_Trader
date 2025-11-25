@@ -56,24 +56,25 @@ If the scheduler omits any learning job, stop: packet would die at “learning j
 #### 2.2 Aggregator + Lesson + Materializer Pass
 
 1. Wait for (or manually trigger) `pattern_scope_aggregator`.
-2. Query `pattern_scope_stats` for the relevant `pattern_key` and scope subsets. Verify:
-   - `stats.edge_raw` updated (DM & PM channels).
-   - `stats.tuning` contains counts for `s1_entry` / `s3_retest`.
+2. Query `pattern_trade_events` (Fact Table) for the relevant `pattern_key`. Verify:
+   - Rows exist for each action (Entry, Trim, Exit).
+   - `scope` column is JSONB and contains full context.
+   - `rr` and `pnl_usd` match the trade summary.
 3. After next scheduler cycle, query `learning_lessons`:
-   - `lesson_type='dm_alloc'` row appended.
-   - `lesson_type='pm_strength'` row appended.
-   - `lesson_type='pm_tuning'` row appended with only signal-threshold levers.
-4. After materializer runs, query `learning_configs`:
-   - `config_data.alloc_overrides` contains new DM override with stats metadata.
-   - `config_data.pattern_strength_overrides` updated.
-   - `config_data.pattern_tuning_overrides` updated.
+   - `lesson_type='pm_strength'` row created/updated.
+   - `stats` includes `avg_rr`, `edge_raw`, and decay metadata.
+   - `scope_subset` matches the targeted slice (e.g., `chain=solana`).
+4. After materializer runs, query `pm_overrides`:
+   - Row exists for `pattern_key` + `scope_subset`.
+   - `multiplier` is calculated (e.g., >1.0 for positive edge).
+   - Note: We no longer push these to `learning_configs` JSON blobs; Runtime PM reads `pm_overrides` directly.
 5. If any table missing data, log “packet died at aggregator/lesson/materializer stage” with exact query.
 
 ---
 
 ### 3. Full-System Flow Scenarios
 
-#### 3.1 Multi-Bucket Scenario
+#### 3.1 Multi-Bucket + Exposure Scenario
 
 1. Inject three signals covering:
    - Micro cap (1 h focus)
@@ -86,13 +87,14 @@ If the scheduler omits any learning job, stop: packet would die at “learning j
    - S3 retest success/failure.
 3. Allow system to run for ≥2 hours so aggregator/lessons/materializer cycle multiple times.
 4. Queries per timeframe:
-   - `pattern_scope_stats` shows separate rows per scope subset (macro phase, cap bucket, timeframe).
+   - `pattern_scope_stats` shows separate rows per unified scope subset (entry + action + regime).
    - `learning_lessons` count increments for each scenario.
-   - `learning_configs` overrides show decay metadata updating (`age_hours`).
-5. Trigger new PM actions after overrides exist; inspect runtime telemetry/logs to confirm:
-   - DM allocation multipliers applied (log shows alloc_mult ≠ 1.0).
-   - PM strength multipliers applied (A/E biases).
-   - PM tuning thresholds shifted (TS/DX gates different from neutral). Use `plan_controls` debug output.
+   - `pm_overrides` shows updated multipliers and decay state.
+5. Trigger new PM actions in the SAME scope clusters. Inspect runtime telemetry/logs to confirm:
+   - `pm_strength` multiplier applied (base * strength).
+   - `exposure_skew` multiplier applied (< 1.0 due to crowding).
+   - `pm_action` strand contains `pm_strength_applied` and `exposure_skew_applied`.
+   - PM tuning thresholds shifted (TS/DX gates different from neutral).
 
 #### 3.2 Backfill & Rollup Scenario
 
@@ -163,17 +165,16 @@ The single existing harness (“social → decision → trader bootstrap”) doe
 | **Trader bootstrap** | Decision approval triggers trader, backfill jobs fire, trade attempt logged | ✅ same harness | Add assertions for notifier / order path once we point to sim executors |
 | **PM action loop (Uptrend engine, buys/sells, position bookkeeping)** | Synthetic price/state data drives S0→S1→S2→S3 flows, `pm_action` / `uptrend_*` strands emitted, quantities update correctly | ✅ `pm_action_harness` covers this | Verifies S1 entry, S3 retest, emergency_exit, S3→S0/S1→S0 transitions, strand counts, position status |
 | **Learning pipeline (aggregator → lessons → overrides)** | `pattern_scope_stats` rows accumulate edge/tuning stats, `learning_lessons` emits dm/pm/tuning lessons, `learning_configs` stores overrides with decay metadata | ⏳ needs harness | **Next**: Build "learning_pipeline_harness": select `position_closed` strands → run `pattern_scope_aggregator`, `lesson_builder_v5`, `override_materializer`, assert DB mutations. Note: braiding system removed, now uses v5 pattern scope aggregation. |
-| **Runtime override application** | Logs show DM alloc multipliers, PM strength (A/E) bias, PM tuning thresholds deviating from neutral, scope-weighted blends | ❌ not covered | Add diagnostic toggle to `DecisionMakerLowcapSimple` & PM runtime to dump applied overrides during harness scenarios |
+| **Runtime override application** | Logs show PM strength bias, `exposure_skew` damping, PM tuning thresholds deviating from neutral | ❌ not covered | Add diagnostic toggle to PM runtime to dump applied overrides during harness scenarios |
 | **Hyperliquid WS + majors rollups** | HL ingester connected, 1m points stored, 1m→5m/15m/1h conversions succeed, macro context updates | ✅ `majors_feed_harness` covers this | Validates WS ingest (PASS/FAIL), 1m rollup writes, higher timeframe conversions, phase_state updates |
 | **Lowcap OHLC + TA tracker** | `GenericOHLCRollup` and `ta_tracker` produce EMA/ATR/TS/OX/DX values for the test token, geometry builder outputs shapes | partial (TA snapshot proves tracker ran once, but no assertions) | Add verification step in PM action harness to query TA tables and compare expected metrics; add geometry assertions |
-| **DM allocation learning** | `learning_lessons` rows with `lesson_type='dm_alloc'`, `learning_configs.alloc_overrides` updated, DM decisions reflect new multipliers | ❌ not covered | Extend learning harness with multi-bucket signals and rerun DM decisions to observe allocations |
+| **DM allocation learning** | DEPRECATED (DM simplification) | N/A | Removed from test plan |
 | **Diagnostics (strand replay, lesson dry run, materializer dry run)** | Each tool processes real snapshots independently | ❌ not covered | Provide CLI scripts per §4 so we can isolate failures |
 
 **Next actions**
 1. ✅ **PM action harness** - Built and working. Verifies S1 entry, S3 retest, emergency_exit, trade closure, strand emission.
 2. ✅ **Majors feed harness** - Built and working. Validates Hyperliquid WS ingest + rollups with explicit PASS/FAIL.
-3. ⏳ **Learning pipeline harness** - **NEXT PRIORITY**: Build harness to test `pattern_scope_aggregator` → `lesson_builder_v5` → `override_materializer` flow. Should select `position_closed` strands, run each job, assert `pattern_scope_stats` / `learning_lessons` / `learning_configs` updates.
-4. ⏳ **Runtime override verification** - Add diagnostic logging to prove DM/PM apply overrides during harness runs.
-5. ⏳ **Full integration test** - Once all harnesses pass, consider combined "full stack" test via `run_social_trading.py`.
+3. ⏳ **Learning pipeline harness** - **NEXT PRIORITY**: Build harness to test `pattern_scope_aggregator` → `lesson_builder_v5` → `override_materializer` flow. Should select `position_closed` strands, run each job, assert `pattern_scope_stats` (unified scope) / `learning_lessons` / `learning_configs` updates.
+4. ⏳ **Exposure / Sizing verification** - Extend PM action harness to assert `exposure_skew < 1.0` when multiple positions share scope.
 
 Once each harness is green, we can revisit whether a combined “full stack” rehearsal (possibly via `run_social_trading.py` plus scripted inputs) is needed, but keeping the harnesses modular gives us clearer failure boundaries.
