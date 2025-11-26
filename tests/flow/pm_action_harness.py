@@ -18,7 +18,8 @@ import asyncio
 import logging
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict
+import time
 
 from dotenv import load_dotenv
 
@@ -28,6 +29,98 @@ from tests.flow.pm_learning_flow_harness import PMLearningFlowHarness
 
 
 LOGGER = logging.getLogger("pm_action_harness")
+
+
+class HarnessMockExecutor:
+    """
+    Lightweight executor stub for harness runs.
+    Returns deterministic fills so pm_core_tick can update quantities
+    without needing real wallets/RPC access.
+    """
+
+    def __init__(self, sb_client) -> None:
+        self.sb = sb_client
+        self.logger = logging.getLogger("HarnessMockExecutor")
+
+    def execute(self, decision: Dict[str, Any], position: Dict[str, Any]) -> Dict[str, Any]:
+        decision_type = (decision.get("decision_type") or "").lower()
+        if decision_type in ("", "hold"):
+            return {"status": "error", "error": "No-op decision"}
+
+        price = self._resolve_price(position)
+        if price <= 0:
+            return {"status": "error", "error": "mock price unavailable"}
+
+        size_frac = max(0.0, float(decision.get("size_frac") or 0.0))
+        total_qty = float(position.get("total_quantity") or 0.0)
+        alloc_usd = float(
+            position.get("usd_alloc_remaining")
+            or position.get("total_allocation_usd")
+            or 0.0
+        )
+
+        tx_hash = f"mock-{decision_type}-{int(time.time())}"
+
+        if decision_type in ("entry", "add", "trend_add"):
+            if alloc_usd <= 0:
+                # Fallback to a nominal notional so quantities advance.
+                alloc_usd = 100.0
+            notional_usd = max(0.0, alloc_usd * size_frac)
+            tokens_bought = notional_usd / price if price > 0 else 0.0
+            return {
+                "status": "success",
+                "tx_hash": tx_hash,
+                "tokens_bought": tokens_bought,
+                "tokens_sold": 0.0,
+                "price": price,
+                "price_native": price,
+                "notional_usd": notional_usd,
+                "actual_usd": 0.0,
+                "slippage": 0.0,
+            }
+
+        if decision_type in ("trim", "emergency_exit"):
+            tokens_sold = total_qty if decision_type == "emergency_exit" else total_qty * size_frac
+            tokens_sold = max(0.0, tokens_sold)
+            actual_usd = tokens_sold * price
+            return {
+                "status": "success",
+                "tx_hash": tx_hash,
+                "tokens_bought": 0.0,
+                "tokens_sold": tokens_sold,
+                "price": price,
+                "price_native": price,
+                "notional_usd": 0.0,
+                "actual_usd": actual_usd,
+                "slippage": 0.0,
+            }
+
+        return {"status": "error", "error": f"Unsupported decision {decision_type}"}
+
+    def _resolve_price(self, position: Dict[str, Any]) -> float:
+        features = position.get("features") or {}
+        uptrend = features.get("uptrend_engine_v4") or {}
+        price = float(uptrend.get("price") or 0.0)
+        if price > 0:
+            return price
+
+        try:
+            result = (
+                self.sb.table("lowcap_price_data_ohlc")
+                .select("close_usd")
+                .eq("token_contract", position.get("token_contract"))
+                .eq("chain", position.get("token_chain"))
+                .eq("timeframe", position.get("timeframe", "1h"))
+                .order("timestamp", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                price = float(result.data[0].get("close_usd") or 0.0)
+        except Exception as exc:
+            self.logger.debug("mock executor price lookup failed: %s", exc)
+
+        return price
 
 
 class PMActionHarness:
@@ -64,6 +157,7 @@ class PMActionHarness:
                     emergency_exit=False,
                 ),
                 "expected_status": "active",  # Should enter, stay active
+                "reset_to_watchlist": True,   # Force fresh entry slot
             },
             {
                 "name": "S3 retest buy",
@@ -132,15 +226,16 @@ class PMActionHarness:
             if scenario.get("ensure_no_trade"):
                 # Clear trade_id and set to watchlist for scenarios that shouldn't have a trade
                 self._clear_trade_id()
-            elif scenario.get("expected_status") == "active":
-                # For entry scenarios, ensure we start from watchlist with no trade_id
-                # This allows PM to create a new trade
+            elif scenario.get("reset_to_watchlist"):
+                # Force reset when scenario explicitly needs a fresh slot
                 self._ensure_watchlist_state()
             
             self._apply_uptrend_state(scenario["uptrend"])
             LOGGER.info("Running pm_core_tick...")
             try:
-                strands_written = PMCoreTick(timeframe=self.TEST_TIMEFRAME).run()
+                pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+                pm_tick.executor = HarnessMockExecutor(pm_tick.sb)
+                strands_written = pm_tick.run()
                 LOGGER.info("pm_core_tick completed, wrote %d strands", strands_written)
             except Exception as e:
                 LOGGER.error("pm_core_tick failed: %s", e, exc_info=True)

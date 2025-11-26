@@ -163,12 +163,12 @@ def plan_actions(
     phase_meso: str,
     exposure_lookup: Optional[ExposureLookup] = None,
 ) -> List[Dict[str, Any]]:
-"""Minimal v1 mapping from A/E and geometry flags to actions.
-Returns a list of decision dicts with keys: decision_type, size_frac, reasons.
+    """Minimal v1 mapping from A/E and geometry flags to actions.
+    Returns a list of decision dicts with keys: decision_type, size_frac, reasons.
 
 Args:
     exposure_lookup: Optional helper used to apply exposure_skew multipliers.
-"""
+    """
     actions: List[Dict[str, Any]] = []
     features = position.get("features") or {}
     geometry = (features.get("geometry") if isinstance(features, dict) else None) or {}
@@ -390,16 +390,6 @@ def _e_to_trim_size(e_final: float) -> float:
 def _count_bars_since(timestamp_iso: str, token_contract: str, chain: str, timeframe: str, sb_client: Optional[Client] = None) -> int:
     """
     Count OHLC bars since a timestamp for a specific token/chain/timeframe.
-    
-    Args:
-        timestamp_iso: ISO timestamp string (e.g., "2024-01-15T10:00:00Z")
-        token_contract: Token contract address
-        chain: Chain (solana, ethereum, base, bsc)
-        timeframe: Timeframe (1m, 15m, 1h, 4h)
-        sb_client: Optional Supabase client (creates one if not provided)
-    
-    Returns:
-        Number of bars since the timestamp
     """
     if sb_client is None:
         url = os.getenv("SUPABASE_URL", "")
@@ -422,6 +412,10 @@ def _count_bars_since(timestamp_iso: str, token_contract: str, chain: str, timef
     except Exception:
         return 0
 
+def _calculate_halo_dist(price: float, ema60: float, atr: float) -> float:
+    if atr > 0 and ema60 > 0:
+        return abs(price - ema60) / atr
+    return 999.0 # Far away
 
 # ============================================================================
 # plan_actions_v4() - New PM action planning using Uptrend Engine v4 signals
@@ -628,13 +622,81 @@ def plan_actions_v4(
             return [action]
     
     # Entry Gates (S1, S2, S3) - Check execution history
-    buy_signal = uptrend.get("buy_signal", False)  # S1
+    base_buy_signal = uptrend.get("buy_signal", False)  # S1
     buy_flag = uptrend.get("buy_flag", False)  # S2 retest or S3 DX
     first_dip_buy_flag = uptrend.get("first_dip_buy_flag", False)  # S3 first dip
     is_new_trade = not position.get("current_trade_id")
     
+    # ------------------------------------------------------------------------
+    # S1 Tuning Logic: Re-evaluate Signal with Overrides
+    # ------------------------------------------------------------------------
+    effective_buy_signal = base_buy_signal
+    
+    if state == "S1":
+        try:
+            # Default Controls (Engine Defaults: TS=0.60 -> 60, Halo=1.0)
+            tuned_controls = {'ts_min': 60.0, 'halo_mult': 1.0}
+            
+            # Build Scope
+            action_context_s1 = {
+                "state": state,
+                "timeframe": position.get("timeframe", "1h"),
+                "a_final": a_final,
+                "e_final": e_final,
+                "market_family": "lowcaps",
+                "buy_signal": base_buy_signal
+            }
+            bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
+            scope = extract_scope_from_context(
+                action_context=action_context_s1,
+                regime_context=regime_context or {},
+                position_bucket=token_bucket,
+                bucket_rank=bucket_rank
+            )
+            # Add entry context
+            entry_context = position.get("entry_context") or {}
+            scope.update({
+                "curator": entry_context.get("curator"),
+                "chain": entry_context.get("chain") or position.get("token_chain"),
+                "mcap_bucket": entry_context.get("mcap_bucket") or scope.get("mcap_bucket"),
+            })
+            
+            # Apply Overrides
+            tuned_controls = apply_pattern_execution_overrides(
+                pattern_key="pm.uptrend.S1.entry",
+                action_category="tuning", # Placeholder
+                scope=scope,
+                plan_controls=tuned_controls,
+                sb_client=sb_client,
+                feature_flags=feature_flags
+            )
+            
+            # Re-evaluate if controls changed
+            if tuned_controls['ts_min'] != 60.0 or tuned_controls['halo_mult'] != 1.0:
+                s1_diag = (uptrend.get("diagnostics") or {}).get("buy_check") or {}
+                slope_ok = s1_diag.get("slope_ok", False)
+                
+                # TS Check
+                ts_with_boost = float(s1_diag.get("ts_with_boost", 0.0)) * 100.0
+                tuned_ts_ok = ts_with_boost >= tuned_controls['ts_min']
+                
+                # Halo Check
+                price = float(uptrend.get("price", 0.0))
+                ema60 = float(uptrend.get("ema", {}).get("ema60", 0.0))
+                atr = float(s1_diag.get("atr", 0.0))
+                halo_dist = _calculate_halo_dist(price, ema60, atr)
+                tuned_zone_ok = halo_dist <= tuned_controls['halo_mult']
+                
+                effective_buy_signal = slope_ok and tuned_ts_ok and tuned_zone_ok
+                
+                if effective_buy_signal != base_buy_signal:
+                    logging.getLogger(__name__).info(f"Tuning Override: S1 Signal Flipped {base_buy_signal} -> {effective_buy_signal} (TS:{tuned_controls['ts_min']} Halo:{tuned_controls['halo_mult']})")
+                    
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Error applying S1 tuning overrides: {e}")
+    
     # S1: One-time initial entry (only on S0 → S1 transition)
-    if buy_signal and state == "S1":
+    if effective_buy_signal and state == "S1":
         last_s1_buy = exec_history.get("last_s1_buy")
         if not last_s1_buy:
             # Never bought in S1, and we're in S1 (transitioned from S0)
@@ -672,7 +734,78 @@ def plan_actions_v4(
                 return [action]
     
     # S2/S3: Reset on trim or state transition
-    if (buy_flag or first_dip_buy_flag) and state in ["S2", "S3"]:
+    # ------------------------------------------------------------------------
+    # S3 Tuning Logic: Re-evaluate Signal with Overrides (DX & TS)
+    # ------------------------------------------------------------------------
+    effective_buy_flag = buy_flag
+    
+    if state == "S3" and not first_dip_buy_flag:
+        try:
+            # Default Controls (Engine Defaults: TS=60, DX=60)
+            tuned_controls = {'ts_min': 60.0, 'dx_min': 60.0}
+            
+            action_context_s3 = {
+                "state": state,
+                "timeframe": position.get("timeframe", "1h"),
+                "a_final": a_final,
+                "e_final": e_final,
+                "market_family": "lowcaps",
+                "buy_flag": buy_flag
+            }
+            bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
+            scope_s3 = extract_scope_from_context(
+                action_context=action_context_s3,
+                regime_context=regime_context or {},
+                position_bucket=token_bucket,
+                bucket_rank=bucket_rank
+            )
+            
+            entry_context = position.get("entry_context") or {}
+            scope_s3.update({
+                "curator": entry_context.get("curator"),
+                "chain": entry_context.get("chain") or position.get("token_chain"),
+                "mcap_bucket": entry_context.get("mcap_bucket") or scope_s3.get("mcap_bucket"),
+            })
+            
+            tuned_controls = apply_pattern_execution_overrides(
+                pattern_key="pm.uptrend.S3.add",
+                action_category="tuning",
+                scope=scope_s3,
+                plan_controls=tuned_controls,
+                sb_client=sb_client,
+                feature_flags=feature_flags
+            )
+            
+            if tuned_controls['dx_min'] != 60.0 or tuned_controls['ts_min'] != 60.0:
+                s3_diag = (uptrend.get("diagnostics") or {}).get("s3_buy_check") or {}
+                
+                # Re-evaluate DX Gate
+                edx_suppression = float(s3_diag.get("edx_suppression", 0.0))
+                price_position_boost = float(s3_diag.get("price_position_boost", 0.0))
+                dx = float(s3_diag.get("dx", 0.0))
+                
+                tuned_dx_threshold = (tuned_controls['dx_min'] / 100.0) + edx_suppression - price_position_boost
+                tuned_dx_threshold = max(0.0, tuned_dx_threshold)
+                tuned_dx_ok = dx >= tuned_dx_threshold
+                
+                # Re-evaluate TS Gate (S3 uses TS+Boost)
+                ts_with_boost = float(s3_diag.get("ts_with_boost", 0.0)) * 100.0
+                tuned_ts_ok = ts_with_boost >= tuned_controls['ts_min']
+                
+                # Other gates
+                slope_ok = s3_diag.get("slope_ok")
+                price_in_zone = s3_diag.get("price_in_discount_zone")
+                emergency = s3_diag.get("emergency_exit")
+                
+                effective_buy_flag = tuned_dx_ok and tuned_ts_ok and slope_ok and price_in_zone and not emergency
+                
+                if effective_buy_flag != buy_flag:
+                    logging.getLogger(__name__).info(f"Tuning Override: S3 Signal Flipped {buy_flag} -> {effective_buy_flag} (DX:{tuned_controls['dx_min']} TS:{tuned_controls['ts_min']})")
+
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Error applying S3 tuning overrides: {e}")
+
+    if (effective_buy_flag or first_dip_buy_flag) and state in ["S2", "S3"]:
         last_buy = exec_history.get(f"last_{state.lower()}_buy", {})
         last_trim_ts = exec_history.get("last_trim", {}).get("timestamp")
         state_transitioned = (prev_state != state)  # State changed (S2 → S3 or S3 → S2)
@@ -699,18 +832,18 @@ def plan_actions_v4(
                     pass
         
         if can_buy:
-            entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=buy_flag, first_dip_buy_flag=first_dip_buy_flag)
+            entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=effective_buy_flag, first_dip_buy_flag=first_dip_buy_flag)
             entry_size = entry_size * entry_multiplier  # Apply profit/allocation multiplier
             if entry_size > 0:
                 # Build context for lesson matching
                 scores = uptrend.get("scores") or {}
-                flag_type = "buy_flag" if buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
+                flag_type = "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
                 context = {
                     'state': state,
                     'a_bucket': bucket_a_e(a_final),
                     'e_bucket': bucket_a_e(e_final),
                     'action_type': 'entry' if is_new_trade else 'add',
-                    'buy_flag': buy_flag,
+                    'buy_flag': effective_buy_flag,
                     'first_dip_buy_flag': first_dip_buy_flag,
                     'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
                     'dx_score_bucket': bucket_score(scores.get('dx', 0.0)),

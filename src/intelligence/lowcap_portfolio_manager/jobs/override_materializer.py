@@ -26,95 +26,59 @@ logger = logging.getLogger(__name__)
 EDGE_SIGNIFICANCE_THRESHOLD = 0.05  # |Edge - 1.0| > 0.05 to be an override
 MIN_CONFIDENCE_SCORE = 0.2          # Lower bound for override confidence
 
-def apply_decay(
-    lever_value: float,
-    lesson_strength: float,
-    decay_halflife_hours: Optional[float],
-    lesson_age_hours: float
-) -> float:
-    """Decay lever toward 1.0."""
-    if not decay_halflife_hours or decay_halflife_hours <= 0:
-        return lever_value
-    if lesson_age_hours <= 0:
-        return lever_value
-        
-    decay_rate = math.log(2) / decay_halflife_hours
-    decay_factor = math.exp(-decay_rate * lesson_age_hours)
-    
-    neutral = 1.0
-    decayed = neutral + (lever_value - neutral) * decay_factor * lesson_strength
-    return decayed
+# Tuning Configs
+TUNING_MR_THRESHOLD = 0.6 # Miss Rate threshold to loosen
+TUNING_FPR_THRESHOLD = 0.5 # FPR threshold to tighten
+TUNING_TS_MIN_LOOSEN = 0.9
+TUNING_TS_MIN_TIGHTEN = 1.1
+TUNING_HALO_LOOSEN = 1.2
+TUNING_HALO_TIGHTEN = 0.8
 
-def materialize_overrides(sb_client: Client, module: str = 'pm') -> Dict[str, int]:
-    """
-    Materialize lessons to pm_overrides table.
-    Only supports PM module for now (DM allocation learning removed).
-    """
-    if module != 'pm':
-        return {'overrides_written': 0}
-        
+def materialize_pm_strength_overrides(sb_client: Client) -> int:
+    """Materialize PM Strength lessons (Sizing) to pm_overrides."""
     try:
-        # Fetch active lessons
-        res = sb_client.table('learning_lessons').select('*').eq('module', 'pm').eq('status', 'active').execute()
+        # Fetch active pm_strength lessons
+        res = sb_client.table('learning_lessons')\
+            .select('*')\
+            .eq('module', 'pm')\
+            .eq('status', 'active')\
+            .eq('lesson_type', 'pm_strength')\
+            .execute()
         lessons = res.data or []
         
         if not lessons:
-            return {'overrides_written': 0}
-            
+            return 0
+        
         now = datetime.now(timezone.utc)
         overrides_written = 0
-        
+    
         for lesson in lessons:
-            stats = lesson.get('stats', {})
-            # Judge: Is edge significant?
-            edge_raw = float(stats.get('edge_raw', 0.0))
-            # edge_raw is centered at 0 in V5 simplified calc? 
-            # Wait, in lesson_builder_v5 I wrote: edge_raw = (avg_rr - 1.0) * ...
-            # So edge_raw=0 is neutral.
-            
-            # Check absolute magnitude
-            if abs(edge_raw) < EDGE_SIGNIFICANCE_THRESHOLD:
-                continue
-                
-            # Map to Multiplier
-            # e.g. edge +0.1 -> 1.1x size?
-            # Simple mapping: 1.0 + edge_raw
-            # Clamp to safety bounds [0.3, 3.0]
-            multiplier = max(0.3, min(3.0, 1.0 + edge_raw))
-            
-            # Apply Decay (if metadata exists)
-            decay_meta = stats.get('decay_meta', {})
-            # Actually lesson_builder_v5 puts decay_meta in stats, and lesson has `decay_halflife_hours`.
-            # Let's use the pre-calculated decay_multiplier from stats if available (miner computed it).
-            # Miner set edge_raw = (avg_rr - 1.0) * ... * decay_multiplier
-            # So edge_raw ALREADY includes decay!
-            # We don't need to decay again here unless we want to decay based on "time since lesson update".
-            
-            # Confidence score
-            confidence = float(stats.get('support_score', 0.0)) * float(stats.get('reliability_score', 0.0))
-            if confidence < MIN_CONFIDENCE_SCORE:
-                continue
-                
-            # Write to pm_overrides
-            pattern_key = lesson.get('pattern_key')
-            # action_category is inside payload or top level?
-            # In miner I put action_category in top level.
-            action_category = lesson.get('action_category') or 'entry'
-            
-            # scope_subset is in `scope_subset` or `scope_values`?
-            # Miner used `scope_subset` for V5, or `scope_values` for compat.
-            # Let's check standard. Miner V5 wrote `scope_subset` into payload but `scope_values` into compat_payload.
-            # I'll check both.
-            scope_subset = lesson.get('scope_subset') or lesson.get('scope_values') or {}
-            # Ensure it's a dict
-            if not isinstance(scope_subset, dict):
-                scope_subset = {}
-                
-            # We need to sanitize scope_subset (remove 'pattern_key' hack if present)
-            scope_subset.pop('pattern_key', None)
-            
             try:
-                payload = {
+                stats = lesson.get('stats', {})
+                edge_raw = float(stats.get('edge_raw', 0.0))
+        
+                # Judge: Is edge significant?
+                if abs(edge_raw) < EDGE_SIGNIFICANCE_THRESHOLD:
+                    continue
+        
+                # Map to Multiplier [0.3, 3.0]
+                multiplier = max(0.3, min(3.0, 1.0 + edge_raw))
+                
+                # Confidence score
+                confidence = float(stats.get('support_score', 0.0)) * float(stats.get('reliability_score', 0.0))
+                if confidence < MIN_CONFIDENCE_SCORE:
+                    continue
+        
+                pattern_key = lesson.get('pattern_key')
+                action_category = lesson.get('action_category') or 'entry'
+                scope_subset = lesson.get('scope_subset') or lesson.get('scope_values') or {}
+                decay_meta = stats.get('decay_meta', {})
+                
+                if not isinstance(scope_subset, dict):
+                    scope_subset = {}
+                
+                # Upsert
+                sb_client.table('pm_overrides').upsert({
                     'pattern_key': pattern_key,
                     'action_category': action_category,
                     'scope_subset': scope_subset,
@@ -122,31 +86,114 @@ def materialize_overrides(sb_client: Client, module: str = 'pm') -> Dict[str, in
                     'confidence_score': confidence,
                     'decay_state': decay_meta.get('state'),
                     'last_updated_at': now.isoformat()
-                }
-                
-                # Upsert based on unique constraint
-                sb_client.table('pm_overrides').upsert(
-                    payload, 
-                    on_conflict='pattern_key,action_category,scope_subset'
-                ).execute()
+                }, on_conflict='pattern_key,action_category,scope_subset').execute()
                 
                 overrides_written += 1
             except Exception as e:
-                logger.warning(f"Failed to write override for {pattern_key}: {e}")
+                 logger.warning(f"Failed to write strength override for lesson {lesson.get('id')}: {e}")
                 
-        logger.info(f"Materialized {overrides_written} overrides from {len(lessons)} lessons.")
-        return {'overrides_written': overrides_written}
+        logger.info(f"Materialized {overrides_written} Strength overrides.")
+        return overrides_written
+    except Exception as e:
+        logger.error(f"Strength Materializer failed: {e}")
+        return 0
+
+def materialize_tuning_overrides(sb_client: Client) -> int:
+    """Materialize Tuning Rate lessons (Gates) to pm_overrides using Drift Logic."""
+    try:
+        # Fetch active tuning_rates lessons
+        res = sb_client.table('learning_lessons')\
+            .select('*')\
+            .eq('module', 'pm')\
+            .eq('status', 'active')\
+            .eq('lesson_type', 'tuning_rates')\
+            .execute()
+        lessons = res.data or []
+        
+        if not lessons:
+            return 0
+        
+        now = datetime.now(timezone.utc)
+        overrides_written = 0
+        
+        # Drift Parameters
+        ETA = 0.005 # Learning rate
+        
+        for lesson in lessons:
+            try:
+                stats = lesson.get('stats', {})
+                n_misses = float(stats.get('n_misses', 0))
+                n_fps = float(stats.get('n_fps', 0))
+                
+                # Pressure: Positive = Needs Loosening (Too many misses)
+                #           Negative = Needs Tightening (Too many FPs)
+                pressure = n_misses - n_fps
+                
+                if pressure == 0:
+                    continue
+                    
+                # Calculate Multipliers
+                # Lower is Looser for TS/DX (Thresholds) -> exp(-eta * p)
+                # Higher is Looser for Halo (Distance) -> exp(+eta * p)
+                
+                mult_threshold = math.exp(-ETA * pressure)
+                mult_halo = math.exp(ETA * pressure)
+                
+                # Clamp for safety [0.5, 2.0]
+                mult_threshold = max(0.5, min(2.0, mult_threshold))
+                mult_halo = max(0.5, min(2.0, mult_halo))
+                
+                pattern_key = lesson.get('pattern_key', '')
+                scope_subset = lesson.get('scope_subset') or {}
+                
+                overrides_to_write = []
+                
+                if "S1" in pattern_key:
+                    overrides_to_write.append(('tuning_ts_min', mult_threshold))
+                    overrides_to_write.append(('tuning_halo', mult_halo))
+                elif "S3" in pattern_key:
+                    # S3 uses TS and DX
+                    overrides_to_write.append(('tuning_ts_min', mult_threshold))
+                    overrides_to_write.append(('tuning_dx_min', mult_threshold))
+
+                for cat, mult in overrides_to_write:
+                    # Skip tiny changes (drift noise)
+                    if abs(mult - 1.0) < 0.01:
+                        continue
+                        
+                    sb_client.table('pm_overrides').upsert({
+                        'pattern_key': pattern_key,
+                        'action_category': cat,
+                        'scope_subset': scope_subset,
+                        'multiplier': mult,
+                        'confidence_score': 1.0, # Drift is cumulative confidence
+                        'decay_state': None,
+                        'last_updated_at': now.isoformat()
+                    }, on_conflict='pattern_key,action_category,scope_subset').execute()
+                    overrides_written += 1
+            
+            except Exception as e:
+                logger.warning(f"Failed to write tuning override for lesson {lesson.get('id')}: {e}")
+
+        logger.info(f"Materialized {overrides_written} Tuning overrides.")
+        return overrides_written
         
     except Exception as e:
-        logger.error(f"Materializer failed: {e}")
-        return {'overrides_written': 0}
+        logger.error(f"Tuning Materializer failed: {e}")
+        return 0
 
 def run_override_materializer(sb_client: Optional[Client] = None) -> Dict[str, int]:
     if sb_client is None:
         sb_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
-    return materialize_overrides(sb_client)
+    
+    n_strength = materialize_pm_strength_overrides(sb_client)
+    n_tuning = materialize_tuning_overrides(sb_client)
+    
+    return {'strength_overrides': n_strength, 'tuning_overrides': n_tuning}
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    from dotenv import load_dotenv
+    load_dotenv()
     res = run_override_materializer()
     print(res)

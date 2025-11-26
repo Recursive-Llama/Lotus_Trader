@@ -151,7 +151,7 @@ async def process_position_closed_strand(
                 # Actually, we should probably dedupe by checking if event exists for this trade_id+action
                 # For simplicity in V1 miner, we just insert.
                 logger.warning(f"Error writing event row: {e}")
-
+        
         return rows_written
         
     except Exception as e:

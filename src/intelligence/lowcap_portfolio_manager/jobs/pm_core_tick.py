@@ -256,7 +256,69 @@ class PMCoreTick:
         features["uptrend_episode_meta"] = meta
         return meta
 
-    def _capture_s1_window_sample(self, uptrend: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    def _log_episode_event(
+        self,
+        window: Dict[str, Any],
+        scope: Dict[str, Any],
+        pattern_key: str,
+        decision: str,
+        factors: Dict[str, Any],
+        episode_id: str,
+        trade_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """Log an episode event to pattern_episode_events table."""
+        try:
+            payload = {
+                "scope": scope,
+                "pattern_key": pattern_key,
+                "episode_id": episode_id,
+                "decision": decision,
+                "factors": factors,
+                "outcome": None, # Pending
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "trade_id": trade_id
+            }
+            res = self.sb.table("pattern_episode_events").insert(payload).execute()
+            if res.data:
+                return res.data[0].get("id")
+        except Exception as e:
+            logger.warning(f"Failed to log episode event: {e}")
+        return None
+
+    def _update_episode_outcome(self, db_ids: List[int], outcome: str) -> None:
+        """Update outcome for a list of episode event IDs."""
+        if not db_ids:
+            return
+        try:
+            self.sb.table("pattern_episode_events").update({"outcome": outcome}).in_("id", db_ids).execute()
+        except Exception as e:
+            logger.warning(f"Failed to update episode outcomes: {e}")
+
+    def _update_episode_outcomes_from_meta(self, episode: Dict[str, Any], outcome: str) -> None:
+        """Helper to collect db_ids from episode windows and update outcomes."""
+        windows = episode.get("windows") or []
+        ids = []
+        for w in windows:
+            if w.get("db_id"):
+                ids.append(w.get("db_id"))
+        if ids:
+            self._update_episode_outcome(ids, outcome)
+
+    def _sync_s3_window_outcomes_to_db(self, episode: Dict[str, Any]) -> None:
+        """Helper to sync S3 window-specific outcomes to DB."""
+        windows = episode.get("windows") or []
+        # Group by outcome to batch updates
+        by_outcome: Dict[str, List[int]] = {}
+        for w in windows:
+            db_id = w.get("db_id")
+            outcome = w.get("outcome")
+            if db_id and outcome:
+                by_outcome.setdefault(outcome, []).append(db_id)
+        
+        for outcome, ids in by_outcome.items():
+            self._update_episode_outcome(ids, outcome)
+
+    def _capture_s1_window_sample(self, uptrend: Dict[str, Any], now: datetime, levers: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         diagnostics = (uptrend.get("diagnostics") or {}).get("buy_check") or {}
         ema_vals = uptrend.get("ema") or {}
         price = float(uptrend.get("price", 0.0))
@@ -282,9 +344,14 @@ class PMCoreTick:
             "price": price,
             "ema60": ema60,
         }
+        
+        if levers:
+            sample["a_value"] = float(levers.get("A_value", 0.0))
+            sample["position_size_frac"] = float(levers.get("position_size_frac", 0.0))
+            
         return sample
 
-    def _capture_s3_window_sample(self, uptrend: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    def _capture_s3_window_sample(self, uptrend: Dict[str, Any], now: datetime, levers: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         scores = uptrend.get("scores") or {}
         ema_vals = uptrend.get("ema") or {}
         diagnostics = (uptrend.get("diagnostics") or {}).get("s3_buy_check") or {}
@@ -302,7 +369,7 @@ class PMCoreTick:
             ratio = max(0.0, min(1.0, ratio))
             price_pos = 1.0 - ratio if ema144 >= ema333 else ratio
 
-        return {
+        sample = {
             "ts": now.isoformat(),
             "ts_score": float(scores.get("ts", 0.0)),
             "dx_score": float(scores.get("dx", 0.0)),
@@ -314,6 +381,12 @@ class PMCoreTick:
             "ema250_slope": float(slopes.get("ema250_slope", 0.0)),
             "ema333_slope": float(slopes.get("ema333_slope", 0.0)),
         }
+        
+        if levers:
+            sample["a_value"] = float(levers.get("A_value", 0.0))
+            sample["position_size_frac"] = float(levers.get("position_size_frac", 0.0))
+
+        return sample
 
     @staticmethod
     def _summarize_window_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -454,7 +527,16 @@ class PMCoreTick:
             trimmed.extend(samples[-(max_samples - 1):])
             window["samples"] = trimmed
 
-    def _finalize_active_window(self, episode: Dict[str, Any], now: datetime) -> bool:
+    def _finalize_active_window(
+        self, 
+        episode: Dict[str, Any], 
+        now: datetime,
+        position: Optional[Dict[str, Any]] = None,
+        regime_context: Optional[Dict[str, Any]] = None,
+        token_bucket: Optional[str] = None,
+        uptrend_signals: Optional[Dict[str, Any]] = None,
+        levers: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         active = episode.get("active_window")
         if not active:
             return False
@@ -462,25 +544,71 @@ class PMCoreTick:
             active["ended_at"] = now.isoformat()
         samples = active.get("samples", [])
         active["summary"] = self._summarize_window_samples(samples)
+        
+        # Log to pattern_episode_events if context is provided
+        if position and uptrend_signals:
+            try:
+                decision = "acted" if active.get("entered") else "skipped"
+                
+                # Determine pattern key and scope
+                window_type = active.get("window_type") # s1_buy_signal or None (s3)
+                is_s1 = window_type == "s1_buy_signal" or (episode.get("episode_id") or "").startswith("s1_")
+                state = "S1" if is_s1 else "S3"
+                
+                # For skipped events, we infer the action type
+                action_type = "entry" if is_s1 else "add"
+                
+                # Build scope
+                pattern_key, _, scope = self._build_pattern_scope(
+                    position=position,
+                    uptrend_signals=uptrend_signals,
+                    action_type=action_type,
+                    regime_context=regime_context or {},
+                    token_bucket=token_bucket,
+                    state=state
+                )
+                
+                if pattern_key and scope:
+                    # Merge levers into summary for factors
+                    factors = active.get("summary") or {}
+                    if levers:
+                        factors["a_value"] = float(levers.get("A_value", 0.0))
+                        factors["position_size_frac"] = float(levers.get("position_size_frac", 0.0))
+                        
+                    # Log event
+                    db_id = self._log_episode_event(
+                        window=active,
+                        scope=scope,
+                        pattern_key=pattern_key,
+                        decision=decision,
+                        factors=factors,
+                        episode_id=active.get("window_id") or episode.get("episode_id"),
+                        trade_id=position.get("current_trade_id") if decision == "acted" else None
+                    )
+                    if db_id:
+                        active["db_id"] = db_id
+                        
+            except Exception as e:
+                logger.warning(f"Error finalizing active window logging: {e}")
+
         episode.setdefault("windows", []).append(active)
         episode["active_window"] = None
         return True
 
     def _compute_s3_window_outcomes(self, episode: Dict[str, Any]) -> None:
         windows = episode.get("windows") or []
+        trimmed = episode.get("trimmed")
+        
         for win in windows:
             if win.get("outcome"):
                 continue
-            if win.get("entered"):
-                if win.get("trim_timestamp"):
+            
+            # Success if we trimmed (actual) or if a trim signal fired (virtual/missed)
+            if (win.get("entered") and win.get("trim_timestamp")) or trimmed:
                     win["outcome"] = "success"
-                else:
-                    win["outcome"] = "failure"
-            else:
-                if win.get("samples"):
-                    win["outcome"] = "missed"
-                else:
-                    win["outcome"] = "correct_skip"
+            
+            # Note: Failures are handled on S3 -> S0 transition or explicitly if needed.
+            # We leave outcome as None if pending.
 
     def _compute_s3_episode_outcome(self, episode: Dict[str, Any]) -> str:
         windows = episode.get("windows") or []
@@ -501,15 +629,22 @@ class PMCoreTick:
         regime_context: Dict[str, Any],
         token_bucket: Optional[str],
         state: str,
+        levers: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Optional[str], Optional[str], Dict[str, Any]]:
+        a_val = 0.5
+        e_val = 0.5
+        if levers:
+            a_val = float(levers.get("A_value", 0.5))
+            e_val = float(levers.get("E_value", 0.5))
+
         action_context = {
             "state": state,
             "timeframe": position.get("timeframe", self.timeframe),
             "market_family": "lowcaps",
             "buy_signal": state == "S1",
             "buy_flag": state == "S3",
-            "a_final": 0.5,
-            "e_final": 0.5,
+            "a_final": a_val,
+            "e_final": e_val,
         }
         try:
             pattern_key, action_category = generate_canonical_pattern_key(
@@ -544,6 +679,7 @@ class PMCoreTick:
         token_bucket: Optional[str],
         now: datetime,
         episode_id: Optional[str] = None,
+        levers: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         pattern_key, action_category, scope = self._build_pattern_scope(
             position=position,
@@ -552,6 +688,7 @@ class PMCoreTick:
             regime_context=regime_context,
             token_bucket=token_bucket,
             state=to_state or "Unknown",
+            levers=levers,
         )
         position_id = position.get("id")
         timeframe = position.get("timeframe", self.timeframe)
@@ -623,20 +760,17 @@ class PMCoreTick:
         last_trim_ts = last_trim.get("timestamp")
         if s3_episode and last_trim_ts and meta.get("last_consumed_trim_ts") != last_trim_ts:
             trim_dt = self._iso_to_datetime(last_trim_ts)
-            candidates: List[Dict[str, Any]] = []
-            active = s3_episode.get("active_window")
-            if active:
-                candidates.append(active)
-            candidates.extend(reversed(s3_episode.get("windows", [])))
-            for win in candidates:
-                if not win.get("entered") or win.get("trim_timestamp"):
-                    continue
-                start_dt = self._iso_to_datetime(win.get("started_at"))
-                if start_dt and trim_dt and trim_dt >= start_dt:
-                    win["trim_timestamp"] = last_trim_ts
-                    meta["last_consumed_trim_ts"] = last_trim_ts
+            
+            # Check against episode start for Virtual Success
+            episode_start = s3_episode.get("started_at")
+            episode_start_ts = self._iso_to_datetime(episode_start)
+            
+            if trim_dt and episode_start_ts and trim_dt > episode_start_ts:
+                if not s3_episode.get("trimmed"):
+                    s3_episode["trimmed"] = True
                     changed = True
-                    break
+            
+            meta["last_consumed_trim_ts"] = last_trim_ts
 
         return changed
 
@@ -646,6 +780,7 @@ class PMCoreTick:
         regime_context: Dict[str, Any],
         token_bucket: Optional[str],
         now: datetime,
+        levers: Dict[str, Any] = None,
     ) -> Tuple[List[Dict[str, Any]], bool]:
         features = position.get("features") or {}
         uptrend = features.get("uptrend_engine_v4") or {}
@@ -656,7 +791,15 @@ class PMCoreTick:
         strands: List[Dict[str, Any]] = []
         changed = False
 
-        changed |= self._update_episode_entry_flags(meta, features)
+        flags_changed = self._update_episode_entry_flags(meta, features)
+        changed |= flags_changed
+        
+        # If flags changed (e.g. trim), sync outcomes immediately for S3 windows
+        if flags_changed:
+            s3_episode = meta.get("s3_episode")
+            if s3_episode:
+                self._compute_s3_window_outcomes(s3_episode)
+                self._sync_s3_window_outcomes_to_db(s3_episode)
 
         state = uptrend.get("state")
         prev_state = meta.get("prev_state")
@@ -698,39 +841,48 @@ class PMCoreTick:
                 token_bucket=token_bucket,
                 now=now,
                 episode_id=episode_id,
+                levers=levers,
             )
             strands.append(strand)
 
             s1_episode = meta.get("s1_episode")
             if s1_episode:
                 if state == "S3":
-                    outcome = "success" if s1_episode.get("entered") else "missed"
+                    outcome = "success"
+                    # Update DB outcomes for all windows in this episode
+                    self._update_episode_outcomes_from_meta(s1_episode, outcome)
+                    
                     s1_episode.pop("active_window", None)
                     strands.append(
                         self._build_episode_summary_strand(
                             position=position,
                             episode=s1_episode,
-                            outcome=outcome,
+                            outcome="missed" if not s1_episode.get("entered") else "success", # Keep legacy string for strand
                             regime_context=regime_context,
                             token_bucket=token_bucket,
                             now=now,
                             episode_type="s1_entry",
+                            levers=levers,
                         )
                     )
                     meta["s1_episode"] = None
                     changed = True
                 elif state == "S0" and prev_state in ("S1", "S2"):
-                    outcome = "failure" if s1_episode.get("entered") else "correct_skip"
+                    outcome = "failure"
+                    # Update DB outcomes for all windows in this episode
+                    self._update_episode_outcomes_from_meta(s1_episode, outcome)
+
                     s1_episode.pop("active_window", None)
                     strands.append(
                         self._build_episode_summary_strand(
                             position=position,
                             episode=s1_episode,
-                            outcome=outcome,
+                            outcome="correct_skip" if not s1_episode.get("entered") else "failure", # Keep legacy string for strand
                             regime_context=regime_context,
                             token_bucket=token_bucket,
                             now=now,
                             episode_type="s1_entry",
+                            levers=levers,
                         )
                     )
                     meta["s1_episode"] = None
@@ -738,19 +890,28 @@ class PMCoreTick:
 
             s3_episode = meta.get("s3_episode")
             if s3_episode and state == "S0":
-                changed |= self._finalize_active_window(s3_episode, now)
+                changed |= self._finalize_active_window(s3_episode, now, position, regime_context, token_bucket, uptrend, levers)
                 self._compute_s3_window_outcomes(s3_episode)
-                s3_episode["outcome"] = self._compute_s3_episode_outcome(s3_episode)
+                s3_outcome = self._compute_s3_episode_outcome(s3_episode)
+                s3_episode["outcome"] = s3_outcome
+                
+                # Update DB outcomes for all windows in this episode
+                # Note: S3 windows have individual outcomes based on trims, but the episode fail terminates all open ones.
+                # _compute_s3_window_outcomes sets 'outcome' key in window dict.
+                # We should sync these to DB.
+                self._sync_s3_window_outcomes_to_db(s3_episode)
+
                 s3_episode.pop("active_window", None)
                 strands.append(
                     self._build_episode_summary_strand(
                         position=position,
                         episode=s3_episode,
-                        outcome=s3_episode.get("outcome", "unknown"),
+                        outcome=s3_outcome,
                         regime_context=regime_context,
                         token_bucket=token_bucket,
                         now=now,
                         episode_type="s3_retest",
+                        levers=levers,
                     )
                 )
                 meta["s3_episode"] = None
@@ -760,13 +921,15 @@ class PMCoreTick:
             meta["prev_state"] = state
             changed = True
 
-        # Handle S1 buy-signal windows
-        buy_signal = bool(uptrend.get("buy_signal"))
+        # Handle S1 windows (Trigger: Entry Zone)
+        diagnostics = (uptrend.get("diagnostics") or {}).get("buy_check") or {}
+        entry_zone_ok = bool(diagnostics.get("entry_zone_ok"))
+        
         s1_episode = meta.get("s1_episode")
         if s1_episode:
             if state == "S1":
                 active_window = s1_episode.get("active_window")
-                if buy_signal:
+                if entry_zone_ok:
                     if not active_window:
                         active_window = {
                             "window_id": self._generate_episode_id("s1win"),
@@ -777,22 +940,28 @@ class PMCoreTick:
                         }
                         s1_episode["active_window"] = active_window
                         changed = True
-                    sample = self._capture_s1_window_sample(uptrend, now)
+                    sample = self._capture_s1_window_sample(uptrend, now, levers)
                     if sample:
                         self._append_window_sample(active_window, sample)
                         changed = True
                 elif active_window:
-                    changed |= self._finalize_active_window(s1_episode, now)
+                    changed |= self._finalize_active_window(s1_episode, now, position, regime_context, token_bucket, uptrend, levers)
             else:
-                changed |= self._finalize_active_window(s1_episode, now)
+                changed |= self._finalize_active_window(s1_episode, now, position, regime_context, token_bucket, uptrend, levers)
 
-        # Handle S3 retest windows
+        # Handle S3 retest windows (Trigger: Price < EMA144)
         s3_episode = meta.get("s3_episode")
-        buy_flag = bool(uptrend.get("buy_flag"))
+        
+        ema_vals = uptrend.get("ema") or {}
+        price = float(uptrend.get("price", 0.0))
+        ema144 = float(ema_vals.get("ema144", 0.0))
+        # In S3, EMA144 > EMA333. Price < EMA144 means we are in the band or lower (dipping).
+        in_band = (price > 0 and ema144 > 0 and price < ema144)
+        
         if s3_episode:
             if state == "S3":
                 active_window = s3_episode.get("active_window")
-                if buy_flag:
+                if in_band:
                     if not active_window:
                         retest_index = s3_episode.get("retest_index", 0) + 1
                         s3_episode["retest_index"] = retest_index
@@ -805,14 +974,14 @@ class PMCoreTick:
                         }
                         s3_episode["active_window"] = active_window
                         changed = True
-                    sample = self._capture_s3_window_sample(uptrend, now)
+                    sample = self._capture_s3_window_sample(uptrend, now, levers)
                     if sample:
                         self._append_window_sample(active_window, sample)
                         changed = True
                 elif active_window:
-                    changed |= self._finalize_active_window(s3_episode, now)
+                    changed |= self._finalize_active_window(s3_episode, now, position, regime_context, token_bucket, uptrend, levers)
             else:
-                changed |= self._finalize_active_window(s3_episode, now)
+                changed |= self._finalize_active_window(s3_episode, now, position, regime_context, token_bucket, uptrend, levers)
 
         features["uptrend_episode_meta"] = meta
         position["features"] = features
@@ -827,6 +996,7 @@ class PMCoreTick:
         token_bucket: Optional[str],
         now: datetime,
         episode_type: str = "s1_entry",
+        levers: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         features = position.get("features") or {}
         uptrend_signals = features.get("uptrend_engine_v4") or {}
@@ -838,6 +1008,7 @@ class PMCoreTick:
             regime_context=regime_context,
             token_bucket=token_bucket,
             state="S1" if episode_type == "s1_entry" else "S3",
+            levers=levers,
         )
         position_id = position.get("id")
         timeframe = position.get("timeframe", self.timeframe)
@@ -1118,6 +1289,15 @@ class PMCoreTick:
                 # We don't close here - just update quantities
             
             if updates:
+                logger.info(
+                    "pm_core_tick.exec_update decision=%s status_before=%s qty_before=%s tokens_sold=%s actual_usd=%s updates=%s",
+                    decision_type,
+                    current_pos.get("status"),
+                    current_pos.get("total_quantity"),
+                    execution_result.get("tokens_sold"),
+                    execution_result.get("actual_usd"),
+                    {k: updates[k] for k in ("total_quantity", "status") if k in updates},
+                )
                 self.sb.table("lowcap_positions").update(updates).eq("id", position_id).execute()
                 # Keep position dict in sync for downstream logic (_write_strands uses trade_id)
                 for key, value in updates.items():
@@ -1579,6 +1759,7 @@ class PMCoreTick:
                 return False
             
             pos_details = position_details[0]
+            features = pos_details.get("features") or {}
             total_quantity = float(pos_details.get("total_quantity", 0.0))
             
             # Only close if position is empty (emergency_exit already sold everything)
@@ -1624,7 +1805,6 @@ class PMCoreTick:
             
             # Calculate time_to_s3: time from entry to S3 state transition
             time_to_s3 = None
-            features = pos_details.get("features") or {}
             uptrend_meta = features.get("uptrend_engine_v4_meta") or {}
             s3_start_ts_str = uptrend_meta.get("s3_start_ts")
             
@@ -1657,10 +1837,12 @@ class PMCoreTick:
             # Classify outcome
             rr_value = rr_metrics.get("rr")
             if rr_value is None:
-                logger.warning(f"Could not calculate R/R for position {position_id} on S0 transition")
+                logger.warning(
+                    f"Could not calculate R/R for position {position_id} on S0 transition"
+                )
                 rr = 0.0
-                else:
-            rr = float(rr_value)
+            else:
+                rr = float(rr_value)
             
             outcome_class = classify_outcome(rr)
             hold_time_class = classify_hold_time(hold_time_days)
@@ -1685,7 +1867,6 @@ class PMCoreTick:
                 missed_entry_rr = 0.0
                 missed_exit_rr = 0.0
             
-            from intelligence.lowcap_portfolio_manager.pm.outcome_classification import bucket_cf_improvement
             cf_entry_bucket = bucket_cf_improvement(missed_entry_rr)
             cf_exit_bucket = bucket_cf_improvement(missed_exit_rr)
             
@@ -1794,7 +1975,8 @@ class PMCoreTick:
                 "status": "watchlist",
                 "closed_at": exit_timestamp.isoformat(),
                 "current_trade_id": None,
-                "last_activity_timestamp": exit_timestamp.isoformat()
+                "last_activity_timestamp": exit_timestamp.isoformat(),
+                "features": features,
             }).eq("id", position_id).execute()
             
             # Emit position_closed strand
@@ -2095,6 +2277,21 @@ class PMCoreTick:
             token = token_contract or p.get("token_ticker") or "UNKNOWN"
             features = p.get("features") or {}
             token_bucket = bucket_map.get((token_contract, token_chain)) or bucket_map.get((token_contract, None))
+
+            # Compute levers first so we can log A/E values in episode events
+            le = compute_levers(
+                macro_phase,
+                str(phase),
+                cp,
+                features,
+                bucket_context=regime_context,
+                position_bucket=token_bucket,
+                bucket_config=bucket_cfg,
+            )
+            a_final = float(le["A_value"])  # per-position intent deltas + age/mcap boosts
+            e_final = float(le["E_value"])  # cut_pressure and macro applied
+            position_size_frac = float(le.get("position_size_frac", 0.33))  # continuous sizing
+
             episode_strands: List[Dict[str, Any]] = []
             meta_changed = False
             try:
@@ -2103,6 +2300,7 @@ class PMCoreTick:
                     regime_context=regime_context,
                     token_bucket=token_bucket,
                     now=now,
+                    levers=le, # Pass levers for factor logging
                 )
             except Exception as episode_err:
                 logger.warning(f"Episode logging failed for position {p.get('id')}: {episode_err}")
@@ -2144,19 +2342,6 @@ class PMCoreTick:
                         p.update(pnl_updates)
                 except Exception as e:
                     logger.warning(f"Error recalculating P&L fields for position {p.get('id')}: {e}")
-            
-            le = compute_levers(
-                macro_phase,
-                str(phase),
-                cp,
-                features,
-                bucket_context=regime_context,
-                position_bucket=token_bucket,
-                bucket_config=bucket_cfg,
-            )
-            a_final = float(le["A_value"])  # per-position intent deltas + age/mcap boosts
-            e_final = float(le["E_value"])  # cut_pressure and macro applied
-            position_size_frac = float(le.get("position_size_frac", 0.33))  # continuous sizing
             
             # Use v4 if enabled, otherwise fall back to old plan_actions
             if use_v4 and actions_enabled:

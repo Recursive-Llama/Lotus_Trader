@@ -156,7 +156,23 @@ async def verify_lessons(sb: Client, pattern_key: str) -> bool:
         print("  ❌ FAIL: Lesson N is too low (miner didn't aggregate correctly)")
         return False
         
-    print("  ✅ Lesson Verified.")
+    print("  ✅ Single Dim Lesson Verified.")
+
+    # Check for Depth 2 Lesson (chain=solana + market_family=meme)
+    # The miner should have found this because all test trades share these
+    res_deep = sb.table("learning_lessons").select("*")\
+        .eq("pattern_key", pattern_key)\
+        .contains("scope_subset", {"chain": "solana", "market_family": "meme"})\
+        .execute()
+        
+    # Filter for exact match or subset containment
+    deep_lesson = next((l for l in res_deep.data if l['scope_subset'].get('chain') == 'solana' and l['scope_subset'].get('market_family') == 'meme'), None)
+    
+    if not deep_lesson:
+        print("  ❌ FAIL: No Depth-2 lesson found for chain=solana + market_family=meme")
+        return False
+        
+    print(f"  ✅ Depth-2 Lesson Verified! (N={deep_lesson['n']})")
     return True
 
 async def verify_overrides(sb: Client, pattern_key: str) -> bool:
@@ -231,4 +247,6 @@ async def run_harness():
         logger.error("Harness traceback:", exc_info=True)
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     asyncio.run(run_harness())

@@ -427,84 +427,12 @@ class UniversalLearningSystem:
     
     async def _trigger_trader(self, strand: Dict[str, Any]) -> None:
         """Trigger the Trader with the decision strand"""
-        try:
-            dec_id_short = (strand.get('id', '')[:8] + '…') if strand.get('id') else 'unknown'
-            print(f"trader | Triggered by decision {dec_id_short}")
-            
-            # Use shared trader instance if available, otherwise initialize
-            if not hasattr(self, 'trader') or self.trader is None:
-                # Import lazily and select V2 when enabled to avoid importing legacy V1
-                # Use V2 trader (improved Base trading and modular design)
-                from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2 as TraderClass
-                print(f"🧠 Trader: Import successful")
-                print(f"🧠 Trader: No shared trader found, initializing new one...")
-                try:
-                    # Use default config for trader
-                    trader_config = {
-                        'book_id': 'social',
-                        'book_nav': 100000.0,
-                        'max_position_size_pct': 2.0,
-                        'entry_strategy': 'three_entry',
-                        'exit_strategy': 'staged_exit'
-                    }
-                    self.trader = TraderClass(
-                        self.supabase_manager, 
-                        trader_config
-                    )
-                    
-                    # Initialize Jupiter client for trader
-                    from trading.jupiter_client import JupiterClient
-                    self.trader.jupiter_client = JupiterClient()
-                    
-                    print(f"🧠 Trader: Initialized successfully")
-                except Exception as e:
-                    print(f"🧠 Trader: ERROR during initialization: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    return
-            else:
-                print(f"🧠 Trader: Using shared trader instance")
-            
-            # Process the strand with trader based on type
-            strand_kind = strand.get('kind')
-            print(f"🧠 Trader: Processing {strand_kind} strand {strand.get('id', 'unknown')}")
-            self.logger.info(f"Triggering Trader for {strand_kind} strand: {strand.get('id', 'unknown')}")
-            
-            # Route to appropriate trader method based on strand type
-            if strand_kind in ['gem_bot_conservative', 'gem_bot_risky_test']:
-                print(f"🧠 Trader: Gem Bot disabled - skipping {strand_kind} strand")
-                result = "DISABLED"
-                # GEM BOT DISABLED - Commented out for safety
-                # print(f"🧠 Trader: Calling execute_gem_bot_strand for {strand_kind}")
-                # try:
-                #     result = await self.trader.execute_gem_bot_strand(strand)
-                #     print(f"🧠 Trader: execute_gem_bot_strand result: {result}")
-                # except Exception as e:
-                #     print(f"🧠 Trader: ERROR in execute_gem_bot_strand: {e}")
-                #     import traceback
-                #     traceback.print_exc()
-                #     result = None
-            else:
-                # Default to decision execution for decision_lowcap strands
-                print(f"🧠 Trader: Calling execute_decision for {strand_kind}")
-                result = await self.trader.execute_decision(strand)
-            if result:
-                # One-line summary with native unit price (SOL/ETH)
-                chain = (strand.get('signal_pack', {}).get('token', {}) or {}).get('chain')
-                unit = 'SOL' if chain == 'solana' else ('BNB' if chain == 'bsc' else 'ETH')
-                alloc_native = result.get('allocation_native')
-                price_val = result.get('current_price')
-                alloc_str = f"{alloc_native:.6f}" if isinstance(alloc_native, (int, float)) else str(alloc_native)
-                price_str = f"{price_val:.6f}" if isinstance(price_val, (int, float)) else "n/a"
-                print(f"trader | TRADE OK: buy {result.get('token_ticker')} on {chain} @ {strand.get('signal_pack', {}).get('venue', {}).get('dex')} | qty {alloc_str} native | price {price_str} {unit} | alloc {result.get('allocation_pct')}% | position_id {result.get('position_id')}")
-            else:
-                print(f"trader | NOOP: trade not executed")
-            
-        except Exception as e:
-            print(f"🧠 Trader: ERROR - {e}")
-            self.logger.error(f"Error triggering Trader: {e}")
-            import traceback
-            traceback.print_exc()
+        print("🧠 Trader: Disabled in simplified PM stack – skipping strand.")
+        self.logger.info(
+            "Trader trigger skipped for strand %s (legacy trader inactive)",
+            strand.get('id'),
+        )
+        return
     
     async def _process_position_closed_strand(self, strand: Dict[str, Any]) -> None:
         """
@@ -552,8 +480,11 @@ class UniversalLearningSystem:
                     sb_client=self.supabase_manager.client,
                     strand=strand
                 )
-                self.logger.info(f"Successfully processed position_closed strand for pattern scope aggregation ({rows_updated} rows updated)")
-                except Exception as e:
+                self.logger.info(
+                    "Successfully processed position_closed strand for pattern scope "
+                    f"aggregation ({rows_updated} rows updated)"
+                )
+            except Exception as e:
                 self.logger.error(f"Error processing pattern scope aggregation: {e}")
                 # Don't fail the whole process if aggregation fails
             
