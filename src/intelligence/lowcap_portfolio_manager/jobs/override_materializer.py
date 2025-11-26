@@ -6,9 +6,12 @@ Replaces the legacy JSON-blob config writes.
 
 Logic:
 1. Read active lessons.
-2. Apply Decay (if enabled).
-3. Filter: Is Edge significant? (Judge).
+2. Filter: Is Edge significant? (Judge) - for pm_strength.
+3. Filter: Is Pressure non-zero? (Drift) - for tuning_rates.
 4. Upsert into pm_overrides table.
+
+Note: Decay is only computed for pm_strength lessons (in lesson_builder_v5).
+Tuning lessons do not use decay.
 """
 
 import logging
@@ -23,8 +26,7 @@ from supabase import create_client, Client
 logger = logging.getLogger(__name__)
 
 # Configuration
-EDGE_SIGNIFICANCE_THRESHOLD = 0.05  # |Edge - 1.0| > 0.05 to be an override
-MIN_CONFIDENCE_SCORE = 0.2          # Lower bound for override confidence
+EDGE_SIGNIFICANCE_THRESHOLD = 0.05  # |edge_raw| >= 0.05 to be an override (learns from both positive and negative edge)
 
 # Tuning Configs
 TUNING_MR_THRESHOLD = 0.6 # Miss Rate threshold to loosen
@@ -57,18 +59,16 @@ def materialize_pm_strength_overrides(sb_client: Client) -> int:
                 stats = lesson.get('stats', {})
                 edge_raw = float(stats.get('edge_raw', 0.0))
         
-                # Judge: Is edge significant?
+                # Judge: Is edge significant? (learns from both positive and negative edge)
+                # Positive edge (edge_raw > 0.05): Increase sizing
+                # Negative edge (edge_raw < -0.05): Decrease sizing
+                # No edge (|edge_raw| < 0.05): Skip (no override needed)
                 if abs(edge_raw) < EDGE_SIGNIFICANCE_THRESHOLD:
                     continue
         
                 # Map to Multiplier [0.3, 3.0]
                 multiplier = max(0.3, min(3.0, 1.0 + edge_raw))
                 
-                # Confidence score
-                confidence = float(stats.get('support_score', 0.0)) * float(stats.get('reliability_score', 0.0))
-                if confidence < MIN_CONFIDENCE_SCORE:
-                    continue
-        
                 pattern_key = lesson.get('pattern_key')
                 action_category = lesson.get('action_category') or 'entry'
                 scope_subset = lesson.get('scope_subset') or lesson.get('scope_values') or {}
@@ -77,20 +77,25 @@ def materialize_pm_strength_overrides(sb_client: Client) -> int:
                 if not isinstance(scope_subset, dict):
                     scope_subset = {}
                 
+                # Calculate confidence for telemetry (not used for filtering)
+                support_score = float(stats.get('support_score', 0.0))
+                reliability_score = float(stats.get('reliability_score', 0.0))
+                confidence = support_score * reliability_score
+                
                 # Upsert
                 sb_client.table('pm_overrides').upsert({
                     'pattern_key': pattern_key,
                     'action_category': action_category,
                     'scope_subset': scope_subset,
                     'multiplier': multiplier,
-                    'confidence_score': confidence,
+                    'confidence_score': confidence,  # For telemetry only, not used for filtering
                     'decay_state': decay_meta.get('state'),
                     'last_updated_at': now.isoformat()
                 }, on_conflict='pattern_key,action_category,scope_subset').execute()
                 
                 overrides_written += 1
             except Exception as e:
-                 logger.warning(f"Failed to write strength override for lesson {lesson.get('id')}: {e}")
+                logger.warning(f"Failed to write strength override for lesson {lesson.get('id')}: {e}")
                 
         logger.info(f"Materialized {overrides_written} Strength overrides.")
         return overrides_written
@@ -172,7 +177,7 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
                     }, on_conflict='pattern_key,action_category,scope_subset').execute()
                     overrides_written += 1
             
-            except Exception as e:
+        except Exception as e:
                 logger.warning(f"Failed to write tuning override for lesson {lesson.get('id')}: {e}")
 
         logger.info(f"Materialized {overrides_written} Tuning overrides.")

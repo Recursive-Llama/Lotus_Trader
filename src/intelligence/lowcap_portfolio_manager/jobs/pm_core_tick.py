@@ -2172,6 +2172,16 @@ class PMCoreTick:
                 "reasons": {"ordered": reasons_ordered, **reasons},
                 "new_token_mode": False,
             }
+
+            learning_mults = act.get("learning_multipliers") or {}
+            if learning_mults:
+                content_data["learning_multipliers"] = learning_mults
+                if "pm_strength" in learning_mults:
+                    content_data.setdefault("pm_strength_applied", learning_mults["pm_strength"])
+                if "exposure_skew" in learning_mults:
+                    content_data.setdefault("exposure_skew_applied", learning_mults["exposure_skew"])
+                if "combined_multiplier" in learning_mults:
+                    content_data.setdefault("pm_final_multiplier", learning_mults["combined_multiplier"])
             
             # Add v5 learning fields if available
             if pattern_key:

@@ -126,7 +126,7 @@ class ExposureLookup:
     def lookup(self, pattern_key: Optional[str], scope: Dict[str, Any]) -> float:
         mask_keys = self._mask_keys_for_scope(scope, self.config)
         if not mask_keys or self.total_exposure <= 0:
-            return 1.33
+            return 1.0  # No learning = neutral multiplier
 
         conc_scope = sum(self.scope_exposure.get(mask_key, 0.0) for _, mask_key in mask_keys)
         conc_pattern = 0.0

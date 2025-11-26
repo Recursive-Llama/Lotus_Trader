@@ -52,7 +52,7 @@ class DecisionMakerLowcapSimple:
         trading_config = self.config.get('trading', {})
         
         # No need for dollar amounts - we work with percentages only
-        self.min_curator_score = trading_config.get('min_curator_score', 0.6)
+        self.min_curator_score = trading_config.get('min_curator_score', 0.1)
         self.max_exposure_pct = trading_config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
         self.max_positions = trading_config.get('max_positions', 69)  # Maximum number of active positions
         
@@ -133,7 +133,7 @@ class DecisionMakerLowcapSimple:
         return {
             'book_id': 'social',
             # No dollar amounts needed - percentage-based only
-            'min_curator_score': 0.6,  # Minimum curator score to approve
+            'min_curator_score': 0.1,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
             'max_positions': 69,  # Maximum number of active positions
             'chain_multipliers': {
@@ -176,14 +176,11 @@ class DecisionMakerLowcapSimple:
 
             # Volume check removed - handled in social ingest
 
-            # 2) Not already holding token
+            # 2) Not already holding token (informational only - we log intent but don't duplicate positions)
             already_holding = await self._already_has_token(token_data.get('contract', ''), token_data.get('chain', ''))
-            hold_pass = not already_holding
-            criteria.append({
-                'name': 'not_already_holding',
-                'passed': hold_pass,
-                'detail': f"Already holding {token_ticker}" if not hold_pass else "No existing position"
-            })
+            if already_holding:
+                self.logger.info(f"Already holding {token_ticker} - logging intent but not creating duplicate position")
+                # Still approve to log the intent, but won't create duplicate positions
 
             # 3) Curator score >= min
             curator_score = await self._get_curator_score(curator_id)
@@ -194,36 +191,17 @@ class DecisionMakerLowcapSimple:
                 'detail': f"Curator {curator_score:.2f} < {self.min_curator_score}" if not score_pass else f"Curator {curator_score:.2f} >= {self.min_curator_score}"
             })
 
-            # 4) Intent analysis indicates buy signal
+            # Intent analysis removed - no longer blocks approval
             intent_analysis = social_signal.get('signal_pack', {}).get('intent_analysis')
-            buy_intent_types = {
-                'adding_to_position',
-                'research_positive', 
-                'new_discovery',
-                'comparison_highlighted',
-                'other_positive'
-            }
-            
-            intent_pass = False
             intent_type = 'unknown'
             if intent_analysis:
                 intent_data = intent_analysis.get('intent_analysis', {})
                 intent_type = intent_data.get('intent_type', 'unknown')
-                intent_pass = intent_type in buy_intent_types
-            
-            criteria.append({
-                'name': 'intent_analysis_buy',
-                'passed': intent_pass,
-                'detail': f"Intent type '{intent_type}' not in buy signals" if not intent_pass else f"Intent type '{intent_type}' indicates buy signal"
-            })
+            # Log intent for telemetry but don't block
+            if intent_analysis:
+                self.logger.debug(f"Intent type: {intent_type} (informational only)")
 
-            # 5) Portfolio capacity available
-            capital_pass = await self._has_capital_for_allocation()
-            criteria.append({
-                'name': 'portfolio_capacity',
-                'passed': capital_pass,
-                'detail': "Insufficient capital - portfolio at max exposure" if not capital_pass else "Capacity available"
-            })
+            # Portfolio capacity removed - positions go to waitlist if capacity is full
 
             failed = [c for c in criteria if not c['passed']]
 
@@ -237,7 +215,7 @@ class DecisionMakerLowcapSimple:
                 for c in criteria:
                     self.logger.debug(f"check {c['name']}: {'pass' if c['passed'] else 'fail'} - {c['detail']}")
             else:
-                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (solana, not holding, curator {curator_score:.2f}, intent {intent_type}, capacity)")
+                print(f"decision | Checklist: {passed_count}/{len(criteria)} passed (chain: {chain}, curator {curator_score:.2f}, intent: {intent_type})")
                 for c in criteria:
                     self.logger.debug(f"check {c['name']}: pass - {c['detail']}")
 
@@ -651,6 +629,7 @@ class DecisionMakerLowcapSimple:
     ) -> bool:
         """
         Create 4 positions per token (one per timeframe: 1m, 15m, 1h, 4h)
+        If already holding, skip position creation but still log intent via decision strand.
         
         Args:
             decision: Approved decision strand
@@ -660,13 +639,19 @@ class DecisionMakerLowcapSimple:
             intent_analysis: Intent analysis (optional)
             
         Returns:
-            True if all positions created successfully
+            True if all positions created successfully (or skipped due to already holding)
         """
         try:
             token_contract = token_data.get('contract', '')
             token_chain = token_data.get('chain', '').lower()
             token_ticker = token_data.get('ticker', 'UNKNOWN')
             token_name = token_data.get('name', token_ticker)
+            
+            # Check if already holding - if so, skip position creation but decision strand already logged intent
+            already_holding = await self._already_has_token(token_contract, token_chain)
+            if already_holding:
+                self.logger.info(f"Skipping position creation for {token_ticker} - already holding (intent logged via decision strand)")
+                return True  # Return success since intent was logged
             
             # Note: We no longer calculate fixed USD amounts here
             # PM will calculate USD amounts at execution time based on current portfolio size

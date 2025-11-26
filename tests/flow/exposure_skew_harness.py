@@ -45,6 +45,9 @@ SCOPE_TEMPLATE = {
 
 
 def _make_uptrend_state(state: str = "S1") -> dict:
+    price = 0.0015
+    ema60 = 0.00148
+    atr_val = 0.00005
     return {
         "state": state,
         "buy_signal": True,
@@ -52,26 +55,27 @@ def _make_uptrend_state(state: str = "S1") -> dict:
         "first_dip_buy_flag": False,
         "trim_flag": False,
         "emergency_exit": False,
-        "price": 0.0015,
+        "price": price,
         "ema": {
             "ema20": 0.0014,
-            "ema60": 0.0013,
-            "ema144": 0.0012,
-            "ema333": 0.0011,
+            "ema60": ema60,
+            "ema144": 0.00135,
+            "ema333": 0.00125,
         },
         "diagnostics": {
             "buy_check": {
                 "entry_zone_ok": True,
-                "ts_score": 0.82,
-                "ts_with_boost": 0.87,
+                "ts_score": 0.9,
+                "ts_with_boost": 0.92,
                 "ts_ok": True,
                 "slope_ok": True,
-                "halo": 0.0001,
+                "halo": 0.5,
+                "atr": atr_val,
             }
         },
         "scores": {
-            "ts": 0.82,
-            "dx": 0.65,
+            "ts": 0.9,
+            "dx": 0.72,
             "ox": 0.4,
             "edx": 0.35,
         },
@@ -121,8 +125,9 @@ class ExposureSkewHarness:
         position_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         entry_context = {**SCOPE_TEMPLATE, "pattern_key": pattern_key, "chain": "solana"}
+        base_state = _make_uptrend_state("S0")
         features = {
-            "uptrend_engine_v4": _make_uptrend_state("S0"),
+            "uptrend_engine_v4": base_state,
             "pm_execution_history": {},
             "pattern_key": pattern_key,
         }
@@ -133,8 +138,8 @@ class ExposureSkewHarness:
             "token_chain": "solana",
             "token_ticker": token_contract[-4:],
             "timeframe": "1h",
-            "status": "active",
-            "current_trade_id": str(uuid.uuid4()),
+            "status": "watchlist",
+            "current_trade_id": None,
             "total_allocation_pct": allocation_pct,
             "total_allocation_usd": usd_alloc,
             "usd_alloc_remaining": usd_alloc,
@@ -159,6 +164,8 @@ class ExposureSkewHarness:
             "total_allocation_usd": usd_alloc,
             "total_extracted_usd": 0.0,
             "usd_alloc_remaining": usd_alloc,
+            "status": "watchlist",
+            "current_trade_id": None,
         }
         self.sb.table("lowcap_positions").update(payload).eq("id", position_id).execute()
 
@@ -174,10 +181,14 @@ class ExposureSkewHarness:
         )
         rows = res.data or []
         if not rows:
+            logger.warning("No pm_action strands found for position %s", position_id)
             return None
         content = rows[0].get("content") or {}
+        logger.info("Latest pm_action content: %s", content)
         multipliers = content.get("learning_multipliers") or {}
         skew = multipliers.get("exposure_skew")
+        if skew is None:
+            skew = (content.get("reasons") or {}).get("exposure_skew")
         return float(skew) if skew is not None else None
 
 

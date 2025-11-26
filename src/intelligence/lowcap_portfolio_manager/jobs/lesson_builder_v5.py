@@ -110,7 +110,11 @@ def compute_lesson_stats(events: List[Dict[str, Any]], global_baseline_rr: float
     avg_rr = sum(rrs) / n
     variance = statistics.variance(rrs) if n > 1 else 0.0
     
-    decay_meta = fit_decay_curve(events)
+    # Only fit decay if we have enough samples (N_MIN_SLICE)
+    if n >= N_MIN_SLICE:
+        decay_meta = fit_decay_curve(events)
+    else:
+        decay_meta = {"state": "insufficient", "multiplier": 1.0}
     
     # --- 6-D Edge Components (V5) ---
     delta_rr = avg_rr - global_baseline_rr
