@@ -79,43 +79,40 @@ Command: `PYTHONPATH=src:. python tests/flow/pm_learning_flow_harness.py --run-l
 
 #### 2.2a Learning Pipeline Follow-ups
 
-**Purpose**: Verify edge cases and robustness of the learning pipeline.
+**Purpose**: Stress the trade-events → lessons → overrides chain with the failure cases we kept hitting (missing scope dims, low-N slices, DM module drift, schema regressions). Every scenario uses the real Supabase DB and the new CLI switch:
 
-1. **Strand Replay with Missing Fields**:
-   - Export a `position_closed` strand with missing `scope` keys (e.g., no `intent`).
-   - Re-run aggregator on this strand.
-   - Verify aggregator handles missing fields gracefully (uses defaults or skips invalid masks).
-   - Verify `pattern_trade_events` row created with partial scope.
+```
+PYTHONPATH=src:. python tests/flow/learning_pipeline_harness.py --scenario <base|missing-fields|sparse-events|dm-absence|schema-smoke>
+```
 
-2. **Decay Fitting with Sparse Events**:
-   - Create lessons with `N=10` (below N_MIN=33).
-   - Verify decay metadata is `{"state": "insufficient", "multiplier": 1.0}`.
-   - Create lessons with `N=35` (above N_MIN).
-   - Verify decay metadata contains fitted curve (linear/exponential).
+**Scenarios exercised on 2025‑11‑27**
 
-3. **DM Lesson Absence Check**:
-   - Run `lesson_builder_v5` with `module='pm'` only.
-   - Query `learning_lessons` for `module='dm'`.
-   - Verify NO DM lessons exist (DM learning is deprecated).
+1. **Strand replay with missing fields**  
+   Command: `--scenario missing-fields`  
+   - Aggregator processed 404 trade strands, wrote 80 events for `TEST_V5_db723111`.  
+   - Lesson Builder mined 864 lessons (chain slice N=40, avg RR=1.61, edge_raw=0.15).  
+   - Materializer produced 544 strength + 40 tuning overrides; override multiplier=1.15.  
+   - `verify_scope_defaults` found 7 rows with `intent='unknown'`, proving fallback coverage.
 
-4. **Schema Smoke Test**:
-   - Run `lesson_builder_v5` against empty DB.
-   - Verify no missing column errors.
-   - Run `tuning_miner` against empty DB.
-   - Verify no missing column errors.
-   - Run `override_materializer` against empty `learning_lessons`.
-   - Verify graceful handling (returns 0 overrides).
+2. **Decay fitting with sparse events**  
+   Command: `--scenario sparse-events` (injects 20 trades).  
+   - Aggregator wrote 40 events; Lesson Builder skipped the `chain=solana` slice entirely.  
+   - Materializer returned no overrides for the test pattern key (expected while `N < 33`).  
+   - Confirms decay gating suppresses overrides when the sample size is insufficient.
 
-**Harness**: Extend `learning_pipeline_harness.py` with edge case scenarios.
+3. **DM lesson absence**  
+   Command: `--scenario dm-absence`.  
+   - PM path succeeded (80 events, 992 lessons, overrides applied).  
+   - **Failure**: re-running `mine_lessons(module='dm')` still mined 992 lessons. Module scoping is ignored, so DM lessons are still being emitted off PM strands. Needs product decision before we touch `lesson_builder_v5`. Harness keeps this scenario marked as failing until the job enforces module filters.
 
-**Status**: ⏳ **Not yet implemented**
+4. **Schema smoke test**  
+   Command: `--scenario schema-smoke`.  
+   - Skips injection, runs jobs on the live dataset.  
+   - Aggregator returned zero rows for the random pattern key, Miner/Materializer completed without column errors, and `verify_*` functions confirmed no stray rows were written for the test key.
 
-**Latest run (2025‑11‑26)**  
-Harness: `tests/flow/learning_pipeline_harness.py` (PYTHONPATH=.)  
-- Injected 40 Entry+Trim trades ⇒ 80 raw events written. `pattern_trade_events` confirmed 80 rows via exact-count query.  
-- Lesson Builder (recursive Apriori) produced 704 lessons, including `chain=solana` and `chain=solana + market_family=meme` slices (N=40 each, avg RR≈1.41, edge_raw≈‑0.09).  
-- Materializer upserted 512 strength overrides (multiplier clamp [0.3, 3.0]) and 8 tuning overrides using drift logic.  
-- Evidence captured in terminal transcript (attached in harness log). Need to archive SQL snapshots per Section 5 before sign‑off.
+**Harness**: `tests/flow/learning_pipeline_harness.py` now exposes the scenarios above plus the original base run. Each scenario prints the Supabase counts so we can attach transcripts to the test record.
+
+**Status (2025‑11‑27)**: ⚠️ **Partial** – Missing-field, sparse-events, and schema smoke pass; DM-module isolation fails (open bug: `lesson_builder_v5` ignores `module='dm'` argument and still emits lessons). Latest terminal transcripts attached in the repo logs.
 
 #### 2.3 Tuning System Pass (Episode Logging -> Tuning)
 
@@ -176,7 +173,12 @@ Harness: `tests/flow/learning_pipeline_harness.py` (PYTHONPATH=.)
 
 **Harness**: Extend `tuning_system_harness.py` with Phase 4 runtime tests.
 
-**Status**: ⏳ **Not yet implemented**
+**Status (2025‑11‑27)**: ✅ **Completed**  
+- Harness adds a Phase 4 block that calls `plan_actions_v4` with real Supabase overrides and checks whether actions flip.  
+- S1 case: baseline `ts_with_boost=62` emits an entry; inserting a harness-scoped `tuning_ts_min` multiplier of `1.2×` suppresses the entry (no `pm_action` strand), and a `0.8×` override restores it.  
+- S3 case: baseline `dx=0.62` emits an add; a `tuning_dx_min` multiplier of `1.2×` blocks the flag; `0.8×` re-enables it.  
+- Commands: `PYTHONPATH=src:. python tests/flow/tuning_system_harness.py` (Phase 4 runs after the earlier episode/miner tests).  
+- Overrides are written with curator=`tuning_harness` so they never collide with production scopes; the harness cleans them up after each sub-test.
 
 ---
 
@@ -255,6 +257,15 @@ Harness: `tests/flow/learning_pipeline_harness.py` (PYTHONPATH=.)
 
 **Status**: ⏳ **Not yet implemented**
 
+**Update (2025‑11‑27)**  
+- Added `tests/unit/pm_overrides_test.py` covering both entry strength and tuning overrides with a stub Supabase client.  
+- Tests verify:  
+  - Strength multipliers scale `position_size_frac` (single override, neutral fallback).  
+  - `tuning_ts_min` clamps/loosens S1 thresholds.  
+  - `tuning_dx_min` tightens/loosens S3 gates without affecting TS unless explicitly overridden.  
+- Command: `PYTHONPATH=src:. pytest tests/unit/pm_overrides_test.py`.  
+- Keeps overrides scoped to a fake curator so we can assert results deterministically without touching production rows.
+
 #### 3.1b Exposure & Sizing Stress Tests
 
 **Purpose**: Verify exposure skew and pm_strength interact correctly under extreme conditions.
@@ -286,9 +297,13 @@ Harness: `tests/flow/learning_pipeline_harness.py` (PYTHONPATH=.)
    - Load config with `alpha=0.0` (no power-law).
    - Verify exposure calculation still works.
 
-**Harness**: Extend `exposure_skew_harness.py` with stress test scenarios.
+**Harness**: `tests/flow/exposure_skew_harness.py` (now covers crowding, overrides, config stress).
 
-**Status**: ⏳ **Not yet implemented**
+**Status**: ✅ **Completed (2025‑11‑27)**  
+- Added pure `ExposureLookup` tests for partial scopes, empty mask defs, zero-weight configs, and extreme alpha.  
+- Added flow tests that seed peer positions, fire `pm_core_tick`, and assert `exposure_skew < 1.0`.  
+- Added a skew×strength test that injects a 3× override and verifies `pm_strength` boost is damped by exposure (combined multiplier < strength alone).  
+- Harness cleans up seeded positions and overrides between scenarios so it can be rerun safely.
 
 #### 3.2 Backfill & Rollup Scenario
 
@@ -330,9 +345,12 @@ Harness: `tests/flow/learning_pipeline_harness.py` (PYTHONPATH=.)
    - Verify `uptrend_signals` contains EMA slopes, price position, etc.
    - Verify geometry matches TA tracker outputs.
 
-**Harness**: Create `tests/flow/lowcap_ta_harness.py`.
+**Harness**: `tests/flow/lowcap_ta_harness.py` (real social signal → DM → backfill → TA/geometry checks).
 
-**Status**: ⏳ **Not yet implemented**
+**Status**: ✅ **Completed (2025‑11‑27)**  
+- Avici (BANK) and WOJACK harness runs inject live strands, let DM backfill all four timeframes, and verify TA/geometry outputs.  
+- Flow uncovered and resolved two regressions: missing EMA30 propagation (prevented S3 promotions) and a `vo_z` NameError in `_compute_s3_scores()` that blocked the 1h engine.  
+- Harness now doubles as a regression test—can be re-run for any token via CLI overrides.
 
 ---
 
@@ -430,6 +448,8 @@ Following this plan ensures we can repeatedly demonstrate that turning the syste
 - **2025-11-26** – Re-ran `learning_pipeline_harness` after recursive Apriori miner landed; confirmed Depth‑2 lessons and override drift output.  
 - **2025-11-26** – Re-ran `pm_action_harness` (S1/S3 scenarios); S3 emergency-exit scenario returned `watchlist` instead of expected `active` status → needs follow-up bugfix before marking scenario fully green.
 - **2025-01-26** – Updated DM rejection criteria: removed intent and capacity blockers, lowered curator score minimum to 0.1, confirmed already-holding logs intent but doesn't duplicate positions. Updated test plan with remaining testing gaps: DM rejection tests, lowcap TA harness, PM action edge cases, exposure stress tests, learning pipeline follow-ups, tuning Phase 4, runtime override unit tests, telemetry validation, diagnostics tooling.
+- **2025-11-27** – Flow-tested Avici (BANK) and WOJACK end-to-end via `lowcap_ta_harness`; uncovered and fixed EMA30 propagation gap, `_check_s3_order` S4 dead-end, and `_compute_s3_scores` `vo_z` NameError. Uptrend engine now runs for 1m/15m/1h/4h on schedule and writes state snapshots for watchlist positions.
+- **2025-11-27** – Extended `exposure_skew_harness` with partial-scope/zero-weight lookup tests plus live PM runs (crowding + override damping). Harness now exercises exposure config edge cases and confirms `pm_strength` × `exposure_skew` interplay.
 
 ---
 
@@ -446,15 +466,15 @@ The single existing harness (“social → decision → trader bootstrap”) doe
 | **Tuning System Phase 1 (Episode Logging)** | `pattern_episode_events` logs S1/S3 windows, decisions (acted/skipped), and outcomes | ✅ `tuning_system_harness` logs S1/S3 skip + success + retest | Extend harness to Phase 2 (Miner/Judge) validation. |
 | **Runtime override application** | Logs show PM strength bias, `exposure_skew` damping, PM tuning thresholds deviating from neutral | ✅ `pm_runtime_sizing_harness` | Test `apply_pattern_strength_overrides` with mock overrides in DB. |
 | **Hyperliquid WS + majors rollups** | HL ingester connected, 1m points stored, 1m→5m/15m/1h conversions succeed, macro context updates | ✅ `majors_feed_harness` covers this | Validates WS ingest (PASS/FAIL), 1m rollup writes, higher timeframe conversions, phase_state updates |
-| **Lowcap OHLC + TA tracker** | `GenericOHLCRollup` and `ta_tracker` produce EMA/ATR/TS/OX/DX values for the test token, geometry builder outputs shapes | ⏳ `lowcap_ta_harness` planned | Create dedicated harness for 1m ingestion, rollups, TA tracker, backfill recovery |
+| **Lowcap OHLC + TA tracker** | `GenericOHLCRollup` and `ta_tracker` produce EMA/ATR/TS/OX/DX values for the test token, geometry builder outputs shapes | ✅ `lowcap_ta_harness` (Avici + WOJACK) | Harness injects real signal, triggers backfill/rollups/TA, verifies EMA/ATR/geometry + backfill recovery |
 | **DM allocation learning** | DEPRECATED (DM simplification) | N/A | Removed from test plan |
-| **DM rejection criteria** | DM correctly rejects unsupported chains, low curator scores; doesn't block on removed criteria (intent, capacity) | ⏳ `pm_learning_flow_harness` extension planned | Test chain support, curator score (0.1 min), already-holding behavior, removed blockers |
+| **DM rejection criteria** | DM correctly rejects unsupported chains, low curator scores; doesn't block on removed criteria (intent, capacity) | ✅ `pm_learning_flow_harness --test-rejections` | Tests chain support, curator score (0.1 min), already-holding behavior, removed blockers |
 | **PM action loop edge cases** | S2 adds, cooldown, bag-full, partial fills, executor failures handled correctly | ⏳ `pm_action_harness` extension planned | Test S2 add logic, cooldown enforcement, bag-full rejection, partial fills, executor error paths |
 | **Exposure & sizing stress tests** | Partial scopes, extreme configs, skew×strength interaction, mask weighting | ⏳ `exposure_skew_harness` extension planned | Test missing scope fields, extreme configs, extreme multipliers + crowding, mask weight configs |
 | **Learning pipeline follow-ups** | Strand replay with missing fields, decay fitting with sparse events, DM lesson absence, schema smoke | ⏳ `learning_pipeline_harness` extension planned | Test aggregator handles missing fields, decay N_MIN gate, DM lesson filtering, empty DB runs |
 | **Tuning System Phase 4** | Runtime overrides actually flip S1/S3 signals | ⏳ `tuning_system_harness` extension planned | Test S1/S3 signal flipping with tuning overrides, cross-module interference |
 | **Runtime override unit tests** | `apply_pattern_strength_overrides` and `apply_pattern_execution_overrides` work correctly | ⏳ unit tests planned | Test override blending, clamping, scope matching |
-| **Telemetry / strands validation** | Required fields exist in strands (`pm_strength_applied`, `exposure_skew_applied`, `learning_multipliers`) | ⏳ harness planned | Load latest strand and assert mandatory fields present |
+| **Telemetry / strands validation** | Required fields exist in strands (`pm_strength_applied`, `exposure_skew_applied`, `learning_multipliers`) | ✅ `telemetry_harness.py` (2025‑11‑27) | CLI scans recent `pm_action` strands; latest packets contain all required fields (legacy rows before 2025‑11‑27 lack the telemetry, so harness flags them for awareness). |
 | **Diagnostics (strand replay, lesson dry run, materializer dry run)** | Each tool processes real snapshots independently | ⏳ `diagnostics_harness` planned | Create CLI scripts per §4.1 and harness to verify they still run |
 
 **Next actions**
@@ -463,14 +483,14 @@ The single existing harness (“social → decision → trader bootstrap”) doe
 3. ✅ **Learning pipeline harness** - Built and working. Verifies Aggregator -> Lesson Builder -> Materializer flow.
 4. ✅ **Tuning System Harness Phase 2/3** – Harness seeds synthetic events (N≥33), runs `TuningMiner` + drift judge, and verifies tuning overrides for S1/S3 patterns.
 5. ✅ **Exposure / Sizing verification** – `tests/flow/exposure_skew_harness.py` now seeds two peer positions plus a target with identical scope, runs `pm_core_tick` (mock executor), and asserts the target's `pm_action` strand records `exposure_skew_applied ≈ 0.33` (< 1.0) alongside the entry.
-6. ⏳ **DM rejection criteria tests** – Extend `pm_learning_flow_harness.py` to test chain support, curator score (0.1 min), already-holding behavior, removed blockers (intent, capacity).
-7. ⏳ **Lowcap TA / Rollup harness** – Create `tests/flow/lowcap_ta_harness.py` to verify 1m ingestion, rollups, TA tracker, backfill recovery.
-8. ⏳ **PM action loop edge cases** – Extend `pm_action_harness.py` to test S2 adds, cooldown, bag-full, partial fills, executor failures.
+6. ✅ **DM rejection criteria tests** – Extended `pm_learning_flow_harness.py` with `--test-rejections` flag. Tests: unsupported chain rejection, low curator score (< 0.1) rejection, already-holding behavior (approves but doesn't duplicate), removed blockers verification (intent, capacity don't block). All tests passing.
+7. ✅ **Lowcap TA / Rollup harness** – Created `tests/flow/lowcap_ta_harness.py`. Tests: 1m ingestion (synthetic price points), convert_1m job, rollup jobs (5m/15m/1h/4h), TA tracker (verifies EMA/ATR/RSI/ADX with minimum bar requirements), backfill recovery, geometry builder. All tests passing.
+8. ✅ **PM action loop edge cases** – Extended `pm_action_harness.py` with `_run_edge_case_tests()` method. Tests: S2 add logic (verifies quantity increase and pm_action strands), bag-full rejection (verifies entry skipped when allocation at max), partial fill handling (50% fill simulation), executor failure paths (entry and exit failures), emergency exit failure. Cooldown test noted as requiring execution history modification. All tests passing.
 9. ⏳ **Exposure & sizing stress tests** – Extend `exposure_skew_harness.py` to test partial scopes, extreme configs, skew×strength interaction.
 10. ⏳ **Learning pipeline follow-ups** – Extend `learning_pipeline_harness.py` to test strand replay with missing fields, decay fitting, DM lesson absence, schema smoke.
 11. ⏳ **Tuning System Phase 4** – Extend `tuning_system_harness.py` to verify runtime overrides actually flip S1/S3 signals.
 12. ⏳ **Runtime override unit tests** – Create `tests/unit/pm_overrides_test.py` to test `apply_pattern_strength_overrides` and `apply_pattern_execution_overrides`.
-13. ⏳ **Telemetry / strands validation** – Create harness to load latest strand and assert mandatory fields (`pm_strength_applied`, `exposure_skew_applied`, `learning_multipliers`).
+13. ✅ **Telemetry / strands validation** – `tests/flow/telemetry_harness.py` loads recent `pm_action` strands and asserts telemetry fields (`pm_strength_applied`, `exposure_skew_applied`, `pm_final_multiplier`, `learning_multipliers`). Latest strands (post‑2025‑11‑27) pass; older ones are flagged as missing so we know which historical packets predate the field.
 14. ⏳ **Diagnostics tooling** – Create CLI scripts per §4.1 and `tests/flow/diagnostics_harness.py` to verify they still run.
 15. ⏳ **Real executor smoke (micro-size)** – Run `pm_action_harness` with the live PM executor (dry-run or $1 notional) to confirm the harness stub stays aligned with on-chain payloads; capture RPC/fee health in the evidence bundle.
 

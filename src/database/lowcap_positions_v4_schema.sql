@@ -23,6 +23,7 @@ CREATE TABLE lowcap_positions (
     
     -- STATUS (NEW - dormant/watchlist/active flow)
     status TEXT NOT NULL DEFAULT 'watchlist', -- "dormant", "watchlist", "active", "paused", "archived"
+    state TEXT NOT NULL DEFAULT 'S4',         -- Current uptrend state (S0..S4)
     current_trade_id UUID,                   -- Active trade cycle identifier (set when position becomes active)
     
     -- DATA AVAILABILITY GATING
@@ -93,6 +94,7 @@ CREATE TABLE lowcap_positions (
 -- Create indexes for performance
 CREATE INDEX idx_lowcap_positions_token_timeframe ON lowcap_positions(token_chain, token_contract, timeframe);
 CREATE INDEX idx_lowcap_positions_status_timeframe ON lowcap_positions(status, timeframe);
+CREATE INDEX idx_lowcap_positions_state ON lowcap_positions(state);
 CREATE INDEX idx_lowcap_positions_current_trade_id ON lowcap_positions(current_trade_id);
 CREATE INDEX idx_lowcap_positions_timeframe ON lowcap_positions(timeframe);
 CREATE INDEX idx_lowcap_positions_ticker ON lowcap_positions(token_ticker);
@@ -130,6 +132,7 @@ ALTER TABLE lowcap_positions ADD CONSTRAINT check_timeframe
 COMMENT ON TABLE lowcap_positions IS 'Multi-timeframe positions: 4 positions per token (1m, 15m, 1h, 4h), each with independent allocation and tracking';
 COMMENT ON COLUMN lowcap_positions.timeframe IS 'Timeframe for this position: 1m, 15m, 1h, or 4h';
 COMMENT ON COLUMN lowcap_positions.status IS 'Position status: dormant (< 300 bars), watchlist (ready to trade), active (holding), paused, archived';
+COMMENT ON COLUMN lowcap_positions.state IS 'Latest uptrend engine state snapshot (S0-S4)';
 COMMENT ON COLUMN lowcap_positions.bars_count IS 'Number of OHLC bars available for this timeframe (gates trading)';
 COMMENT ON COLUMN lowcap_positions.alloc_policy IS 'Timeframe-specific config JSONB (allocation splits, thresholds, etc.)';
 COMMENT ON COLUMN lowcap_positions.total_allocation_usd IS 'Total USD actually invested in this position (cumulative, updated by Executor/PM on execution)';

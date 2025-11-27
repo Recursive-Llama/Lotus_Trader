@@ -176,8 +176,7 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
                         'last_updated_at': now.isoformat()
                     }, on_conflict='pattern_key,action_category,scope_subset').execute()
                     overrides_written += 1
-            
-        except Exception as e:
+            except Exception as e:
                 logger.warning(f"Failed to write tuning override for lesson {lesson.get('id')}: {e}")
 
         logger.info(f"Materialized {overrides_written} Tuning overrides.")

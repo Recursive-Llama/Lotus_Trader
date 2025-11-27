@@ -137,7 +137,12 @@ class UptrendEngineV4:
         return res.data or []
 
     def _write_features(self, pid: Any, features: Dict[str, Any]) -> None:
-        self.sb.table("lowcap_positions").update({"features": features}).eq("id", pid).execute()
+        update_payload: Dict[str, Any] = {"features": features}
+        uptrend_payload = (features or {}).get("uptrend_engine_v4") or {}
+        state_value = uptrend_payload.get("state")
+        if state_value:
+            update_payload["state"] = state_value
+        self.sb.table("lowcap_positions").update(update_payload).eq("id", pid).execute()
 
     def _emit_event(self, event: str, payload: Dict[str, Any]) -> None:
         """Emit state change event to database."""
@@ -1180,8 +1185,8 @@ class UptrendEngineV4:
         comp_mult = sigmoid((0.03 - (band_width / max(px, 1e-9))) / 0.02, 1.0)
         # exp(-3.0 * x): high when x is small (near EMA333), low when x is large (near EMA144)
         dx_location = math.exp(-3.0 * x) * (1.0 + 0.3 * comp_mult)
-        exhaustion = max(0.0, min(1.0, sigmoid(-vo_z_1h / 1.0, 1.0)))
-        atr_relief = sigmoid(((atr_1h / max(atr_mean_20, 1e-9)) - 0.9) / 0.05, 1.0)
+        exhaustion = max(0.0, min(1.0, sigmoid(-vo_z / 1.0, 1.0)))
+        atr_relief = sigmoid(((atr_val / max(atr_mean_20, 1e-9)) - 0.9) / 0.05, 1.0)
         rsi_slope_10 = float(mom.get("rsi_slope_10") or 0.0)
         adx_level = float(mom.get("adx_1h") or 0.0)
         adx_slope_10 = float(mom.get("adx_slope_10") or 0.0)
@@ -1218,26 +1223,6 @@ class UptrendEngineV4:
         }
 
     # --------------- State Machine Logic ---------------
-
-    def _disable_signals_for_watchlist(self, extra_data: Dict[str, Any], is_watchlist: bool) -> Dict[str, Any]:
-        """Disable all signals for watchlist positions (warmup mode).
-        
-        Watchlist positions have enough data (≥ 350 bars) but haven't entered yet.
-        We bootstrap state and write diagnostics, but don't emit signals until active.
-        """
-        if is_watchlist:
-            extra_data["warmup"] = True
-            # Ensure all signal flags are False
-            if "flags" not in extra_data:
-                extra_data["flags"] = {}
-            extra_data["flags"]["buy_flag"] = False
-            extra_data["flags"]["trim_flag"] = False
-            extra_data["flags"]["emergency_exit"] = False
-            extra_data["flags"]["reclaimed_ema333"] = False
-            # Also disable buy_signal if present
-            if "buy_signal" in extra_data:
-                extra_data["buy_signal"] = False
-        return extra_data
 
     def _build_payload(
         self,
@@ -1292,7 +1277,7 @@ class UptrendEngineV4:
                 
                 sr_levels = self._read_sr_levels(features)
                 
-                # Check if position is watchlist (bootstrap/warmup mode - no signals until active)
+                # Track watchlist status for diagnostics (signals are now emitted regardless of status)
                 # Dormant positions are skipped entirely (not enough data)
                 is_watchlist = (position_status == "watchlist")
                 
@@ -1306,7 +1291,7 @@ class UptrendEngineV4:
                         # Compute S3 scores for bootstrap
                         s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
                         
-                        # For dormant positions: write warmup diagnostics, no signals
+                        # For dormant positions: write diagnostics but still allow signals
                         extra_data = {
                             "trending": True,
                             "scores": {
@@ -1316,16 +1301,6 @@ class UptrendEngineV4:
                             },
                             "diagnostics": s3_scores.get("diagnostics", {}),
                         }
-                        
-                        # Disable all signals for watchlist positions (warmup mode)
-                        if is_watchlist:
-                            extra_data["warmup"] = True
-                            extra_data["flags"] = {
-                                "buy_flag": False,
-                                "trim_flag": False,
-                                "emergency_exit": False,
-                                "reclaimed_ema333": False,
-                            }
                         
                         payload = self._build_payload(
                             "S3",
@@ -1341,32 +1316,7 @@ class UptrendEngineV4:
                         updated += 1
                         continue
                     elif self._check_s0_order(ema_vals):
-                        # Bootstrap to S0: write state with warmup flag if watchlist
-                        if is_watchlist:
-                            payload = self._build_payload(
-                                "S0",
-                                contract,
-                                chain,
-                                price,
-                                ema_vals,
-                                features,
-                                {
-                                    "warmup": True,
-                                    "flags": {
-                                        "buy_flag": False,
-                                        "trim_flag": False,
-                                        "emergency_exit": False,
-                                        "reclaimed_ema333": False,
-                                    },
-                                    "diagnostics": {"bootstrap": "S0_watchlist"},
-                                },
-                            )
-                            features["uptrend_engine_v4"] = payload
-                            self._write_features(pid, features)
-                            updated += 1
-                            continue
-                        else:
-                            prev_state = "S0"
+                        prev_state = "S0"
                     else:
                         # No state - wait until clear trend emerges
                         payload = self._build_payload(
@@ -1376,7 +1326,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {"watch_only": True, "warmup": is_watchlist},
+                            {"watch_only": True},
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1418,8 +1368,6 @@ class UptrendEngineV4:
                             "buy_signal": buy_check.get("buy_signal", False),
                             "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
                         }
-                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
-                        
                         payload = self._build_payload(
                             "S1",
                             contract,
@@ -1478,8 +1426,6 @@ class UptrendEngineV4:
                             "buy_signal": buy_check.get("buy_signal", False),
                             "diagnostics": {"buy_check": buy_check.get("diagnostics", {})},
                         }
-                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
-                        
                         payload = self._build_payload(
                             "S1",
                             contract,
@@ -1563,8 +1509,6 @@ class UptrendEngineV4:
                                 "s2_retest_check": retest_check.get("diagnostics", {}),
                             },
                         }
-                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
-                        
                         payload = self._build_payload(
                             "S2",
                             contract,
@@ -1573,6 +1517,62 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        updated += 1
+                
+                # S4: Holding pattern waiting for trend clarity
+                elif prev_state == "S4":
+                    if self._check_s3_order(ema_vals):
+                        current_ts = last.get("ts") or _now_iso()
+                        self._set_s3_start_ts(pid, features, current_ts)
+                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
+                        extra_data = {
+                            "trending": True,
+                            "scores": {
+                                "ox": s3_scores.get("ox", 0.0),
+                                "dx": s3_scores.get("dx", 0.0),
+                                "edx": s3_scores.get("edx", 0.0),
+                            },
+                            "diagnostics": s3_scores.get("diagnostics", {}),
+                        }
+                        payload = self._build_payload(
+                            "S3",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            extra_data,
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        self._emit_event("uptrend_state_change", payload)
+                        updated += 1
+                    elif self._check_s0_order(ema_vals):
+                        payload = self._build_payload(
+                            "S0",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            {"diagnostics": {"bootstrap": "S0_from_S4"}},
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        self._emit_event("uptrend_state_change", payload)
+                        updated += 1
+                    else:
+                        payload = self._build_payload(
+                            "S4",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            {"watch_only": True},
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1758,8 +1758,6 @@ class UptrendEngineV4:
                                     "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
                                 },
                             },
-                        extra_data = self._disable_signals_for_watchlist(extra_data, is_watchlist)
-                        
                         payload = self._build_payload(
                             "S3",
                             contract,

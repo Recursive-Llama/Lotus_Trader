@@ -217,6 +217,7 @@ class TATracker:
                     for r in rows_tf
                 ]
                 ema20_tf = ema_series([b["c"] for b in bars_tf], 20)
+                ema30_tf = ema_series([b["c"] for b in bars_tf], 30)
                 ema50_tf = ema_series([b["c"] for b in bars_tf], 50)
                 ema60_tf = ema_series([b["c"] for b in bars_tf], 60)
                 ema144_tf = ema_series([b["c"] for b in bars_tf], 144)
@@ -224,6 +225,7 @@ class TATracker:
                 ema333_tf = ema_series([b["c"] for b in bars_tf], 333)
 
                 ema20_tf_val = ema20_tf[-1] if ema20_tf else (bars_tf[-1]["c"] if bars_tf else 0.0)
+                ema30_tf_val = ema30_tf[-1] if ema30_tf else (bars_tf[-1]["c"] if bars_tf else 0.0)
                 ema50_tf_val = ema50_tf[-1] if ema50_tf else (bars_tf[-1]["c"] if bars_tf else 0.0)
                 atr_series_tf = atr_series_wilder(bars_tf, 14)
                 atr_tf = atr_series_tf[-1] if atr_series_tf else 0.0
@@ -312,6 +314,7 @@ class TATracker:
                 ta = {
                     "ema": {
                         f"ema20{self.ta_suffix}": ema20_tf_val,
+                        f"ema30{self.ta_suffix}": ema30_tf_val,
                         f"ema50{self.ta_suffix}": ema50_tf_val,
                         f"ema60{self.ta_suffix}": ema60_tf[-1] if ema60_tf else ema20_tf_val,
                         f"ema144{self.ta_suffix}": ema144_tf[-1] if ema144_tf else ema20_tf_val,

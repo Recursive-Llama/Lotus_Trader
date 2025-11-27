@@ -248,9 +248,184 @@ class PMLearningFlowHarness:
         }
 
 
-async def async_main(run_learning_jobs: bool) -> None:
+    async def test_dm_rejection_criteria(self) -> None:
+        """
+        Test DM rejection criteria:
+        1. Unsupported chain rejection
+        2. Low curator score rejection (< 0.1)
+        3. Already-holding behavior (approves but doesn't duplicate)
+        4. Removed blockers don't block (intent, capacity)
+        """
+        print("\n" + "="*80)
+        print("DM REJECTION CRITERIA TESTS")
+        print("="*80)
+        
+        # Test 1: Unsupported chain rejection
+        print("\n[TEST 1] Unsupported chain rejection")
+        print("-" * 80)
+        signal = self._build_social_signal()
+        signal["signal_pack"]["token"]["chain"] = "polygon"  # Unsupported chain
+        signal["id"] = f"reject-test-chain-{uuid.uuid4()}"
+        created_signal = self.supabase_manager.insert_strand(signal)
+        await self.learning_system.process_strand_event(created_signal)
+        decision = self._fetch_child_strand(created_signal["id"], "decision_lowcap")
+        if decision:
+            action = decision.get("content", {}).get("action")
+            if action == "reject":
+                print("✅ PASS: Unsupported chain correctly rejected")
+                reasoning = decision.get("content", {}).get("reasoning", "")
+                if "not supported" in reasoning.lower() or "chain" in reasoning.lower():
+                    print(f"   Reasoning: {reasoning}")
+            else:
+                print(f"❌ FAIL: Expected rejection, got action={action}")
+        else:
+            print("❌ FAIL: No decision strand created (should create rejection)")
+        
+        # Test 2: Low curator score rejection
+        print("\n[TEST 2] Low curator score rejection (< 0.1)")
+        print("-" * 80)
+        # First, ensure we have a curator with low score
+        low_score_curator_id = f"test-lowscore-{uuid.uuid4()}"
+        try:
+            # Insert or update curator with low score
+            self.supabase_manager.client.table("curators").upsert({
+                "curator_id": low_score_curator_id,
+                "name": "Low Score Test Curator",
+                "final_weight": 0.05,  # Below 0.1 threshold
+                "win_rate": 0.05,
+                "total_signals": 10,
+                "status": "active"
+            }).execute()
+            print(f"   Created test curator: {low_score_curator_id} with score 0.05")
+        except Exception as e:
+            print(f"   ⚠️  Could not create test curator: {e}")
+            print("   (Assuming curator exists or will use default 0.5)")
+        
+        signal = self._build_social_signal()
+        signal["signal_pack"]["curator"]["id"] = low_score_curator_id
+        signal["id"] = f"reject-test-score-{uuid.uuid4()}"
+        created_signal = self.supabase_manager.insert_strand(signal)
+        await self.learning_system.process_strand_event(created_signal)
+        decision = self._fetch_child_strand(created_signal["id"], "decision_lowcap")
+        if decision:
+            action = decision.get("content", {}).get("action")
+            if action == "reject":
+                print("✅ PASS: Low curator score correctly rejected")
+                reasoning = decision.get("content", {}).get("reasoning", "")
+                if "curator" in reasoning.lower() or "score" in reasoning.lower():
+                    print(f"   Reasoning: {reasoning}")
+            else:
+                print(f"❌ FAIL: Expected rejection, got action={action}")
+        else:
+            print("❌ FAIL: No decision strand created (should create rejection)")
+        
+        # Test 3: Already-holding behavior (should approve but not duplicate positions)
+        print("\n[TEST 3] Already-holding behavior")
+        print("-" * 80)
+        # First create a position for a token
+        test_token_contract = f"test-already-holding-{uuid.uuid4().hex[:16]}"
+        test_token_chain = "solana"
+        try:
+            # Create a test position
+            position = {
+                "token_contract": test_token_contract,
+                "token_chain": test_token_chain,
+                "token_ticker": "ALREADY",
+                "timeframe": "1h",
+                "status": "active",
+                "book_id": self.decision_maker.book_id,
+                "total_allocation_pct": 5.0,
+            }
+            self.supabase_manager.client.table("lowcap_positions").insert(position).execute()
+            print(f"   Created test position for {test_token_contract}")
+        except Exception as e:
+            print(f"   ⚠️  Could not create test position: {e}")
+        
+        signal = self._build_social_signal()
+        signal["signal_pack"]["token"]["contract"] = test_token_contract
+        signal["signal_pack"]["token"]["chain"] = test_token_chain
+        signal["signal_pack"]["token"]["ticker"] = "ALREADY"
+        signal["id"] = f"reject-test-already-{uuid.uuid4()}"
+        created_signal = self.supabase_manager.insert_strand(signal)
+        await self.learning_system.process_strand_event(created_signal)
+        decision = self._fetch_child_strand(created_signal["id"], "decision_lowcap")
+        if decision:
+            action = decision.get("content", {}).get("action")
+            if action == "approve":
+                print("✅ PASS: Already-holding signal approved (intent logged)")
+                # Check that no duplicate positions were created
+                positions = self._fetch_positions(decision)
+                existing_positions = (
+                    self.supabase_manager.client.table("lowcap_positions")
+                    .select("id")
+                    .eq("token_contract", test_token_contract)
+                    .eq("token_chain", test_token_chain)
+                    .eq("status", "active")
+                    .execute()
+                )
+                position_count = len(existing_positions.data) if existing_positions.data else 0
+                if position_count == 1:
+                    print(f"   ✅ No duplicate positions created (count: {position_count})")
+                else:
+                    print(f"   ⚠️  Position count: {position_count} (expected 1, may have duplicates)")
+            else:
+                print(f"❌ FAIL: Expected approval for already-holding, got action={action}")
+        else:
+            print("❌ FAIL: No decision strand created")
+        
+        # Test 4: Removed blockers don't block (intent, capacity)
+        print("\n[TEST 4] Removed blockers (intent, capacity) don't block")
+        print("-" * 80)
+        # Test with "no_intent" intent type (should not block)
+        signal = self._build_social_signal()
+        signal["signal_pack"]["intent_analysis"] = {
+            "intent_analysis": {
+                "intent_type": "no_intent",  # Previously would block
+                "allocation_multiplier": 0.5,
+                "confidence": 0.3,
+            }
+        }
+        signal["id"] = f"reject-test-intent-{uuid.uuid4()}"
+        created_signal = self.supabase_manager.insert_strand(signal)
+        await self.learning_system.process_strand_event(created_signal)
+        decision = self._fetch_child_strand(created_signal["id"], "decision_lowcap")
+        if decision:
+            action = decision.get("content", {}).get("action")
+            if action == "approve":
+                print("✅ PASS: Intent analysis no longer blocks (removed blocker)")
+            else:
+                print(f"❌ FAIL: Expected approval despite no_intent, got action={action}")
+        else:
+            print("❌ FAIL: No decision strand created")
+        
+        # Test capacity (should not block - positions go to waitlist)
+        print("\n[TEST 4b] Capacity check (should not block)")
+        print("-" * 80)
+        signal = self._build_social_signal()
+        signal["id"] = f"reject-test-capacity-{uuid.uuid4()}"
+        created_signal = self.supabase_manager.insert_strand(signal)
+        await self.learning_system.process_strand_event(created_signal)
+        decision = self._fetch_child_strand(created_signal["id"], "decision_lowcap")
+        if decision:
+            action = decision.get("content", {}).get("action")
+            if action == "approve":
+                print("✅ PASS: Capacity check no longer blocks (removed blocker)")
+            else:
+                print(f"❌ FAIL: Expected approval despite capacity, got action={action}")
+        else:
+            print("❌ FAIL: No decision strand created")
+        
+        print("\n" + "="*80)
+        print("DM REJECTION CRITERIA TESTS COMPLETE")
+        print("="*80 + "\n")
+
+
+async def async_main(run_learning_jobs: bool, test_rejections: bool) -> None:
     harness = PMLearningFlowHarness()
-    await harness.run(run_learning_jobs=run_learning_jobs)
+    if test_rejections:
+        await harness.test_dm_rejection_criteria()
+    else:
+        await harness.run(run_learning_jobs=run_learning_jobs)
 
 
 def main() -> None:
@@ -260,9 +435,14 @@ def main() -> None:
         action="store_true",
         help="Run aggregator + lesson builder + materializer after decision stage",
     )
+    parser.add_argument(
+        "--test-rejections",
+        action="store_true",
+        help="Run DM rejection criteria tests (chain support, curator score, already-holding, removed blockers)",
+    )
     args = parser.parse_args()
 
-    asyncio.run(async_main(run_learning_jobs=args.run_learning_jobs))
+    asyncio.run(async_main(run_learning_jobs=args.run_learning_jobs, test_rejections=args.test_rejections))
 
 
 if __name__ == "__main__":

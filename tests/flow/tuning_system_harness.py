@@ -3,13 +3,14 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from src.intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import PMCoreTick
 from src.intelligence.lowcap_portfolio_manager.jobs.tuning_miner import TuningMiner
 from src.intelligence.lowcap_portfolio_manager.jobs.override_materializer import materialize_tuning_overrides
+from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions_v4
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +23,228 @@ HARNESS_TAG = "tuning_harness"
 HARNESS_SCOPE = {"timeframe": "1h", "chain": "solana", "harness_tag": HARNESS_TAG}
 HARNESS_S1_PATTERN = "module=pm|pattern_key=uptrend.S1.harness"
 HARNESS_S3_PATTERN = "module=pm|pattern_key=uptrend.S3.harness"
+HARNESS_CURATOR = "tuning_harness"
+HARNESS_ENTRY_CONTEXT = {
+    "curator": HARNESS_CURATOR,
+    "chain": "solana",
+    "mcap_bucket": "micro",
+}
+
+FEATURE_FLAGS = {
+    "learning_overrides_enabled": True,
+    "tuning_overrides_enabled": True,
+}
+
+def _mock_regime_context() -> Dict[str, Any]:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return {
+        "macro": {"phase": "good", "score": 0.5, "ts": now_iso},
+        "meso": {"phase": "dip", "score": 0.4, "ts": now_iso},
+        "micro": {"phase": "pullback", "score": 0.3, "ts": now_iso},
+        "bucket_rank": ["micro", "mid", "large"],
+    }
+
+
+def _clear_harness_overrides(sb: Client) -> None:
+    try:
+        sb.table("pm_overrides")\
+            .delete()\
+            .filter('scope_subset->>curator', 'eq', HARNESS_CURATOR)\
+            .execute()
+    except Exception as exc:
+        logger.warning(f"Failed to cleanup harness overrides: {exc}")
+
+
+def _insert_override(
+    sb: Client,
+    *,
+    pattern_key: str,
+    action_category: str,
+    multiplier: float,
+) -> None:
+    _clear_harness_overrides(sb)
+    payload = {
+        "pattern_key": pattern_key,
+        "action_category": action_category,
+        "scope_subset": {
+            "curator": HARNESS_CURATOR,
+            "chain": "solana",
+            "timeframe": "1h",
+        },
+        "multiplier": multiplier,
+        "confidence_score": 1.0,
+    }
+    sb.table("pm_overrides").insert(payload).execute()
+
+
+def _build_position(
+    *,
+    state: str,
+    uptrend_payload: Dict[str, Any],
+    execution_history: Dict[str, Any],
+    current_trade_id: str | None,
+) -> Dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "status": "watchlist" if state == "S1" else "active",
+        "timeframe": "1h",
+        "token_chain": "solana",
+        "token_contract": "TUNE111111111111111111111111111111111111111",
+        "token_ticker": "TUNE",
+        "entry_context": {**HARNESS_ENTRY_CONTEXT},
+        "current_trade_id": current_trade_id,
+        "features": {
+            "uptrend_engine_v4": uptrend_payload,
+            "pm_execution_history": execution_history,
+        },
+        "total_quantity": 100.0,
+    }
+
+
+def _s1_runtime_position(ts_with_boost: float = 0.62, halo_mult: float = 0.5) -> Dict[str, Any]:
+    uptrend = {
+        "state": "S1",
+        "buy_signal": True,
+        "price": 1.01,
+        "ema": {"ema60": 1.0},
+        "diagnostics": {
+            "buy_check": {
+                "slope_ok": True,
+                "entry_zone_ok": True,
+                "ts_with_boost": ts_with_boost,
+                "halo": halo_mult,
+                "atr": 0.02,
+            }
+        },
+        "scores": {"ts": 0.62},
+    }
+    exec_history = {"prev_state": "S0"}
+    return _build_position(
+        state="S1",
+        uptrend_payload=uptrend,
+        execution_history=exec_history,
+        current_trade_id=None,
+    )
+
+
+def _s3_runtime_position(ts_with_boost: float = 0.62, dx: float = 0.62) -> Dict[str, Any]:
+    uptrend = {
+        "state": "S3",
+        "buy_flag": True,
+        "first_dip_buy_flag": False,
+        "price": 1.15,
+        "ema": {"ema144": 1.1, "ema333": 0.95},
+        "diagnostics": {
+            "s3_buy_check": {
+                "dx": dx,
+                "ts_with_boost": ts_with_boost,
+                "slope_ok": True,
+                "price_in_discount_zone": True,
+                "emergency_exit": False,
+                "edx_suppression": 0.0,
+                "price_position_boost": 0.0,
+            }
+        },
+        "scores": {"dx": dx, "ts": ts_with_boost},
+    }
+    exec_history = {"prev_state": "S2"}
+    return _build_position(
+        state="S3",
+        uptrend_payload=uptrend,
+        execution_history=exec_history,
+        current_trade_id=str(uuid.uuid4()),
+    )
+
+
+def _run_plan_actions(position: Dict[str, Any], sb: Client) -> List[Dict[str, Any]]:
+    regime_context = _mock_regime_context()
+    return plan_actions_v4(
+        position,
+        a_final=0.6,
+        e_final=0.5,
+        phase_meso=regime_context["meso"]["phase"],
+        sb_client=sb,
+        regime_context=regime_context,
+        token_bucket="micro",
+        feature_flags=FEATURE_FLAGS,
+        exposure_lookup=None,
+    )
+
+
+def _decision_types(actions: List[Dict[str, Any]]) -> List[str]:
+    return [a.get("decision_type") for a in actions]
+
+
+def _assert_entry(actions: List[Dict[str, Any]]) -> bool:
+    return any((a.get("decision_type") or "").lower() in ("entry", "add") for a in actions)
+
+
+async def run_phase_four_runtime_tests(sb: Client) -> None:
+    logger.info("[Phase 4] Runtime override flipping (S1 + S3)")
+    
+    # Baseline S1 should fire entry
+    _clear_harness_overrides(sb)
+    actions = _run_plan_actions(_s1_runtime_position(), sb)
+    if not _assert_entry(actions):
+        raise Exception("Baseline S1 entry missing without overrides")
+    logger.info("✅ S1 baseline emitted entry (%s)", _decision_types(actions))
+    
+    # Tighten S1 (ts_min *1.2) -> block entry
+    _insert_override(
+        sb,
+        pattern_key="pm.uptrend.S1.entry",
+        action_category="tuning_ts_min",
+        multiplier=1.2,
+    )
+    actions = _run_plan_actions(_s1_runtime_position(), sb)
+    if _assert_entry(actions):
+        raise Exception("Tightened S1 override failed to block entry")
+    logger.info("✅ S1 tighten override blocked entry (%s)", _decision_types(actions))
+    
+    # Loosen S1 (ts_min *0.8) -> restore entry
+    _insert_override(
+        sb,
+        pattern_key="pm.uptrend.S1.entry",
+        action_category="tuning_ts_min",
+        multiplier=0.8,
+    )
+    actions = _run_plan_actions(_s1_runtime_position(), sb)
+    if not _assert_entry(actions):
+        raise Exception("Loosened S1 override failed to restore entry")
+    logger.info("✅ S1 loosen override restored entry (%s)", _decision_types(actions))
+    
+    # Baseline S3 add should fire
+    _clear_harness_overrides(sb)
+    actions = _run_plan_actions(_s3_runtime_position(), sb)
+    if not _assert_entry(actions):
+        raise Exception("Baseline S3 add missing without overrides")
+    logger.info("✅ S3 baseline emitted add (%s)", _decision_types(actions))
+    
+    # Tighten S3 dx gate to block
+    _insert_override(
+        sb,
+        pattern_key="pm.uptrend.S3.add",
+        action_category="tuning_dx_min",
+        multiplier=1.2,
+    )
+    actions = _run_plan_actions(_s3_runtime_position(), sb)
+    if _assert_entry(actions):
+        raise Exception("Tightened S3 override failed to block add")
+    logger.info("✅ S3 tighten override blocked add (%s)", _decision_types(actions))
+    
+    # Loosen S3 dx gate to restore
+    _insert_override(
+        sb,
+        pattern_key="pm.uptrend.S3.add",
+        action_category="tuning_dx_min",
+        multiplier=0.8,
+    )
+    actions = _run_plan_actions(_s3_runtime_position(), sb)
+    if not _assert_entry(actions):
+        raise Exception("Loosened S3 override failed to restore add")
+    logger.info("✅ S3 loosen override restored add (%s)", _decision_types(actions))
+    
+    _clear_harness_overrides(sb)
 
 async def setup_position(sb: Client, timeframe: str = "1h") -> str:
     """Create a test position."""
@@ -339,6 +562,9 @@ async def run_harness():
             raise Exception("S3 tuning_ts_min override missing or not tightened")
         if not verify_tuning_override(sb, s3_pattern, "tuning_dx_min", lambda m: m > 1.0):
             raise Exception("S3 tuning_dx_min override missing or not tightened")
+
+        print("\n[Test 4] Phase 4: Runtime override flipping")
+        await run_phase_four_runtime_tests(sb)
 
         print("\n=================================================================")
         print("🎉 TUNING SYSTEM HARNESS COMPLETE - ALL PASS")

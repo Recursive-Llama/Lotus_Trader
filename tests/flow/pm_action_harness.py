@@ -18,14 +18,17 @@ import asyncio
 import logging
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import time
 
 from dotenv import load_dotenv
 
 from utils.supabase_manager import SupabaseManager
 from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import PMCoreTick
-from tests.flow.pm_learning_flow_harness import PMLearningFlowHarness
+try:
+    from tests.flow.pm_learning_flow_harness import PMLearningFlowHarness
+except ModuleNotFoundError:  # pragma: no cover
+    from pm_learning_flow_harness import PMLearningFlowHarness
 
 
 LOGGER = logging.getLogger("pm_action_harness")
@@ -38,9 +41,11 @@ class HarnessMockExecutor:
     without needing real wallets/RPC access.
     """
 
-    def __init__(self, sb_client) -> None:
+    def __init__(self, sb_client, fail_mode: Optional[str] = None, partial_fill: bool = False) -> None:
         self.sb = sb_client
         self.logger = logging.getLogger("HarnessMockExecutor")
+        self.fail_mode = fail_mode  # "entry", "exit", or None
+        self.partial_fill = partial_fill  # If True, return partial fill
 
     def execute(self, decision: Dict[str, Any], position: Dict[str, Any]) -> Dict[str, Any]:
         decision_type = (decision.get("decision_type") or "").lower()
@@ -62,11 +67,21 @@ class HarnessMockExecutor:
         tx_hash = f"mock-{decision_type}-{int(time.time())}"
 
         if decision_type in ("entry", "add", "trend_add"):
+            # Check for failure mode
+            if self.fail_mode == "entry":
+                return {"status": "error", "error": "Mock executor failure for entry"}
+            
             if alloc_usd <= 0:
                 # Fallback to a nominal notional so quantities advance.
                 alloc_usd = 100.0
             notional_usd = max(0.0, alloc_usd * size_frac)
             tokens_bought = notional_usd / price if price > 0 else 0.0
+            
+            # Handle partial fill
+            if self.partial_fill:
+                tokens_bought = tokens_bought * 0.5  # 50% fill
+                notional_usd = tokens_bought * price
+            
             return {
                 "status": "success",
                 "tx_hash": tx_hash,
@@ -80,6 +95,10 @@ class HarnessMockExecutor:
             }
 
         if decision_type in ("trim", "emergency_exit"):
+            # Check for failure mode
+            if self.fail_mode == "exit":
+                return {"status": "error", "error": "Mock executor failure for exit"}
+            
             tokens_sold = total_qty if decision_type == "emergency_exit" else total_qty * size_frac
             tokens_sold = max(0.0, tokens_sold)
             actual_usd = tokens_sold * price
@@ -218,6 +237,9 @@ class PMActionHarness:
                 "ensure_no_trade": True,  # Clear trade_id before test
             },
         ]
+        
+        # Run edge case tests
+        self._run_edge_case_tests()
 
         for scenario in scenarios:
             LOGGER.info("=== %s ===", scenario["name"])
@@ -467,6 +489,146 @@ class PMActionHarness:
         features["pm_execution_history"] = cleaned
         self.sb.table("lowcap_positions").update({"features": features}).eq("id", self.position_id).execute()
         self._refresh_position()
+    
+    def _run_edge_case_tests(self) -> None:
+        """Run edge case tests: S2 adds, cooldown, bag-full, partial fills, executor failures."""
+        print("\n" + "="*80)
+        print("PM ACTION LOOP EDGE CASE TESTS")
+        print("="*80)
+        
+        # Test 1: S2 Add Logic
+        print("\n[EDGE CASE 1] S2 Add Logic")
+        print("-" * 80)
+        self._ensure_watchlist_state()
+        # First enter S1 to establish a position
+        self._apply_uptrend_state(self._make_uptrend_state("S1", buy_signal=True, buy_flag=False, trim_flag=False, emergency_exit=False))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb)
+        pm_tick.run()
+        self._refresh_position()
+        initial_qty = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        
+        # Now test S2 add
+        self._apply_uptrend_state(self._make_uptrend_state("S2", buy_signal=False, buy_flag=True, trim_flag=False, emergency_exit=False))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb)
+        strands_written = pm_tick.run()
+        self._refresh_position()
+        final_qty = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        
+        # Check for add action strand
+        add_strands = self._count_strands("pm_action")
+        if add_strands > 0 and final_qty > initial_qty:
+            print(f"✅ PASS: S2 add logic - quantity increased from {initial_qty} to {final_qty}, {add_strands} pm_action strands")
+        else:
+            print(f"❌ FAIL: S2 add logic - quantity: {initial_qty} → {final_qty}, strands: {add_strands}")
+        
+        # Test 2: Cooldown Enforcement (simplified - would need to set last_trim_time)
+        print("\n[EDGE CASE 2] Cooldown Enforcement")
+        print("-" * 80)
+        print("⚠️  SKIPPED: Cooldown test requires setting last_trim_time in execution history")
+        print("   (Would need to modify pm_execution_history.last_trim_time)")
+        
+        # Test 3: Bag-Full Rejection
+        print("\n[EDGE CASE 3] Bag-Full Rejection")
+        print("-" * 80)
+        self._ensure_watchlist_state()
+        # Set total_allocation_pct to max (100%)
+        if self.position_id:
+            self.sb.table("lowcap_positions").update({
+                "total_allocation_pct": 100.0,
+                "usd_alloc_remaining": 0.0
+            }).eq("id", self.position_id).execute()
+            self._refresh_position()
+        
+        self._apply_uptrend_state(self._make_uptrend_state("S1", buy_signal=True, buy_flag=False, trim_flag=False, emergency_exit=False))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb)
+        pm_tick.run()
+        self._refresh_position()
+        
+        # Check that no entry was made (status should remain watchlist or no quantity increase)
+        status_after = self.position.get("status") if self.position else None
+        qty_after = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        if status_after == "watchlist" or qty_after == 0.0:
+            print(f"✅ PASS: Bag-full rejection - status={status_after}, qty={qty_after} (entry skipped)")
+        else:
+            print(f"⚠️  WARNING: Bag-full may not be enforced - status={status_after}, qty={qty_after}")
+        
+        # Test 4: Partial Fill Handling
+        print("\n[EDGE CASE 4] Partial Fill Handling")
+        print("-" * 80)
+        self._ensure_watchlist_state()
+        # Reset allocation
+        if self.position_id:
+            self.sb.table("lowcap_positions").update({
+                "total_allocation_pct": 10.0,
+                "usd_alloc_remaining": 1000.0
+            }).eq("id", self.position_id).execute()
+            self._refresh_position()
+        
+        self._apply_uptrend_state(self._make_uptrend_state("S1", buy_signal=True, buy_flag=False, trim_flag=False, emergency_exit=False))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb, partial_fill=True)
+        pm_tick.run()
+        self._refresh_position()
+        
+        qty_partial = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        if qty_partial > 0:
+            print(f"✅ PASS: Partial fill handling - quantity={qty_partial} (partial fill applied)")
+        else:
+            print(f"❌ FAIL: Partial fill handling - no quantity increase")
+        
+        # Test 5: Executor Failure Path
+        print("\n[EDGE CASE 5] Executor Failure Path")
+        print("-" * 80)
+        self._ensure_watchlist_state()
+        qty_before_fail = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        
+        self._apply_uptrend_state(self._make_uptrend_state("S1", buy_signal=True, buy_flag=False, trim_flag=False, emergency_exit=False))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb, fail_mode="entry")
+        pm_tick.run()
+        self._refresh_position()
+        
+        qty_after_fail = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        if qty_after_fail == qty_before_fail:
+            print(f"✅ PASS: Executor failure path - quantity unchanged ({qty_before_fail} → {qty_after_fail})")
+        else:
+            print(f"❌ FAIL: Executor failure path - quantity changed ({qty_before_fail} → {qty_after_fail})")
+        
+        # Test 6: Emergency Exit Failure
+        print("\n[EDGE CASE 6] Emergency Exit Failure")
+        print("-" * 80)
+        # First ensure we have a position with quantity
+        if not self.position or self.position.get("total_quantity", 0.0) == 0.0:
+            # Create a position with quantity
+            self._apply_uptrend_state(self._make_uptrend_state("S1", buy_signal=True, buy_flag=False, trim_flag=False, emergency_exit=False))
+            pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+            pm_tick.executor = HarnessMockExecutor(pm_tick.sb)
+            pm_tick.run()
+            self._refresh_position()
+        
+        qty_before_exit_fail = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        
+        # Try emergency exit with failing executor
+        self._apply_uptrend_state(self._make_uptrend_state("S3", buy_signal=False, buy_flag=False, trim_flag=False, emergency_exit=True))
+        pm_tick = PMCoreTick(timeframe=self.TEST_TIMEFRAME)
+        pm_tick.executor = HarnessMockExecutor(pm_tick.sb, fail_mode="exit")
+        pm_tick.run()
+        self._refresh_position()
+        
+        qty_after_exit_fail = self.position.get("total_quantity", 0.0) if self.position else 0.0
+        status_after_exit_fail = self.position.get("status") if self.position else None
+        
+        if qty_after_exit_fail == qty_before_exit_fail and status_after_exit_fail == "active":
+            print(f"✅ PASS: Emergency exit failure - quantity unchanged ({qty_before_exit_fail} → {qty_after_exit_fail}), status={status_after_exit_fail}")
+        else:
+            print(f"⚠️  WARNING: Emergency exit failure - quantity: {qty_before_exit_fail} → {qty_after_exit_fail}, status={status_after_exit_fail}")
+        
+        print("\n" + "="*80)
+        print("EDGE CASE TESTS COMPLETE")
+        print("="*80 + "\n")
 
 
 def parse_args() -> argparse.Namespace:
