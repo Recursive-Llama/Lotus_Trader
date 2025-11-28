@@ -155,19 +155,16 @@ class ExecutorSmokeHarness(PMActionHarness):
         if not self.position_id:
             return
         update = {
-            "usd_alloc_remaining": self.max_usd,
             "total_allocation_pct": max(0.01, float(self.position.get("total_allocation_pct") or 0.01)),
         }
+        wallet = self.sb.table("wallet_balances").select("balance_usd").eq("chain", self.TEST_CHAIN).limit(1).execute()
+        balance_usd = float((wallet.data or [{}])[0].get("balance_usd") or 0.0)
+        alloc_pct = update["total_allocation_pct"]
+        max_allocation_usd = balance_usd * (alloc_pct / 100.0)
+        update["total_allocation_usd"] = max_allocation_usd
+        update["usd_alloc_remaining"] = max_allocation_usd
         # If the slot is empty (watchlist + zero quantity) clear historical allocation so
         # the next entry reflects only the live notional we send through the executor.
-        total_qty = float(self.position.get("total_quantity") or 0.0)
-        status = self.position.get("status")
-        if status == "watchlist" and total_qty == 0.0:
-            update["total_allocation_usd"] = 0.0
-            update["total_tokens_bought"] = 0.0
-            update["total_tokens_sold"] = 0.0
-            update["avg_entry_price"] = None
-            update["avg_exit_price"] = None
         self.sb.table("lowcap_positions").update(update).eq("id", self.position_id).execute()
         self._refresh_position()
 

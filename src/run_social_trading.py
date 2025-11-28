@@ -39,14 +39,12 @@ from llm_integration.openrouter_client import OpenRouterClient
 
 # Import real components
 from intelligence.social_ingest.social_ingest_basic import SocialIngestModule
-from intelligence.social_ingest.discord_monitor_integrated import DiscordMonitorIntegrated
 from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
 # Defer trader imports to initialization to allow V2-only startup without
 # importing V1 when refactor is underway.
 from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
 from trading.jupiter_client import JupiterClient
 from trading.wallet_manager import WalletManager
-from trading.trading_executor import TradingExecutor
 from trading.scheduled_price_collector import ScheduledPriceCollector
 from trading.position_monitor import PositionMonitor
 
@@ -73,7 +71,6 @@ class SocialTradingSystem:
         self.supabase_manager = None
         self.llm_client = None
         self.social_ingest = None
-        self.discord_monitor = None
         self.decision_maker = None
         self.trader = None
         self.learning_system = None
@@ -151,7 +148,6 @@ class SocialTradingSystem:
             # Initialize trading components
             self.jupiter_client = JupiterClient()
             self.wallet_manager = WalletManager()
-            self.trading_executor = TradingExecutor(self.jupiter_client, self.wallet_manager)
             
             # Initialize learning system first
             self.learning_system = UniversalLearningSystem(
@@ -169,19 +165,6 @@ class SocialTradingSystem:
             
             # Pass learning system to social ingest for strand processing
             self.social_ingest.learning_system = self.learning_system
-            
-            # Initialize Gem Bot monitor
-            from intelligence.social_ingest.discord_gem_bot_monitor_v2 import DiscordGemBotMonitor
-            self.gem_bot_monitor = DiscordGemBotMonitor(
-                check_interval=30,  # Check every 30 seconds
-                test_mode=False  # Production mode
-            )
-            
-            # Initialize Discord monitor
-            self.discord_monitor = DiscordMonitorIntegrated(
-                learning_system=self.learning_system,
-                check_interval=60  # Check every 60 seconds
-            )
             
             # Initialize decision maker with learning system reference
             self.decision_maker = DecisionMakerLowcapSimple(
@@ -278,24 +261,6 @@ class SocialTradingSystem:
         except Exception as e:
             print(f"❌ Position management failed: {e}")
     
-    async def start_gem_bot_monitoring(self):
-        """Start Gem Bot monitoring"""
-        try:
-            print("🤖 Starting Gem Bot monitoring...")
-            await self.gem_bot_monitor.start_monitoring()
-            
-        except Exception as e:
-            print(f"❌ Failed to start Gem Bot monitoring: {e}")
-    
-    async def start_discord_monitoring(self):
-        """Start Discord monitoring"""
-        try:
-            print("🔍 Starting Discord monitoring...")
-            await self.discord_monitor.start_monitoring()
-            
-        except Exception as e:
-            print(f"❌ Failed to start Discord monitoring: {e}")
-    
     async def start_learning_system(self):
         """Start the learning system"""
         try:
@@ -320,8 +285,6 @@ class SocialTradingSystem:
             # Start all components
             tasks = [
                 asyncio.create_task(self.start_social_monitoring()),
-                # asyncio.create_task(self.start_discord_monitoring()),  # Disabled for now
-                # asyncio.create_task(self.start_gem_bot_monitoring()),  # Disabled for now
                 asyncio.create_task(self.start_position_management()),
                 asyncio.create_task(self.start_learning_system()),
                 asyncio.create_task(self.start_pm_jobs())

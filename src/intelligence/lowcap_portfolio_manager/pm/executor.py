@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set, Tuple
-from decimal import Decimal
 
 from supabase import Client  # type: ignore
 
@@ -754,16 +753,10 @@ class PMExecutor:
                 self._decimals_cache[cache_key] = token_decimals
 
             tokens_field = result.get("tokens_received")
-            if tokens_field is None and result.get("tokens_received_raw") and token_decimals is not None:
-                try:
-                    tokens_field = float(
-                        Decimal(result["tokens_received_raw"]) / (Decimal(10) ** token_decimals)
-                    )
-                except Exception:
-                    tokens_field = None
-
             tokens_received = float(tokens_field or 0.0)
             actual_price = float(result.get("price", price_usd))
+            if tokens_received > 0:
+                actual_price = notional_usd / tokens_received
             slippage = float(result.get("slippage", 0.0))
             
             # Update wallet balance (subtract USDC spent)
@@ -850,7 +843,10 @@ class PMExecutor:
             # Extract results
             tx_hash = result.get("tx_hash")
             usdc_received = float(result.get("tokens_received", 0.0))  # This is USDC received
+            actual_usd = usdc_received  # USDC received is already in USD
             actual_price = float(result.get("price", price_usd))
+            if tokens_to_sell > 0:
+                actual_price = actual_usd / tokens_to_sell
             slippage = float(result.get("slippage", 0.0))
             token_decimals = result.get("from_token_decimals")
             try:

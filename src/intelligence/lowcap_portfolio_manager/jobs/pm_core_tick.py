@@ -1484,16 +1484,22 @@ class PMCoreTick:
         if total_tokens_sold > 0 and avg_entry_price > 0 and avg_exit_price > 0:
             # Realized P&L = (tokens_sold * avg_exit_price) - (tokens_sold * avg_entry_price)
             rpnl_usd = (total_tokens_sold * avg_exit_price) - (total_tokens_sold * avg_entry_price)
-            rpnl_pct = (rpnl_usd / total_allocation_usd * 100.0) if total_allocation_usd > 0 else 0.0
+            # rpnl_pct should use cost basis of sold tokens, not total allocation
+            cost_basis_of_sold_tokens = total_tokens_sold * avg_entry_price
+            rpnl_pct = (rpnl_usd / cost_basis_of_sold_tokens * 100.0) if cost_basis_of_sold_tokens > 0 else 0.0
             updates["rpnl_usd"] = rpnl_usd
             updates["rpnl_pct"] = rpnl_pct
         else:
             updates["rpnl_usd"] = 0.0
             updates["rpnl_pct"] = 0.0
         
-        # Calculate total P&L (rpnl_usd + current_usd_value)
-        total_pnl_usd = updates.get("rpnl_usd", 0.0) + current_usd_value
-        total_pnl_pct = (total_pnl_usd / total_allocation_usd * 100.0) if total_allocation_usd > 0 else 0.0
+        # Calculate total P&L (rpnl_usd + unrealized_pnl)
+        # Unrealized P&L = current_usd_value - net_cost_basis (cost of remaining tokens)
+        net_cost_basis = total_allocation_usd - total_extracted_usd
+        unrealized_pnl = current_usd_value - net_cost_basis
+        total_pnl_usd = updates.get("rpnl_usd", 0.0) + unrealized_pnl
+        # total_pnl_pct should use net_cost_basis as denominator, not total_allocation_usd
+        total_pnl_pct = (total_pnl_usd / net_cost_basis * 100.0) if net_cost_basis > 0 else 0.0
         updates["total_pnl_usd"] = total_pnl_usd
         updates["total_pnl_pct"] = total_pnl_pct
         

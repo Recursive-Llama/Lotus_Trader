@@ -222,15 +222,15 @@ class TraderService:
                             else:
                                 inserted = result.get('inserted_rows', 0)
                                 trading_logger.info(f"Backfill {timeframes[i]} complete for {ticker}: {inserted} rows")
-        except Exception as e:
+                    except Exception as e:
                         trading_logger.warning(f"Backfill failed for {ticker}: {e}")
                         return
                 
                 _asyncio.create_task(_run_onboarding_backfill())
-        except Exception as e:
+            except Exception as e:
                 trading_logger.warning(f"Failed to trigger backfill for {ticker}: {e}")
 
-                return {
+            return {
                 'decision_id': decision_id,
                 'token_ticker': ticker,
                 'allocation_pct': allocation_pct,
