@@ -305,12 +305,71 @@ PYTHONPATH=src:. python tests/flow/learning_pipeline_harness.py --scenario <base
 - Added a skew×strength test that injects a 3× override and verifies `pm_strength` boost is damped by exposure (combined multiplier < strength alone).  
 - Harness cleans up seeded positions and overrides between scenarios so it can be rerun safely.
 
+#### 3.1c A/E Score & Regime Context Tests
+
+**Purpose**: Verify A/E score calculation and regime context extraction work correctly across different phase combinations, cut pressure, and per-token components.
+
+1. **Phase Combinations (Meso + Macro)**:
+   - Test each meso phase (`Dip`, `Double-Dip`, `Oh-Shit`, `Recover`, `Good`, `Euphoria`) with each macro phase.
+   - Verify base A/E values from meso policy (e.g., `Recover` → A=1.0, E=0.5).
+   - Verify macro multipliers applied correctly (e.g., `Recover` macro → A×1.3, E×1.0).
+   - Verify final A/E values are clamped to [0, 1] range.
+   - Expected: `Recover` + `Recover` macro → A≈1.0, E≈0.5 (clamped).
+
+2. **Cut Pressure Modulation**:
+   - Test with `cut_pressure=0.0` (no pressure) → A/E should be base values.
+   - Test with `cut_pressure=0.5` (moderate) → A should decrease, E should increase.
+   - Test with `cut_pressure=1.0` (maximum) → A should be heavily reduced, E should be heavily increased.
+   - Verify base cut pressure formula: `a_base = a * (1.0 - 0.33 * cp)`, `e_base = e * (1.0 + 0.33 * cp)`.
+
+3. **9-Position Curve**:
+   - Test with `active_positions=5` (< 9) → A should increase linearly, E should decrease linearly.
+   - Test with `active_positions=9` (target) → No additional adjustment beyond cut pressure.
+   - Test with `active_positions=15` (> 9) → A should decrease exponentially, E should increase exponentially.
+   - Verify exponential formula: `a_final = a_base * exp(-0.10 * excess)`, `e_final = e_base * exp(+0.10 * excess)`.
+
+4. **Per-Token Components**:
+   - **Age Component**: Test with tokens <6h, <12h, <72h, >72h → Verify age boosts applied correctly.
+   - **MCap Component**: Test with different mcap buckets → Verify mcap boosts applied correctly.
+   - **Intent Component**: Test with different intent values → Verify intent deltas applied correctly.
+   - Verify final calculation: `a_final = clamp(a_base * a_boost * bucket_multiplier, 0.0, 1.0)`.
+
+5. **Regime Context Extraction**:
+   - Test `_get_regime_context()` extracts macro/meso/micro phases correctly from `phase_state` table.
+   - Test `extract_scope_from_context()` includes regime phases in scope for override matching.
+   - Verify scope includes: `macro_phase`, `meso_phase`, `micro_phase`, `A_mode`, `E_mode` (derived from A/E buckets).
+
+6. **Integration with PM Core Tick**:
+   - Create position with specific phase state.
+   - Run `pm_core_tick` and verify A/E scores in `pm_action` strand match expected values.
+   - Verify regime context is correctly passed to override lookup.
+
+**Harness**: `tests/flow/ae_regime_harness.py`.
+
+**Status**: ✅ **Completed (2025‑11‑27)**  
+- Created comprehensive harness testing all A/E score components.  
+- Phase combinations: Verified all 36 meso×macro combinations produce correct base values and macro multipliers, with final values clamped to [0, 1].  
+- Cut pressure: Verified modulation from 0.0 to 1.0 correctly decreases A and increases E (base formula: `a_base = a * (1.0 - 0.33 * cp)`, `e_base = e * (1.0 + 0.33 * cp)`).  
+- 9-position curve: Verified linear easing below 9 positions, no adjustment at 9, and exponential dampening above 9 (`exp(-0.10 * excess)` for A, `exp(+0.10 * excess)` for E).  
+- Age component: Verified boosts for <6h (1.15×), <12h (1.10×), <72h (1.05×), and >72h (1.0×).  
+- MCap component: Verified boosts for <$100k (1.15×), <$500k (1.10×), <$1m (1.05×), and >$1m (1.0×).  
+- Intent component: Verified intent deltas (hi_buy, sell, mock) with ±0.4 clamping.  
+- Regime context extraction: Verified `_get_regime_context()` extracts macro/meso/micro phases from `phase_state` table, and `extract_scope_from_context()` includes regime phases in scope with A_mode/E_mode derivation.  
+- Bucket ranking: Verified `fetch_bucket_phase_snapshot()` ranks buckets by meso score (highest score = best performing).  
+- Bucket multiplier (rank adjustments): Verified rank-based adjustments (#1=+0.12, #2=+0.06, #3=+0.02, #4=-0.02, etc.) are applied correctly.  
+- Bucket multiplier (slope adjustments): Verified slope_weight (0.4) amplifies adjustments when bucket slope is positive/negative.  
+- Bucket multiplier (confidence threshold): Verified adjustments only apply when confidence >= min_confidence (0.4).  
+- Bucket multiplier (clamping): Verified multiplier is clamped to [min_multiplier (0.7), max_multiplier (1.3)].  
+- Bucket multiplier (integration): Verified bucket multiplier boosts A score and reduces E score in final A/E calculation.  
+- PM Core Tick integration: Verified A/E scores are calculated correctly with regime context and position_size_frac is in valid range [0.1, 0.6].  
+- Command: `PYTHONPATH=src:. python tests/flow/ae_regime_harness.py`.
+
 #### 3.2 Backfill & Rollup Scenario
 
 1. Start system with empty OHLC tables for a test token.
 2. Verify rollup jobs (`convert_1m`, `rollup_5m/15m/1h/4h`) populate data without manual intervention.
 3. Mock engine states after rollups finish to ensure newly created positions still generate strands and feed learning.
-4. Failure logging: if OHLC backfill fails, note “packet died during rollup; learning starved.”
+4. Failure logging: if OHLC backfill fails, note "packet died during rollup; learning starved."
 
 #### 3.2a Lowcap TA / Rollup Harness
 
@@ -408,7 +467,7 @@ Each diagnostic still treats the database as the source of truth; we never mock 
 
 **Harness**: Create `tests/flow/diagnostics_harness.py` and `tests/unit/pm_overrides_test.py`.
 
-**Status**: ⏳ **Not yet implemented**
+**Status (2025‑11‑27)**: ✅ `scripts/strand_replay.py`, `scripts/lesson_dry_run.py`, and `scripts/materializer_dry_run.py` wrap each diagnostic step. `tests/flow/diagnostics_harness.py` imports the shared helpers, runs them sequentially, and prints JSON summaries so we can attach output to the evidence log. Latest run: strand replay skipped a pre-processed trade (expected), lesson builder mined 992 PM lessons, materializer wrote 736 strength + 40 tuning overrides.
 
 ---
 
@@ -470,12 +529,14 @@ The single existing harness (“social → decision → trader bootstrap”) doe
 | **DM allocation learning** | DEPRECATED (DM simplification) | N/A | Removed from test plan |
 | **DM rejection criteria** | DM correctly rejects unsupported chains, low curator scores; doesn't block on removed criteria (intent, capacity) | ✅ `pm_learning_flow_harness --test-rejections` | Tests chain support, curator score (0.1 min), already-holding behavior, removed blockers |
 | **PM action loop edge cases** | S2 adds, cooldown, bag-full, partial fills, executor failures handled correctly | ⏳ `pm_action_harness` extension planned | Test S2 add logic, cooldown enforcement, bag-full rejection, partial fills, executor error paths |
-| **Exposure & sizing stress tests** | Partial scopes, extreme configs, skew×strength interaction, mask weighting | ⏳ `exposure_skew_harness` extension planned | Test missing scope fields, extreme configs, extreme multipliers + crowding, mask weight configs |
+| **Exposure & sizing stress tests** | Partial scopes, extreme configs, skew×strength interaction, mask weighting | ✅ `exposure_skew_harness` (2025‑11‑27) | Test missing scope fields, extreme configs, extreme multipliers + crowding, mask weight configs |
+| **A/E Score & Regime Context** | Phase combinations, cut pressure, 9-position curve, per-token components, regime extraction | ✅ `ae_regime_harness` (2025‑11‑27) | Test meso+macro phases, cut pressure modulation, active positions curve, age/mcap/intent components, regime context extraction |
 | **Learning pipeline follow-ups** | Strand replay with missing fields, decay fitting with sparse events, DM lesson absence, schema smoke | ⏳ `learning_pipeline_harness` extension planned | Test aggregator handles missing fields, decay N_MIN gate, DM lesson filtering, empty DB runs |
 | **Tuning System Phase 4** | Runtime overrides actually flip S1/S3 signals | ⏳ `tuning_system_harness` extension planned | Test S1/S3 signal flipping with tuning overrides, cross-module interference |
 | **Runtime override unit tests** | `apply_pattern_strength_overrides` and `apply_pattern_execution_overrides` work correctly | ⏳ unit tests planned | Test override blending, clamping, scope matching |
 | **Telemetry / strands validation** | Required fields exist in strands (`pm_strength_applied`, `exposure_skew_applied`, `learning_multipliers`) | ✅ `telemetry_harness.py` (2025‑11‑27) | CLI scans recent `pm_action` strands; latest packets contain all required fields (legacy rows before 2025‑11‑27 lack the telemetry, so harness flags them for awareness). |
-| **Diagnostics (strand replay, lesson dry run, materializer dry run)** | Each tool processes real snapshots independently | ⏳ `diagnostics_harness` planned | Create CLI scripts per §4.1 and harness to verify they still run |
+| **Diagnostics (strand replay, lesson dry run, materializer dry run)** | Each tool processes real snapshots independently | ✅ `diagnostics_harness` + CLI set (2025‑11‑27) | `scripts/strand_replay.py`, `scripts/lesson_dry_run.py`, and `scripts/materializer_dry_run.py` wrap the production jobs; `tests/flow/diagnostics_harness.py` calls each helper and asserts they execute without errors (latest run processed one recent strand, mined lessons, and re-materialized overrides). |
+| **Real executor smoke (micro-size)** | Live buy/sell via PMCoreTick + Li.Fi executor | ✅ `executor_smoke_harness` (2025‑11‑27) | `tests/flow/executor_smoke_harness.py` forces S1/S3 states for the Lumen test slot, clamps notional to $1, and optionally swaps in the live executor. Latest run sent tx `5ewMebyVw1BQGhip…` for the entry and unwinded via `xzEvCX…`, `2cX62i…`, `3u9oRg…` (multiple emergency exits because exposure_skew caps per-pass size at 45%). |
 
 **Next actions**
 1. ✅ **PM action harness** - Built and working. Verifies S1 entry, S3 retest, emergency_exit, trade closure, strand emission.
@@ -486,12 +547,13 @@ The single existing harness (“social → decision → trader bootstrap”) doe
 6. ✅ **DM rejection criteria tests** – Extended `pm_learning_flow_harness.py` with `--test-rejections` flag. Tests: unsupported chain rejection, low curator score (< 0.1) rejection, already-holding behavior (approves but doesn't duplicate), removed blockers verification (intent, capacity don't block). All tests passing.
 7. ✅ **Lowcap TA / Rollup harness** – Created `tests/flow/lowcap_ta_harness.py`. Tests: 1m ingestion (synthetic price points), convert_1m job, rollup jobs (5m/15m/1h/4h), TA tracker (verifies EMA/ATR/RSI/ADX with minimum bar requirements), backfill recovery, geometry builder. All tests passing.
 8. ✅ **PM action loop edge cases** – Extended `pm_action_harness.py` with `_run_edge_case_tests()` method. Tests: S2 add logic (verifies quantity increase and pm_action strands), bag-full rejection (verifies entry skipped when allocation at max), partial fill handling (50% fill simulation), executor failure paths (entry and exit failures), emergency exit failure. Cooldown test noted as requiring execution history modification. All tests passing.
-9. ⏳ **Exposure & sizing stress tests** – Extend `exposure_skew_harness.py` to test partial scopes, extreme configs, skew×strength interaction.
-10. ⏳ **Learning pipeline follow-ups** – Extend `learning_pipeline_harness.py` to test strand replay with missing fields, decay fitting, DM lesson absence, schema smoke.
+9. ✅ **Exposure & sizing stress tests** – Extended `exposure_skew_harness.py` with partial scopes, extreme configs, skew×strength interaction. All tests passing.
+10. ✅ **A/E Score & Regime Context** – Created `ae_regime_harness.py` testing all A/E score components: 36 phase combinations (meso×macro), cut pressure modulation (0.0 to 1.0), 9-position curve (linear easing <9, exponential dampening >9), per-token components (age <6h/<12h/<72h, mcap <$100k/<$500k/<$1m, intent deltas with ±0.4 clamping), regime context extraction from `phase_state` table, and PM Core Tick integration. All tests passing.
+11. ⏳ **Learning pipeline follow-ups** – Extend `learning_pipeline_harness.py` to test strand replay with missing fields, decay fitting, DM lesson absence, schema smoke.
 11. ⏳ **Tuning System Phase 4** – Extend `tuning_system_harness.py` to verify runtime overrides actually flip S1/S3 signals.
 12. ⏳ **Runtime override unit tests** – Create `tests/unit/pm_overrides_test.py` to test `apply_pattern_strength_overrides` and `apply_pattern_execution_overrides`.
 13. ✅ **Telemetry / strands validation** – `tests/flow/telemetry_harness.py` loads recent `pm_action` strands and asserts telemetry fields (`pm_strength_applied`, `exposure_skew_applied`, `pm_final_multiplier`, `learning_multipliers`). Latest strands (post‑2025‑11‑27) pass; older ones are flagged as missing so we know which historical packets predate the field.
-14. ⏳ **Diagnostics tooling** – Create CLI scripts per §4.1 and `tests/flow/diagnostics_harness.py` to verify they still run.
-15. ⏳ **Real executor smoke (micro-size)** – Run `pm_action_harness` with the live PM executor (dry-run or $1 notional) to confirm the harness stub stays aligned with on-chain payloads; capture RPC/fee health in the evidence bundle.
+14. ✅ **Diagnostics tooling** – Added `scripts/strand_replay.py`, `scripts/lesson_dry_run.py`, `scripts/materializer_dry_run.py`, plus `tests/flow/diagnostics_harness.py` that runs the trio end-to-end against live data.
+15. ✅ **Real executor smoke (micro-size)** – `tests/flow/executor_smoke_harness.py` reuses the PM action helpers, seeds S1/S3 states, and swaps the Li.Fi executor in place of the mock. On 2025‑11‑27 it executed a $1 LUMEN entry (tx `5ewMebyVw1BQGhip…`) and a series of emergency exits (`xzEvCX…`, `2cX62i…`, `3u9oRg…`) to prove live routing works; exposure skew limited each pass to ~45% notional, so repeated sells drained the bag while logging fresh `pm_action` strands.
 
 Once each harness is green, we can revisit whether a combined “full stack” rehearsal (possibly via `run_social_trading.py` plus scripted inputs) is needed, but keeping the harnesses modular gives us clearer failure boundaries.

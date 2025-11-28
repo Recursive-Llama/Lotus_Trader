@@ -39,7 +39,7 @@ import {
   config as sdkConfig,
 } from '@lifi/sdk'
 import { ChainId } from '@lifi/types'
-import { createWalletClient, createPublicClient, http, erc20Abi } from 'viem'
+import { createWalletClient, createPublicClient, http, erc20Abi, decodeEventLog } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { base as baseChain, bsc, mainnet } from 'viem/chains'
 import { Connection } from '@solana/web3.js'
@@ -206,6 +206,7 @@ const initSDK = async () => {
 
 // Token resolution cache
 const tokensCache = new Map()
+const tokenDecimalsCache = new Map()
 
 const resolveToken = async (chainId, symbolOrAddress) => {
   // If it's an address (starts with 0x or is a long base58 string), use it directly
@@ -231,6 +232,253 @@ const resolveToken = async (chainId, symbolOrAddress) => {
     throw new Error(`Token not found: ${symbolOrAddress} on chain ${chainId}`)
   }
   return match
+}
+
+const getAccountKey = (transaction, index) => {
+  if (!transaction?.message) {
+    return undefined
+  }
+  const message = transaction.message
+  if (Array.isArray(message.accountKeys) && message.accountKeys[index]) {
+    const key = message.accountKeys[index]
+    if (typeof key === 'string') {
+      return key
+    }
+    if (key?.pubkey) {
+      return key.pubkey.toString()
+    }
+  }
+  if (Array.isArray(message.staticAccountKeys) && message.staticAccountKeys[index]) {
+    const key = message.staticAccountKeys[index]
+    if (typeof key === 'string') {
+      return key
+    }
+    if (key?.toString) {
+      return key.toString()
+    }
+  }
+  return undefined
+}
+
+const deriveSolanaTokenDelta = (parsedTx, mint, owner) => {
+  const meta = parsedTx?.meta
+  if (!meta) {
+    return null
+  }
+  const postBalances = meta.postTokenBalances || []
+  const preBalances = meta.preTokenBalances || []
+  const transaction = parsedTx?.transaction
+
+  const normalizeOwner = (entry) => {
+    if (entry?.owner) {
+      return entry.owner
+    }
+    return getAccountKey(transaction, entry.accountIndex)
+  }
+
+  const findMatchingEntry = (balances, accountIndex) => {
+    return balances.find((entry) => entry.accountIndex === accountIndex && entry.mint === mint)
+  }
+
+  let fallbackDelta = null
+
+  if (process.env.LOTUS_DEBUG_LIFI === '1') {
+    console.log('[LiFi] Solana balances snapshot', {
+      mint,
+      postCount: postBalances.length,
+      preCount: preBalances.length,
+    })
+  }
+
+  for (const postEntry of postBalances) {
+    if (postEntry.mint !== mint) {
+      continue
+    }
+    const postOwner = normalizeOwner(postEntry)
+    if (process.env.LOTUS_DEBUG_LIFI === '1') {
+      console.log('[LiFi] checking postEntry', {
+        owner: postOwner,
+        mint: postEntry.mint,
+        amount: postEntry.uiTokenAmount?.amount,
+        decimals: postEntry.uiTokenAmount?.decimals,
+      })
+    }
+    if (owner && postOwner !== owner) {
+      continue
+    }
+    const preEntry = findMatchingEntry(preBalances, postEntry.accountIndex)
+    const postRaw = BigInt(postEntry.uiTokenAmount?.amount ?? postEntry.amount ?? '0')
+    const preRaw = preEntry ? BigInt(preEntry.uiTokenAmount?.amount ?? preEntry.amount ?? '0') : 0n
+    const rawDelta = postRaw - preRaw
+    // If owner filter supplied and delta negative (token left a temp ATA), skip
+    if (owner && rawDelta < 0n) {
+      continue
+    }
+    if (owner && postOwner === owner && rawDelta !== 0n) {
+      const decimals = postEntry.uiTokenAmount?.decimals ?? postEntry.decimals ?? 9
+      const amount = Number(rawDelta) / (10 ** decimals)
+      return {
+        amount,
+        rawAmount: rawDelta.toString(),
+        decimals,
+      }
+    }
+    if (!owner && rawDelta > 0n && !fallbackDelta) {
+      const decimals = postEntry.uiTokenAmount?.decimals ?? postEntry.decimals ?? 9
+      const amount = Number(rawDelta) / (10 ** decimals)
+      fallbackDelta = {
+        amount,
+        rawAmount: rawDelta.toString(),
+        decimals,
+      }
+    }
+    if (owner && postOwner !== owner && rawDelta > 0n && !fallbackDelta) {
+      const decimals = postEntry.uiTokenAmount?.decimals ?? postEntry.decimals ?? 9
+      const amount = Number(rawDelta) / (10 ** decimals)
+      fallbackDelta = {
+        amount,
+        rawAmount: rawDelta.toString(),
+        decimals,
+      }
+    }
+  }
+  return fallbackDelta
+}
+
+const normalizeHex = (value) => value ? value.toLowerCase() : value
+
+const fetchEvmTokenDecimals = async (client, tokenAddress) => {
+  const key = `${client.chain?.id || 'unknown'}:${tokenAddress.toLowerCase()}`
+  if (tokenDecimalsCache.has(key)) {
+    return tokenDecimalsCache.get(key)
+  }
+  try {
+    const decimals = await client.readContract({
+      address: tokenAddress,
+      abi: erc20Abi,
+      functionName: 'decimals',
+    })
+    tokenDecimalsCache.set(key, Number(decimals))
+    return Number(decimals)
+  } catch (error) {
+    tokenDecimalsCache.set(key, 18)
+    return 18
+  }
+}
+
+const deriveEvmTokenDelta = async (chainId, txHash, tokenAddress, walletAddress) => {
+  const client = getRpcClient(chainId)
+  const receipt = await client.getTransactionReceipt({ hash: txHash })
+  if (!receipt) {
+    return null
+  }
+  const walletLower = normalizeHex(walletAddress)
+  const tokenLower = normalizeHex(tokenAddress)
+  let rawDelta = 0n
+  for (const log of receipt.logs || []) {
+    if (normalizeHex(log.address) !== tokenLower) {
+      continue
+    }
+    try {
+      const decoded = decodeEventLog({
+        abi: erc20Abi,
+        data: log.data,
+        topics: log.topics,
+      })
+      if (decoded.eventName !== 'Transfer') {
+        continue
+      }
+      const from = normalizeHex(decoded.args.from)
+      const to = normalizeHex(decoded.args.to)
+      const value = BigInt(decoded.args.value ?? 0n)
+      if (to === walletLower) {
+        rawDelta += value
+      }
+      if (from === walletLower) {
+        rawDelta -= value
+      }
+    } catch (error) {
+      continue
+    }
+  }
+  if (rawDelta === 0n) {
+    return null
+  }
+  const decimals = await fetchEvmTokenDecimals(client, tokenAddress)
+  const amount = Number(rawDelta) / (10 ** decimals)
+  return {
+    amount,
+    rawAmount: rawDelta.toString(),
+    decimals,
+  }
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const resolveActualOutput = async ({ chainId, txHash, tokenAddress, walletAddress, expectedOutput, fallbackDecimals }) => {
+  if (!txHash) {
+    return null
+  }
+  try {
+    if (process.env.LOTUS_DEBUG_LIFI === '1') {
+      console.log('[LiFi] resolveActualOutput chainId', chainId)
+    }
+    if (chainId === ChainId.SOL) {
+      const client = getRpcClient(chainId)
+      let parsedTx = null
+      for (let attempt = 0; attempt < 30; attempt++) {
+        parsedTx = await client.getParsedTransaction(txHash, {
+          commitment: 'finalized',
+          maxSupportedTransactionVersion: 0,
+        })
+        if (parsedTx) {
+          break
+        }
+        await delay(1000)
+      }
+      if (!parsedTx) {
+        if (process.env.LOTUS_DEBUG_LIFI === '1') {
+          console.warn('[LiFi] Parsed transaction not found for', txHash)
+        }
+        return null
+      }
+      const delta = deriveSolanaTokenDelta(parsedTx, tokenAddress, walletAddress)
+      if (delta) {
+        if (process.env.LOTUS_DEBUG_LIFI === '1') {
+          console.log('[LiFi] Solana delta', delta)
+        }
+        return delta
+      }
+      if (process.env.LOTUS_DEBUG_LIFI === '1') {
+        console.warn('[LiFi] Solana delta not found for', walletAddress)
+      }
+      return null
+    } else {
+      // EVM chains (ETH, Base, BSC)
+      const delta = await deriveEvmTokenDelta(chainId, txHash, tokenAddress, walletAddress)
+      if (delta) {
+        return delta
+      }
+      if (typeof expectedOutput === 'number') {
+        return {
+          amount: expectedOutput,
+          rawAmount: null,
+          decimals: fallbackDecimals,
+        }
+      }
+      return null
+    }
+  } catch (error) {
+    console.warn(`resolveActualOutput fallback (${chainId}) due to ${error.message}`)
+    if (typeof expectedOutput === 'number') {
+      return {
+        amount: expectedOutput,
+        rawAmount: null,
+        decimals: fallbackDecimals,
+      }
+    }
+    return null
+  }
 }
 
 // Get wallet address for a chain
@@ -330,6 +578,9 @@ const executeSwap = async (input) => {
     const toToken = await resolveToken(toChainId, input.toToken)
     const fromAddress = await getWalletAddress(fromChainId)
     const toAddress = input.toAddress || await getWalletAddress(toChainId)
+  if (process.env.LOTUS_DEBUG_LIFI === '1') {
+    console.log('[LiFi] fromAddress', fromAddress, 'toAddress', toAddress)
+  }
     
     const request = {
       fromChainId: fromChainId,
@@ -614,24 +865,65 @@ const executeSwap = async (input) => {
     
     // Calculate actual tokens received and slippage
     const fromTokenDecimals = fromToken.decimals || 18
-    const toTokenDecimals = toToken.decimals || 18
+    let toTokenDecimals = toToken.decimals || 18
+    const rawToAmount = Number(route.toAmountMin ?? route.toAmount)
     const fromAmount = Number(input.amount) / (10 ** fromTokenDecimals)
-    const expectedOutput = Number(route.toAmountMin ?? route.toAmount) / (10 ** toTokenDecimals)
-    const actualOutput = expectedOutput // We don't have actual output from SDK, use expected
+    let expectedOutput = rawToAmount / (10 ** toTokenDecimals)
+    let actualOutput = expectedOutput
+    let tokensReceivedRaw = null
+    
+    if (process.env.LOTUS_DEBUG_LIFI === '1') {
+      console.log('[LiFi] resolveActualOutput input', {
+        toChainId,
+        txHash: capturedTxHash,
+        tokenAddress: toToken.address,
+        walletAddress: toAddress,
+      })
+    }
+    const actualInfo = await resolveActualOutput({
+      chainId: toChainId,
+      txHash: capturedTxHash,
+      tokenAddress: toToken.address,
+      walletAddress: toAddress,
+      expectedOutput,
+      fallbackDecimals: toTokenDecimals,
+    })
+    
+    if (actualInfo) {
+      actualOutput = actualInfo.amount
+      tokensReceivedRaw = actualInfo.rawAmount
+      if (actualInfo.decimals != null) {
+        toTokenDecimals = actualInfo.decimals
+        expectedOutput = rawToAmount / (10 ** toTokenDecimals)
+      }
+    }
+    
+    if (!tokensReceivedRaw && actualOutput !== undefined && actualOutput !== null) {
+      try {
+        tokensReceivedRaw = BigInt(Math.round(actualOutput * (10 ** toTokenDecimals))).toString()
+      } catch (error) {
+        tokensReceivedRaw = null
+      }
+    }
+    
     const slippage = expectedOutput > 0 ? ((expectedOutput - actualOutput) / expectedOutput) * 100 : 0
     
     // Calculate price (fromToken price in toToken)
     const price = fromAmount > 0 ? actualOutput / fromAmount : 0
     
-    return {
-      success: true,
-      tx_hash: capturedTxHash,
-      tx_link: capturedTxLink,
-      tokens_received: actualOutput.toString(),
-      price: price,
-      slippage: slippage,
-      tool: capturedStepTool,
-    }
+  return {
+    success: true,
+    tx_hash: capturedTxHash,
+    tx_link: capturedTxLink,
+    tokens_received: actualOutput,
+    tokens_received_raw: tokensReceivedRaw,
+    to_token_decimals: toTokenDecimals,
+    from_token_decimals: fromTokenDecimals,
+    price: price,
+    slippage: slippage,
+    tool: capturedStepTool,
+  }
+  console.log('[LiFi] fromAddress', fromAddress, 'toAddress', toAddress)
     
   } catch (error) {
     return {

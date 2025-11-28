@@ -6,21 +6,28 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_MASK_DEFS: List[Tuple[str, ...]] = [
-    ("mcap_bucket",),
-    ("mcap_bucket", "timeframe"),
-    ("mcap_bucket", "timeframe", "macro_phase"),
+    # Primary scope: exact match required (chain, timeframe, book_id, state)
+    ("chain", "timeframe", "book_id", "state"),
+    # Secondary masks for partial matching (optional, for flexibility)
+    ("chain", "timeframe", "book_id"),
+    ("chain", "timeframe"),
+    ("chain",),
 ]
 
 DEFAULT_DIM_WEIGHTS: Dict[str, float] = {
-    "curator": 1.0,
+    # Primary scope dimensions (required for exact matching)
     "chain": 1.0,
+    "timeframe": 1.0,
+    "book_id": 1.0,
+    "state": 1.0,
+    # Secondary dimensions (for partial matching if needed)
+    "curator": 1.0,
     "mcap_bucket": 1.0,
     "vol_bucket": 1.0,
     "age_bucket": 1.0,
     "intent": 1.0,
     "mcap_vol_ratio_bucket": 1.0,
     "market_family": 1.0,
-    "timeframe": 1.0,
     "A_mode": 1.0,
     "E_mode": 1.0,
     "macro_phase": 1.0,
@@ -102,20 +109,21 @@ class ExposureLookup:
         regime_defaults = regime_defaults or {}
 
         for pos in positions:
-            exposure_pct = float(pos.get("total_allocation_pct") or 0.0)
-            if exposure_pct <= 0:
-                continue
+            # Use current_usd_value (actual holdings) instead of total_allocation_pct
+            current_usd_value = float(pos.get("current_usd_value") or 0.0)
+            if current_usd_value <= 0:
+                continue  # Skip positions with no holdings (already filtered in query, but double-check)
 
             scope = cls._scope_from_position(pos, regime_defaults)
             mask_keys = cls._mask_keys_for_scope(scope, config)
             if not mask_keys:
                 continue
 
-            total_exposure += exposure_pct
+            total_exposure += current_usd_value
             pattern_key = cls._pattern_key_for_position(pos)
 
             for mask, mask_key in mask_keys:
-                weighted = mask.weight * exposure_pct
+                weighted = mask.weight * current_usd_value
                 scope_exposure[mask_key] = scope_exposure.get(mask_key, 0.0) + weighted
                 if pattern_key:
                     pk_key = (pattern_key, mask_key)
@@ -147,8 +155,13 @@ class ExposureLookup:
         position: Dict[str, Any],
         regime_defaults: Dict[str, Optional[str]],
     ) -> Dict[str, Any]:
+        """
+        Extract scope from position for exposure matching.
+        Primary scope dimensions (required for exact matching): chain, timeframe, book_id, state
+        """
         scope: Dict[str, Any] = {}
         entry = position.get("entry_context") or {}
+        features = position.get("features") or {}
 
         def set_value(key: str, value: Optional[Any]) -> None:
             if value is None:
@@ -157,14 +170,26 @@ class ExposureLookup:
                 return
             scope[key] = value
 
-        set_value("curator", entry.get("curator") or entry.get("curator_id"))
+        # Primary scope dimensions (required for exact matching)
         set_value("chain", entry.get("chain") or position.get("token_chain"))
+        set_value("timeframe", position.get("timeframe"))
+        set_value("book_id", position.get("book_id") or "social")  # Default to "social" if not set
+        # State from features.uptrend_engine_v4.state or position.state column
+        state = None
+        if isinstance(features, dict):
+            uptrend = features.get("uptrend_engine_v4") or {}
+            state = uptrend.get("state") or position.get("state")
+        else:
+            state = position.get("state")
+        set_value("state", state)
+
+        # Secondary scope dimensions (for partial matching if needed)
+        set_value("curator", entry.get("curator") or entry.get("curator_id"))
         set_value("mcap_bucket", entry.get("mcap_bucket"))
         set_value("vol_bucket", entry.get("vol_bucket"))
         set_value("age_bucket", entry.get("age_bucket"))
         set_value("intent", entry.get("intent"))
         set_value("mcap_vol_ratio_bucket", entry.get("mcap_vol_ratio_bucket"))
-        set_value("timeframe", position.get("timeframe"))
         set_value("market_family", entry.get("market_family"))
         set_value("A_mode", entry.get("A_mode"))
         set_value("E_mode", entry.get("E_mode"))

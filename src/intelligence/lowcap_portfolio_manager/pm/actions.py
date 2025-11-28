@@ -75,10 +75,25 @@ def _apply_v5_overrides_to_action(
         )
         
         entry_context = position.get("entry_context") or {}
+        features = position.get("features") or {}
+        
+        # Extract state from features.uptrend_engine_v4.state or position.state column
+        position_state = None
+        if isinstance(features, dict):
+            uptrend = features.get("uptrend_engine_v4") or {}
+            position_state = uptrend.get("state") or position.get("state")
+        else:
+            position_state = position.get("state")
+        
         scope = {
             **scope,
-            "curator": entry_context.get("curator"),
+            # Primary scope dimensions (required for exact matching)
             "chain": entry_context.get("chain") or position.get("token_chain"),
+            "timeframe": position.get("timeframe", "1h"),
+            "book_id": position.get("book_id") or "social",  # Default to "social" if not set
+            "state": position_state or "S4",  # Default to "S4" if not set
+            # Secondary scope dimensions
+            "curator": entry_context.get("curator"),
             "mcap_bucket": entry_context.get("mcap_bucket") or scope.get("mcap_bucket"),
             "vol_bucket": entry_context.get("vol_bucket"),
             "age_bucket": entry_context.get("age_bucket"),
@@ -92,27 +107,44 @@ def _apply_v5_overrides_to_action(
             exposure_skew = exposure_lookup.lookup(pattern_key, scope)
         learning_mults["exposure_skew"] = exposure_skew
         
-        base_levers = {
-            "A_value": a_final,
-            "E_value": e_final,
-            "position_size_frac": position_size_frac
-        }
-        adjusted_levers = apply_pattern_strength_overrides(
-            pattern_key=pattern_key,
-            action_category=action_category,
-            scope=scope,
-            base_levers=base_levers,
-            sb_client=sb_client,
-            feature_flags=feature_flags
-        )
-        
-        if adjusted_levers != base_levers:
-            size_mult = adjusted_levers.get("position_size_frac", position_size_frac) / position_size_frac if position_size_frac > 0 else 1.0
-        else:
+        # Learning factors (pm_strength, exposure_skew) should ONLY affect entries (buy/add), not exits
+        # Emergency exits are always 100% regardless of learning
+        # Trims should be based on E-score only, not learning overrides
+        if decision_type == "emergency_exit":
+            # Emergency exit: always 100%, skip all learning factors
             size_mult = 1.0
-        
-        final_mult = size_mult * exposure_skew
-        action["size_frac"] = min(1.0, max(0.0, action.get("size_frac", 0.0) * final_mult))
+            final_mult = 1.0
+            action["size_frac"] = 1.0
+        elif decision_type == "trim":
+            # Trim: skip learning factors (based on E-score only)
+            size_mult = 1.0
+            final_mult = 1.0
+            # Keep original trim size_frac (from E-score calculation)
+            action["size_frac"] = min(1.0, max(0.0, action.get("size_frac", 0.0)))
+        else:
+            # Entry/add: apply learning factors normally
+            base_levers = {
+                "A_value": a_final,
+                "E_value": e_final,
+                "position_size_frac": position_size_frac
+            }
+            adjusted_levers = apply_pattern_strength_overrides(
+                pattern_key=pattern_key,
+                action_category=action_category,
+                scope=scope,
+                base_levers=base_levers,
+                sb_client=sb_client,
+                feature_flags=feature_flags
+            )
+            
+            if adjusted_levers != base_levers:
+                size_mult = adjusted_levers.get("position_size_frac", position_size_frac) / position_size_frac if position_size_frac > 0 else 1.0
+            else:
+                size_mult = 1.0
+            
+            # Apply exposure_skew to entries
+            final_mult = size_mult * exposure_skew
+            action["size_frac"] = min(1.0, max(0.0, action.get("size_frac", 0.0) * final_mult))
         
         learning_mults["pm_strength"] = size_mult
         learning_mults["combined_multiplier"] = final_mult

@@ -1300,7 +1300,7 @@ class UptrendEngineV4:
                                 "edx": s3_scores.get("edx", 0.0),
                             },
                             "diagnostics": s3_scores.get("diagnostics", {}),
-                        }
+                            }
                         
                         payload = self._build_payload(
                             "S3",
@@ -1316,7 +1316,7 @@ class UptrendEngineV4:
                         updated += 1
                         continue
                     elif self._check_s0_order(ema_vals):
-                        prev_state = "S0"
+                            prev_state = "S0"
                     else:
                         # No state - wait until clear trend emerges
                         payload = self._build_payload(

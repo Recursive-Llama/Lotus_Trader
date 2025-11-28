@@ -145,11 +145,15 @@ class PMCoreTick:
         return regime_context
 
     def _positions_for_exposure(self) -> List[Dict[str, Any]]:
+        """
+        Fetch positions for exposure calculation.
+        Only includes positions with current_usd_value > 0 (actual holdings).
+        """
         try:
             res = (
                 self.sb.table("lowcap_positions")
-                .select("token_contract,token_chain,timeframe,status,total_allocation_pct,entry_context,features")
-                .in_("status", ["watchlist", "active"])
+                .select("token_contract,token_chain,timeframe,status,current_usd_value,book_id,state,entry_context,features")
+                .gt("current_usd_value", 0.0)  # Only positions with actual holdings
                 .limit(2000)
                 .execute()
             )
@@ -1229,6 +1233,18 @@ class PMCoreTick:
             # Update last_activity_timestamp on every action
             now_iso = datetime.now(timezone.utc).isoformat()
             updates["last_activity_timestamp"] = now_iso
+            
+            token_decimals = execution_result.get("token_decimals")
+            if token_decimals is not None:
+                try:
+                    token_decimals = int(token_decimals)
+                except (TypeError, ValueError):
+                    token_decimals = None
+            if token_decimals is not None:
+                features = current_pos.get("features") or {}
+                if features.get("token_decimals") != token_decimals:
+                    features["token_decimals"] = token_decimals
+                    updates["features"] = features
             
             reasons = action.get("reasons") or {}
             action_flag = (reasons.get("flag") or "").lower()

@@ -165,19 +165,21 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
                     # Skip tiny changes (drift noise)
                     if abs(mult - 1.0) < 0.01:
                         continue
-                        
+
                     sb_client.table('pm_overrides').upsert({
                         'pattern_key': pattern_key,
                         'action_category': cat,
                         'scope_subset': scope_subset,
                         'multiplier': mult,
-                        'confidence_score': 1.0, # Drift is cumulative confidence
+                        'confidence_score': 1.0,  # Drift is cumulative confidence
                         'decay_state': None,
                         'last_updated_at': now.isoformat()
                     }, on_conflict='pattern_key,action_category,scope_subset').execute()
                     overrides_written += 1
             except Exception as e:
-                logger.warning(f"Failed to write tuning override for lesson {lesson.get('id')}: {e}")
+                logger.warning(
+                    f"Failed to write tuning override for lesson {lesson.get('id')}: {e}"
+                )
 
         logger.info(f"Materialized {overrides_written} Tuning overrides.")
         return overrides_written

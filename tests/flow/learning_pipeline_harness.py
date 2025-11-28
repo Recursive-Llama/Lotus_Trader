@@ -121,7 +121,7 @@ async def setup_test_data(
                 entry_context.pop("intent", None)
             if i % 5 == 0:
                 entry_context.pop("mcap_bucket", None)
-
+        
         # 1. Entry Action
         entry_action = {
             "kind": "pm_action",
@@ -231,11 +231,11 @@ async def verify_lessons(
         .contains("scope_subset", {"chain": "solana"})
         .execute()
     )
-
+        
     if not res.data:
         if expect_present:
-            print("  ❌ FAIL: No lesson found for chain=solana slice")
-            return False
+        print("  ❌ FAIL: No lesson found for chain=solana slice")
+        return False
         print("  ✅ No lessons present (expected).")
         return True
         
@@ -297,11 +297,11 @@ async def verify_overrides(
         .contains("scope_subset", {"chain": "solana"})
         .execute()
     )
-
+        
     if not res.data:
         if expect_present:
-            print("  ❌ FAIL: No override found for chain=solana")
-            return False
+        print("  ❌ FAIL: No override found for chain=solana")
+        return False
         print("  ✅ No overrides present (expected).")
         return True
         

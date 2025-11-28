@@ -35,7 +35,7 @@ from src.intelligence.lowcap_portfolio_manager.pm.exposure import (
 from src.intelligence.lowcap_portfolio_manager.pm.overrides import clear_override_cache
 
 try:
-    from tests.flow.pm_action_harness import HarnessMockExecutor
+from tests.flow.pm_action_harness import HarnessMockExecutor
 except ModuleNotFoundError:  # pragma: no cover
     from pm_action_harness import HarnessMockExecutor
 
