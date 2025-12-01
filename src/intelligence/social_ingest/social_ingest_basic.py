@@ -163,7 +163,7 @@ class SocialIngestModule:
             extraction_result = await self._extract_token_info_with_llm(message_data.get('text', ''), image_data)
             
             # Debug: Show what the LLM returned
-            print(f"   🔍 LLM Response: {extraction_result}")
+            self.logger.debug(f"LLM Response: {extraction_result}")
             
             if not extraction_result or not extraction_result.get('tokens'):
                 self.logger.debug(f"No token info extracted from message by {curator_id}")
@@ -186,25 +186,23 @@ class SocialIngestModule:
             for token_info in extraction_result['tokens']:
                 token_name = token_info.get('token_name', 'unknown')
                 identifier_used = "contract" if token_info.get('contract_address') else "ticker"
-                print(f"   🔍 Processing token: {token_name} (using {identifier_used})")
+                self.logger.debug(f"Processing token: {token_name} (using {identifier_used})")
                 
                 # Check if token is in ignore list (contract addresses bypass ignore list)
                 if token_name.upper() in self.ignored_tokens and not token_info.get('contract_address'):
-                    print(f"   ⏭️  Skipping ignored token: {token_name}")
                     self.logger.info(f"Skipping ignored token: {token_name}")
                     continue
                 
                 # Verify token with DexScreener API
                 verified_token = await self._verify_token_with_dexscreener(token_info, curator_id)
                 if not verified_token:
-                    print(f"   ❌ Token verification failed for {token_info.get('token_name', 'unknown')}")
                     self.logger.debug(f"Token verification failed for {token_info.get('token_name', 'unknown')}")
                     continue
                 else:
-                    print(f"   ✅ Token verified: {verified_token.get('ticker', 'unknown')}")
+                    self.logger.debug(f"Token verified: {verified_token.get('ticker', 'unknown')}")
                 
                 # Stage 2: Analyze curator intent for this token
-                print(f"   🧠 Analyzing intent for {verified_token.get('ticker', 'unknown')}...")
+                self.logger.debug(f"Analyzing intent for {verified_token.get('ticker', 'unknown')}")
                 intent_analysis = await self._analyze_curator_intent(
                     message_data.get('text', ''),
                     token_info,
@@ -212,7 +210,6 @@ class SocialIngestModule:
                 )
                 
                 if not intent_analysis:
-                    print(f"   ❌ Intent analysis failed for {verified_token.get('ticker', 'unknown')}")
                     self.logger.warning(f"Intent analysis failed for {verified_token.get('ticker', 'unknown')}")
                     continue
                 
@@ -230,27 +227,25 @@ class SocialIngestModule:
                 }
                 
                 if intent_type not in buy_intent_types:
-                    print(f"   ⏭️  Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
                     self.logger.info(f"Skipping {verified_token.get('ticker', 'unknown')} - intent: {intent_type}")
                     continue
                 
-                print(f"   ✅ Intent analysis passed: {intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')}")
+                self.logger.debug(f"Intent analysis passed: {intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')}")
                 
                 # Create social_lowcap strand for this token with intent data
-                print(f"   🔧 Creating strand for {verified_token.get('ticker', 'unknown')}...")
+                self.logger.debug(f"Creating strand for {verified_token.get('ticker', 'unknown')}")
                 strand = await self._create_social_strand(curator, message_data, verified_token, extraction_result, intent_analysis, identifier_used)
                 if strand:
                     created_strands.append(strand)
-                    print(f"   ✅ Strand created successfully for {verified_token.get('ticker', 'unknown')}")
                     self.logger.info(f"Created social_lowcap strand for {curator_id} -> {verified_token.get('ticker', 'unknown')}")
                 else:
-                    print(f"   ❌ Strand creation failed for {verified_token.get('ticker', 'unknown')}")
+                    self.logger.warning(f"Strand creation failed for {verified_token.get('ticker', 'unknown')}")
             
             # Update curator last_seen_at
             # TODO: Implement curator last_seen update
             # self._update_curator_last_seen(curator_id)
             
-            print(f"   📊 Final result: {len(created_strands)} strands created")
+            self.logger.info(f"Final result: {len(created_strands)} strands created")
             return created_strands
             
         except Exception as e:
@@ -278,7 +273,7 @@ class SocialIngestModule:
     async def _extract_token_info_with_llm(self, message_text: str, image_data: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
         """Extract token information using LLM with proper prompt templates and image analysis"""
         try:
-            print(f"   🔧 Calling LLM with text: {message_text[:100]}...")
+            self.logger.debug(f"Calling LLM with text: {message_text[:100]}...")
             
             # Use prompt manager to get token extraction template
             prompt = self.prompt_manager.format_prompt(
@@ -287,8 +282,8 @@ class SocialIngestModule:
             )
             system_message = self.prompt_manager.get_system_message('token_extraction')
             
-            print(f"   🔧 Using prompt manager: True")
-            print(f"   🔧 System message: {system_message[:50] if system_message else 'None'}...")
+            self.logger.debug(f"Using prompt manager: True")
+            self.logger.debug(f"System message: {system_message[:50] if system_message else 'None'}...")
             
             # Generate response with system message if available
             if system_message:
@@ -302,7 +297,7 @@ class SocialIngestModule:
                 else:
                     response = await self.llm_client.generate_async(prompt)
             
-            print(f"   🔧 Raw LLM response: {response}")
+            self.logger.debug(f"Raw LLM response: {response}")
             
             # Parse JSON response with robust parsing
             parsed_response = self._parse_llm_response(response)
@@ -316,9 +311,7 @@ class SocialIngestModule:
             return None
             
         except Exception as e:
-            print(f"   ❌ LLM error: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"LLM error: {e}", exc_info=True)
             return None
     
     def _parse_llm_response(self, response: str) -> Optional[Dict[str, Any]]:
@@ -365,11 +358,11 @@ class SocialIngestModule:
             if 'null' in response.lower() or 'no clear token' in response.lower():
                 return None
             
-            print(f"   ⚠️  Could not parse JSON from response")
+            self.logger.warning("Could not parse JSON from response")
             return None
             
         except Exception as e:
-            print(f"   ❌ Parser error: {e}")
+            self.logger.error(f"Parser error: {e}", exc_info=True)
             return None
     
     async def _verify_token_with_dexscreener(self, token_info: Dict[str, Any], curator_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -395,12 +388,12 @@ class SocialIngestModule:
             self.logger.info(f"🔍 Verifying token {token_name} on {network} via DexScreener...")
             
             # Search for token on DexScreener
-            if token_info.get('contract_address'):
-                params = {"q": token_info.get('contract_address')}
-                print(f"   🔍 Searching by contract address: {token_info.get('contract_address')}")
-            else:
-                params = {"q": token_name}
-                print(f"   🔍 Searching by ticker: {token_name}")
+                if token_info.get('contract_address'):
+                    params = {"q": token_info.get('contract_address')}
+                    self.logger.debug(f"Searching by contract address: {token_info.get('contract_address')}")
+                else:
+                    params = {"q": token_name}
+                    self.logger.debug(f"Searching by ticker: {token_name}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.dexscreener_base_url, params=params) as response:
@@ -417,7 +410,7 @@ class SocialIngestModule:
                                 if token_details:
                                     # Calculate identification source (how token was identified)
                                     identification_source = self._calculate_token_identification_source(token_info, token_details)
-                                    print(f"   🎯 Token identification source: {identification_source}")
+                                    self.logger.debug(f"Token identification source: {identification_source}")
                                     
                                     # Map identification source to confidence level for threshold relaxation
                                     # (keeping the relaxation logic but using source-based mapping)
@@ -441,8 +434,7 @@ class SocialIngestModule:
                                     relaxed_min_liq = self._get_relaxed_liquidity_threshold(min_liq, confidence) if min_liq else None
 
                                     if chain not in self.allowed_chains:
-                                        print(f"   ⚠️  Skipping unsupported chain from DexScreener: raw_chainId={best_match.get('chainId')} mapped={chain}")
-                                        self.logger.info(f"Skipping token on unsupported chain: {chain}")
+                                        self.logger.info(f"Skipping token on unsupported chain: {chain} (raw_chainId={best_match.get('chainId')})")
                                         return None
 
                                     # Calculate health metrics (NOTE, don't BLOCK)
@@ -464,16 +456,14 @@ class SocialIngestModule:
                                     
                                     # Log health status (but don't block)
                                     if relaxed_min_vol is not None and vol24 < relaxed_min_vol:
-                                        print(f"   ⚠️  Low volume: ${vol24:,.0f} < ${relaxed_min_vol:,.0f} required for {chain} (confidence: {confidence}) - NOTE only, not blocking")
-                                        self.logger.info(f"Low volume token on {chain}: {vol24} < {relaxed_min_vol} (confidence: {confidence}) - NOTE only")
+                                        self.logger.info(f"Low volume token on {chain}: ${vol24:,.0f} < ${relaxed_min_vol:,.0f} required (confidence: {confidence}) - NOTE only")
                                     else:
-                                        print(f"   ✅ Volume: ${vol24:,.0f} (required: ${relaxed_min_vol:,.0f} for {chain})")
+                                        self.logger.debug(f"Volume: ${vol24:,.0f} (required: ${relaxed_min_vol:,.0f} for {chain})")
                                     
                                     if relaxed_min_liq is not None and liq < relaxed_min_liq:
-                                        print(f"   ⚠️  Low liquidity: ${liq:,.0f} < ${relaxed_min_liq:,.0f} required for {chain} (confidence: {confidence}) - NOTE only, not blocking")
-                                        self.logger.info(f"Low liquidity token on {chain}: {liq} < {relaxed_min_liq} (confidence: {confidence}) - NOTE only")
+                                        self.logger.info(f"Low liquidity token on {chain}: ${liq:,.0f} < ${relaxed_min_liq:,.0f} required (confidence: {confidence}) - NOTE only")
                                     else:
-                                        print(f"   ✅ Liquidity: ${liq:,.0f} (required: ${relaxed_min_liq:,.0f} for {chain})")
+                                        self.logger.debug(f"Liquidity: ${liq:,.0f} (required: ${relaxed_min_liq:,.0f} for {chain})")
 
                                     # Liquidity-to-market cap ratio (NOTE, don't BLOCK)
                                     market_cap = float(token_details.get('market_cap', 0))
@@ -487,17 +477,15 @@ class SocialIngestModule:
                                         
                                         # Log ratio status (but don't block)
                                         if liq_mcap_ratio < relaxed_required_ratio:
-                                            print(f"   ⚠️  Low liquidity/market cap ratio: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f}, confidence: {confidence}) - NOTE only, not blocking")
-                                            self.logger.info(f"Low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% (mcap: ${market_cap:,.0f}, confidence: {confidence}) - NOTE only")
+                                            self.logger.info(f"Low liq/mcap ratio on {chain}: {liq_mcap_ratio:.2f}% < {relaxed_required_ratio:.1f}% required (mcap: ${market_cap:,.0f}, liq: ${liq:,.0f}, confidence: {confidence}) - NOTE only")
                                         else:
-                                            print(f"   ✅ Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {relaxed_required_ratio:.1f}%)")
+                                            self.logger.debug(f"Liquidity/market cap ratio: {liq_mcap_ratio:.2f}% (required: {relaxed_required_ratio:.1f}%)")
                                         
                                         # Add liquidity health bonus to token details for scoring
                                         ratio_excess = liq_mcap_ratio - required_ratio
                                         liquidity_bonus = min(0.1, max(0, (ratio_excess / required_ratio) * 0.1))  # Max 10% bonus
                                         token_details['liquidity_health_bonus'] = liquidity_bonus
                                     else:
-                                        print(f"   ⚠️  Zero market cap - NOTE only, not blocking")
                                         self.logger.info(f"Zero market cap on {chain} - NOTE only")
                                         token_details['liq_mcap_ratio'] = 0.0
 
@@ -1035,7 +1023,7 @@ class SocialIngestModule:
                 'network': token_info.get('network', '')
             }
             
-            print(f"   🔧 Calling LLM for intent analysis: {token_info.get('token_name', 'unknown')}")
+            self.logger.debug(f"Calling LLM for intent analysis: {token_info.get('token_name', 'unknown')}")
             
             # Use prompt manager to get intent analysis template
             prompt = self.prompt_manager.format_prompt(
@@ -1044,8 +1032,8 @@ class SocialIngestModule:
             )
             system_message = self.prompt_manager.get_system_message('curator_intent_analysis')
             
-            print(f"   🔧 Using prompt manager: True")
-            print(f"   🔧 System message: {system_message[:50] if system_message else 'None'}...")
+            self.logger.debug(f"Using prompt manager: True")
+            self.logger.debug(f"System message: {system_message[:50] if system_message else 'None'}...")
             
             # Generate response with system message if available
             if system_message:
@@ -1053,7 +1041,7 @@ class SocialIngestModule:
             else:
                 response = await self.llm_client.generate_async(prompt)
             
-            print(f"   🔧 Raw LLM response: {response}")
+            self.logger.debug(f"Raw LLM response: {response}")
             
             if not response:
                 self.logger.warning(f"Intent analysis failed for token {token_info.get('token_name', 'unknown')}")
@@ -1074,10 +1062,7 @@ class SocialIngestModule:
             return result
             
         except Exception as e:
-            self.logger.error(f"Error analyzing curator intent: {e}")
-            import traceback
-            print(f"   ❌ Intent analysis error: {e}")
-            print(f"   Traceback: {traceback.format_exc()}")
+            self.logger.error(f"Error analyzing curator intent: {e}", exc_info=True)
             return None
     
     async def _scan_handle_for_token(self, handle: str) -> Optional[Dict[str, Any]]:
@@ -1267,35 +1252,31 @@ class SocialIngestModule:
                 except Exception as e:
                     self.logger.warning(f"Failed to increment chain_counts for {curator_id}: {e}")
             
-            # Show what we found
+            # Log strand creation (strand monitor will show this in terminal)
             token_info = strand['signal_pack']['token']
             curator_id = strand['signal_pack']['curator']['id']
             vol = token_info.get('volume_24h', 0)
             liq = token_info.get('liquidity', 0)
             strand_id_short = created_strand.get('id', '')[:8] + '…'
-            # Concise, stage-tagged lines
-            print(f"social | NEW SIGNAL {curator_id} → {token_info['ticker']} ({token_info['chain']}) vol ${vol:,.0f} liq ${liq:,.0f}")
-            print(f"social | Strand created: {strand_id_short}  → target: decision_maker_lowcap")
+            self.logger.info(f"NEW SIGNAL {curator_id} → {token_info['ticker']} ({token_info['chain']}) vol ${vol:,.0f} liq ${liq:,.0f}")
+            self.logger.info(f"Strand created: {strand_id_short} → target: decision_maker_lowcap")
             
             # Trigger learning system to process the strand
             if hasattr(self, 'learning_system') and self.learning_system:
-                print(f"   🔄 Processing with Decision Maker...")
+                self.logger.debug("Processing with Decision Maker")
                 try:
                     # Use asyncio.create_task to handle the async call
                     asyncio.create_task(self.learning_system.process_strand_event(created_strand))
-                    print(f"   ✅ Learning system task created")
+                    self.logger.debug("Learning system task created")
                 except Exception as e:
-                    print(f"   ❌ Error creating learning system task: {e}")
+                    self.logger.error(f"Error creating learning system task: {e}", exc_info=True)
             else:
-                print(f"   ⚠️  Learning system not available - skipping Decision Maker trigger")
+                self.logger.warning("Learning system not available - skipping Decision Maker trigger")
             
             return created_strand
             
         except Exception as e:
-            print(f"   ❌ Error creating social strand: {e}")
-            import traceback
-            traceback.print_exc()
-            self.logger.error(f"Error creating social strand: {e}")
+            self.logger.error(f"Error creating social strand: {e}", exc_info=True)
             return None
     
     def _get_liquidity_bucket(self, liquidity: float) -> str:
@@ -1351,7 +1332,7 @@ class SocialIngestModule:
     def _populate_curators_table_sync(self):
         """Populate curators table from YAML config on startup (synchronous)"""
         try:
-            print("🔄 Populating curators table from YAML config...")
+            self.logger.info("Populating curators table from YAML config...")
             
             for curator in self.curators_config['curators']:
                 if not curator.get('enabled', True):
@@ -1363,7 +1344,7 @@ class SocialIngestModule:
                 existing_curator = self._get_curator_by_id_sync(curator_id)
                 
                 if existing_curator:
-                    print(f"   ✅ Curator {curator_id} already exists in database")
+                    self.logger.debug(f"Curator {curator_id} already exists in database")
                     continue
                 
                 # Extract platform handles
@@ -1398,13 +1379,12 @@ class SocialIngestModule:
                 
                 # Insert curator into database
                 self._insert_curator_sync(curator_data)
-                print(f"   ✅ Added curator {curator_id} to database")
+                self.logger.info(f"Added curator {curator_id} to database")
             
-            print("✅ Curators table population completed")
+            self.logger.info("Curators table population completed")
             
         except Exception as e:
-            self.logger.error(f"Failed to populate curators table: {e}")
-            print(f"❌ Failed to populate curators table: {e}")
+            self.logger.error(f"Failed to populate curators table: {e}", exc_info=True)
     
     def _get_curator_by_id_sync(self, curator_id: str) -> Dict[str, Any]:
         """Get curator by ID from database (synchronous)"""

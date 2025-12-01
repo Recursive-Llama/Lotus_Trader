@@ -1505,14 +1505,16 @@ class PMCoreTick:
         
         # Calculate usd_alloc_remaining
         # Formula: (total_allocation_pct * wallet_balance) - (total_allocation_usd - total_extracted_usd)
+        # NOTE: Always use Solana USDC balance (home chain) - all capital is centralized there
         total_allocation_pct = float(position.get("total_allocation_pct") or 0.0)
         if total_allocation_pct > 0:
-            # Get wallet balance for this chain
+            # Get Solana USDC balance (home chain - all capital is here)
+            home_chain = os.getenv("HOME_CHAIN", "solana").lower()
             try:
                 wallet_result = (
                     self.sb.table("wallet_balances")
                     .select("usdc_balance,balance_usd")
-                    .eq("chain", token_chain.lower())
+                    .eq("chain", home_chain)
                     .limit(1)
                     .execute()
                 )
@@ -1521,17 +1523,17 @@ class PMCoreTick:
                     wallet_balance = float(row.get("usdc_balance") or row.get("balance_usd") or 0.0)
                 else:
                     wallet_balance = 0.0
-                    logger.warning(f"No wallet_balances row found for chain={token_chain.lower()}, using 0.0")
+                    logger.warning(f"No wallet_balances row found for home chain={home_chain}, using 0.0")
             except Exception as e:
                 wallet_balance = 0.0
-                logger.warning(f"Error getting wallet balance for {token_chain}: {e}")
+                logger.warning(f"Error getting wallet balance for home chain {home_chain}: {e}")
             
             # Calculate max allocation and net deployed
             max_allocation_usd = wallet_balance * (total_allocation_pct / 100.0)
             net_deployed_usd = total_allocation_usd - total_extracted_usd
             usd_alloc_remaining = max_allocation_usd - net_deployed_usd
             
-            logger.debug(f"usd_alloc_remaining calc: wallet_balance=${wallet_balance:.2f}, total_allocation_pct={total_allocation_pct}%, max_allocation_usd=${max_allocation_usd:.2f}, net_deployed_usd=${net_deployed_usd:.2f}, usd_alloc_remaining=${usd_alloc_remaining:.2f}")
+            logger.debug(f"usd_alloc_remaining calc (home_chain={home_chain}): wallet_balance=${wallet_balance:.2f}, total_allocation_pct={total_allocation_pct}%, max_allocation_usd=${max_allocation_usd:.2f}, net_deployed_usd=${net_deployed_usd:.2f}, usd_alloc_remaining=${usd_alloc_remaining:.2f}")
             
             updates["usd_alloc_remaining"] = max(0.0, usd_alloc_remaining)  # Can't be negative
         else:

@@ -283,11 +283,10 @@ class PMExecutor:
         if not self.lifi_executor_path.exists():
             logger.error(f"Li.Fi executor script not found at {self.lifi_executor_path}")
         
-        # Bridge configuration
-        self.min_bridge_usd = float(os.getenv("MIN_BRIDGE_USD", "100.0"))
-        self.native_gas_threshold_usd = float(os.getenv("NATIVE_GAS_THRESHOLD_USD", "10.0"))
-        self.initial_native_gas_usd = float(os.getenv("INITIAL_NATIVE_GAS_USD", "15.0"))
-        self.home_chain = os.getenv("HOME_CHAIN", "solana").lower()
+        # Gas management configuration
+        self.native_gas_target_usd = float(os.getenv("NATIVE_GAS_TARGET_USD", "15.0"))  # Target native token amount (~$15)
+        self.native_gas_min_usd = float(os.getenv("NATIVE_GAS_MIN_USD", "5.0"))  # Minimum before top-up (~$5)
+        self.home_chain = os.getenv("HOME_CHAIN", "solana").lower()  # Home chain where all USDC is kept
         
         # Token decimals cache (to avoid repeated lookups)
         self._decimals_cache: Dict[Tuple[str, str], int] = {}
@@ -354,7 +353,7 @@ class PMExecutor:
         
         Args:
             chain: Chain name (solana, ethereum, base, bsc)
-            token: Token symbol or "native" for native token
+            token: Token symbol ("USDC" for USDC, "native" for native token)
         
         Returns:
             Balance in USD (for USDC) or native amount (for native token)
@@ -366,13 +365,14 @@ class PMExecutor:
             
             row = result.data[0]
             if token.upper() == "USDC":
-                # Check if usdc_balance column exists
+                # USDC balance - only on home chain (Solana)
                 if "usdc_balance" in row:
                     return float(row.get("usdc_balance", 0.0))
                 else:
                     # Fallback: use balance_usd (which should represent USDC value)
                     return float(row.get("balance_usd", 0.0))
             elif token.lower() == "native":
+                # Native token balance (for gas)
                 return float(row.get("balance", 0.0))
             else:
                 return 0.0
@@ -380,58 +380,94 @@ class PMExecutor:
             logger.warning(f"Error getting balance for {chain} {token}: {e}")
             return 0.0
     
-    def _check_and_bridge(self, chain: str, required_usdc: float) -> bool:
+    def _get_solana_usdc_balance(self) -> float:
+        """Get USDC balance on Solana (home chain) - all capital is here."""
+        return self._get_balance(self.home_chain, "USDC")
+    
+    def _check_solana_usdc_sufficient(self, required_usd: float) -> bool:
+        """Check if Solana has sufficient USDC for the trade."""
+        solana_usdc = self._get_solana_usdc_balance()
+        if solana_usdc < required_usd:
+            logger.error(f"Insufficient USDC on Solana: ${solana_usdc:.2f} < ${required_usd:.2f}")
+            return False
+        return True
+    
+    def _check_and_topup_gas(self, chain: str) -> bool:
         """
-        Check if sufficient USDC balance exists, bridge if needed.
+        Check native token balance and top up if below minimum.
         
         Args:
-            chain: Target chain
-            required_usdc: Required USDC amount
+            chain: Target chain to check
         
         Returns:
-            True if balance is sufficient or bridge succeeded, False otherwise
+            True if gas is sufficient or top-up succeeded, False otherwise
         """
-        current_usdc = self._get_balance(chain, "USDC")
-        
-        if current_usdc >= required_usdc:
+        if chain.lower() == self.home_chain.lower():
+            # Home chain doesn't need gas top-up (we have native token there)
             return True
         
-        # Check if we need to bridge
-        bridge_amount = max(self.min_bridge_usd, required_usdc - current_usdc)
+        # Get current native token balance
+        native_balance = self._get_balance(chain, "native")
         
-        # Check home chain balance
-        home_usdc = self._get_balance(self.home_chain, "USDC")
-        if home_usdc < bridge_amount:
-            logger.error(f"Insufficient USDC on home chain ({self.home_chain}): ${home_usdc:.2f} < ${bridge_amount:.2f}")
-            return False
+        # Get native token USD rate
+        try:
+            native_usd_rate = _get_native_usd_rate(self.sb, chain)
+            native_balance_usd = float(native_balance) * native_usd_rate if native_usd_rate > 0 else 0.0
+        except Exception as e:
+            logger.warning(f"Could not get native USD rate for {chain}: {e}")
+            native_balance_usd = 0.0
         
-        # Bridge USDC from home chain to target chain
-        logger.info(f"Bridging ${bridge_amount:.2f} USDC from {self.home_chain} to {chain}")
+        # Check if we need to top up
+        if native_balance_usd >= self.native_gas_min_usd:
+            return True  # Gas is sufficient
+        
+        # Calculate top-up amount (target - current, but at least $5)
+        topup_amount_usd = max(self.native_gas_target_usd - native_balance_usd, self.native_gas_min_usd)
+        
+        # Check Solana USDC balance
+        solana_usdc = self._get_solana_usdc_balance()
+        if solana_usdc < topup_amount_usd:
+            logger.warning(f"Insufficient Solana USDC for gas top-up: ${solana_usdc:.2f} < ${topup_amount_usd:.2f}")
+            # Still allow trade to proceed, just log warning
+            return True
+        
+        logger.info(f"Topping up gas on {chain}: ${topup_amount_usd:.2f} (current: ${native_balance_usd:.2f})")
         
         # Convert USD to USDC amount (6 decimals)
-        usdc_amount = str(int(bridge_amount * 1_000_000))
+        usdc_amount = str(int(topup_amount_usd * 1_000_000))
         
-        # Execute bridge via Li.Fi SDK
+        # Get native token address for target chain
+        native_token_map = {
+            "ethereum": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+            "base": "0x4200000000000000000000000000000000000006",  # WETH
+            "bsc": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",  # WBNB
+        }
+        native_token = native_token_map.get(chain.lower())
+        if not native_token:
+            logger.warning(f"No native token mapping for {chain}, skipping gas top-up")
+            return True
+        
+        # Execute cross-chain swap: Solana USDC → Target Chain Native Token
         result = self._call_lifi_executor(
-            action="bridge",
-            chain=chain,  # Will be ignored, using fromChain/toChain instead
+            action="swap",
+            chain=chain,  # Target chain
             from_token="USDC",
-            to_token="USDC",
+            to_token=native_token,
             amount=usdc_amount,
             slippage=0.5,
-            from_chain=self.home_chain,
-            to_chain=chain
+            from_chain=self.home_chain,  # Source: Solana
+            to_chain=chain  # Target: destination chain
         )
         
         if not result.get("success"):
-            logger.error(f"Bridge failed: {result.get('error')}")
-            return False
+            logger.warning(f"Gas top-up failed: {result.get('error')}, but allowing trade to proceed")
+            return True  # Don't block trade if gas top-up fails
         
-        logger.info(f"Bridge successful: {result.get('tx_hash')}")
+        logger.info(f"Gas top-up successful: {result.get('tx_hash')}")
         
-        # Update wallet balances after bridge
-        self._update_balance_after_trade(self.home_chain, "USDC", -bridge_amount)
-        self._update_balance_after_trade(chain, "USDC", bridge_amount)
+        # Update wallet balances after top-up
+        self._update_balance_after_trade(self.home_chain, "USDC", -topup_amount_usd)
+        # Native token balance will be updated by scheduled job
         
         return True
     
@@ -524,9 +560,15 @@ class PMExecutor:
             "dryRun": False,
         }
         
-        # For swaps, use single chain
+        # For swaps, support both single-chain and cross-chain
         if action == "swap":
-            input_data["chain"] = self._get_chain_id(chain)
+            if from_chain and to_chain and from_chain.lower() != to_chain.lower():
+                # Cross-chain swap: specify fromChain and toChain
+                input_data["fromChain"] = self._get_chain_id(from_chain)
+                input_data["toChain"] = self._get_chain_id(to_chain)
+            else:
+                # Single-chain swap: use chain parameter
+                input_data["chain"] = self._get_chain_id(chain)
         # For bridges, use fromChain and toChain
         elif action == "bridge":
             if not from_chain or not to_chain:
@@ -694,10 +736,14 @@ class PMExecutor:
         price_native: float,
         size_frac: float
     ) -> Dict[str, Any]:
-        """Execute a buy order using Li.Fi SDK (USDC → token)."""
+        """
+        Execute a buy order using cross-chain swap from Solana USDC → target chain token.
+        
+        Always uses cross-chain swap from Solana (home chain) to target chain.
+        No pre-bridging needed - Li.Fi handles bridge + swap in one transaction.
+        """
         try:
             # Calculate notional USD from usd_alloc_remaining (remaining capacity)
-            # Use usd_alloc_remaining for sizing - this ensures we never exceed allocation
             usd_alloc_remaining = float(position.get("usd_alloc_remaining") or 0.0)
             if usd_alloc_remaining <= 0:
                 return {
@@ -713,31 +759,36 @@ class PMExecutor:
                     "error": "Invalid size_frac or allocation"
                 }
             
-            # Check and bridge if needed
-            if not self._check_and_bridge(chain, notional_usd):
+            # Check Solana USDC balance (all capital is on Solana)
+            if not self._check_solana_usdc_sufficient(notional_usd):
                 return {
                     "status": "error",
-                    "error": f"Insufficient USDC balance on {chain} and bridge failed"
+                    "error": f"Insufficient USDC on Solana (home chain)"
                 }
             
+            # Check and top up gas on target chain if needed
+            self._check_and_topup_gas(chain)
+            
             # Convert USD to USDC amount (6 decimals)
-            # USDC has 6 decimals, so 1 USDC = 1,000,000
             usdc_amount = str(int(notional_usd * 1_000_000))
             
-            # Execute swap via Li.Fi SDK: USDC → token
+            # Execute cross-chain swap: Solana USDC → Target Chain Token
+            # Li.Fi automatically handles bridge + swap in one transaction
             result = self._call_lifi_executor(
                 action="swap",
-                chain=chain,
+                chain=chain,  # Target chain
                 from_token="USDC",
                 to_token=token_contract,
                 amount=usdc_amount,
-                slippage=0.5  # 0.5% slippage tolerance
+                slippage=0.5,  # 0.5% slippage tolerance
+                from_chain=self.home_chain,  # Source: Solana
+                to_chain=chain  # Target: destination chain
             )
             
             if not result.get("success"):
                 return {
                     "status": "error",
-                    "error": result.get("error", "Li.Fi execution failed")
+                    "error": result.get("error", "Li.Fi cross-chain swap failed")
                 }
             
             # Extract results
@@ -759,8 +810,8 @@ class PMExecutor:
                 actual_price = notional_usd / tokens_received
             slippage = float(result.get("slippage", 0.0))
             
-            # Update wallet balance (subtract USDC spent)
-            self._update_balance_after_trade(chain, "USDC", -notional_usd)
+            # Update wallet balance (subtract USDC from Solana)
+            self._update_balance_after_trade(self.home_chain, "USDC", -notional_usd)
             
             return {
                 "status": "success",
@@ -791,7 +842,12 @@ class PMExecutor:
         price_native: float,
         size_frac: float
     ) -> Dict[str, Any]:
-        """Execute a sell order using Li.Fi SDK (token → USDC)."""
+        """
+        Execute a sell order using cross-chain swap: target chain token → Solana USDC.
+        
+        Always swaps back to Solana USDC (home chain) - all proceeds go to Solana.
+        Li.Fi handles bridge + swap in one transaction.
+        """
         try:
             # Calculate tokens to sell
             total_quantity = float(position.get("total_quantity") or 0.0)
@@ -824,25 +880,28 @@ class PMExecutor:
             # Convert tokens to smallest unit
             token_amount = str(int(tokens_to_sell * (10 ** token_decimals)))
             
-            # Execute swap via Li.Fi SDK: token → USDC
+            # Execute cross-chain swap: Target Chain Token → Solana USDC
+            # Li.Fi automatically handles swap + bridge in one transaction
             result = self._call_lifi_executor(
                 action="swap",
-                chain=chain,
+                chain=chain,  # Source chain (where token is)
                 from_token=token_contract,
                 to_token="USDC",
                 amount=token_amount,
-                slippage=0.5  # 0.5% slippage tolerance
+                slippage=0.5,  # 0.5% slippage tolerance
+                from_chain=chain,  # Source: token's chain
+                to_chain=self.home_chain  # Target: Solana (home chain)
             )
             
             if not result.get("success"):
                 return {
                     "status": "error",
-                    "error": result.get("error", "Li.Fi execution failed")
+                    "error": result.get("error", "Li.Fi cross-chain swap failed")
                 }
             
             # Extract results
             tx_hash = result.get("tx_hash")
-            usdc_received = float(result.get("tokens_received", 0.0))  # This is USDC received
+            usdc_received = float(result.get("tokens_received", 0.0))  # USDC received on Solana
             actual_usd = usdc_received  # USDC received is already in USD
             actual_price = float(result.get("price", price_usd))
             if tokens_to_sell > 0:
@@ -861,8 +920,8 @@ class PMExecutor:
             expected_usd = tokens_to_sell * price_usd
             actual_usd = usdc_received  # USDC received is already in USD
             
-            # Update wallet balance (add USDC received)
-            self._update_balance_after_trade(chain, "USDC", actual_usd)
+            # Update wallet balance (add USDC to Solana)
+            self._update_balance_after_trade(self.home_chain, "USDC", actual_usd)
             
             return {
                 "status": "success",

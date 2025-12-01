@@ -7,6 +7,7 @@ Collects price data every minute for active position tokens and stores in databa
 
 import asyncio
 import logging
+import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
 import requests
@@ -633,7 +634,12 @@ class ScheduledPriceCollector:
             logger.error(f"Error updating wallet balances: {e}")
     
     async def _update_wallet_balance_for_chain(self, chain: str):
-        """Update wallet balance for a specific chain"""
+        """
+        Update wallet balance for a specific chain.
+        
+        For Solana (home chain): Fetch both USDC balance and native token (SOL) balance
+        For other chains: Fetch only native token balance (for gas)
+        """
         try:
             # Get wallet balance from the wallet manager
             if hasattr(self.supabase_manager, 'wallet_manager'):
@@ -646,26 +652,59 @@ class ScheduledPriceCollector:
                     logger.warning(f"No wallet manager available for {chain} balance update")
                     return
             
-            # Get current balance
-            balance = await wallet_manager.get_balance(chain, None)  # None for native token
-            if balance is None:
-                logger.warning(f"Could not get {chain} balance")
-                return
+            home_chain = os.getenv("HOME_CHAIN", "solana").lower()
+            is_home_chain = chain.lower() == home_chain
             
-            # Get USD rate for this chain
-            usd_rate = await self._get_native_usd_rate_async(chain)
-            balance_usd = float(balance) * usd_rate if usd_rate > 0 else None
-            
-            # Update wallet balance in database
-            self.supabase_manager.client.table('wallet_balances').upsert({
+            updates = {
                 'chain': chain,
-                'balance': float(balance),
-                'balance_usd': balance_usd,
                 'wallet_address': wallet_manager.get_wallet_address(chain),
                 'last_updated': datetime.now(timezone.utc).isoformat()
-            }).execute()
+            }
             
-            logger.debug(f"Updated {chain} wallet balance: {balance:.6f} (${balance_usd:.2f if balance_usd else 'N/A'})")
+            # Always fetch native token balance (for gas tracking)
+            native_balance = await wallet_manager.get_balance(chain, None)  # None for native token
+            if native_balance is not None:
+                updates['balance'] = float(native_balance)
+                # Get USD rate for native token (for display/reference)
+                usd_rate = await self._get_native_usd_rate_async(chain)
+                if usd_rate > 0:
+                    updates['balance_usd'] = float(native_balance) * usd_rate
+            else:
+                logger.warning(f"Could not get {chain} native token balance")
+                updates['balance'] = 0.0
+            
+            # For home chain (Solana), also fetch USDC balance
+            if is_home_chain:
+                # USDC contract addresses by chain
+                usdc_addresses = {
+                    'solana': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                    'ethereum': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                    'base': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+                    'bsc': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d'
+                }
+                
+                usdc_address = usdc_addresses.get(chain.lower())
+                if usdc_address:
+                    try:
+                        usdc_balance = await wallet_manager.get_balance(chain, usdc_address)
+                        if usdc_balance is not None:
+                            # USDC has 6 decimals, convert to USD
+                            updates['usdc_balance'] = float(usdc_balance)
+                            logger.debug(f"Updated {chain} USDC balance: {usdc_balance:.2f}")
+                        else:
+                            logger.warning(f"Could not get {chain} USDC balance")
+                            updates['usdc_balance'] = 0.0
+                    except Exception as e:
+                        logger.warning(f"Error fetching USDC balance for {chain}: {e}")
+                        updates['usdc_balance'] = 0.0
+            
+            # Update wallet balance in database
+            self.supabase_manager.client.table('wallet_balances').upsert(updates).execute()
+            
+            balance_display = f"{updates.get('balance', 0):.6f}"
+            if is_home_chain and 'usdc_balance' in updates:
+                balance_display += f" (USDC: ${updates.get('usdc_balance', 0):.2f})"
+            logger.debug(f"Updated {chain} wallet balance: {balance_display}")
             
         except Exception as e:
             logger.error(f"Error updating {chain} wallet balance: {e}")

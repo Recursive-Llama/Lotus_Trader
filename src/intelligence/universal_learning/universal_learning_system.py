@@ -312,12 +312,11 @@ class UniversalLearningSystem:
             strand_kind = strand.get('kind', 'unknown')
             strand_id = strand.get('id', 'unknown')
             
-            print(f"🧠 Universal Learning System: Processing strand {strand_id} - {strand_kind}")
             self.logger.info(f"Processing strand event: {strand_id} - {strand_kind}")
             
             # CRITICAL: Handle position_closed strands for learning system
             if strand_kind == 'position_closed':
-                print(f"🧠 Learning System: Detected position_closed strand - processing for coefficient updates")
+                self.logger.info(f"Detected position_closed strand - processing for coefficient updates")
                 await self._process_position_closed_strand(strand)
                 self.logger.info(f"Successfully processed position_closed strand: {strand_id}")
                 return strand
@@ -326,22 +325,22 @@ class UniversalLearningSystem:
             # (These columns don't exist in the current schema)
             
             # Check if this strand should trigger the Decision Maker
-            print(f"🧠 Checking if should trigger Decision Maker...")
+            self.logger.debug("Checking if should trigger Decision Maker")
             should_trigger = self._should_trigger_decision_maker(strand)
-            print(f"🧠 Should trigger Decision Maker: {should_trigger}")
+            self.logger.debug(f"Should trigger Decision Maker: {should_trigger}")
             if should_trigger:
-                print(f"🧠 Triggering Decision Maker...")
+                self.logger.info("Triggering Decision Maker")
                 await self._trigger_decision_maker(strand)
-                print(f"🧠 Decision Maker completed - strand processed")
+                self.logger.info("Decision Maker completed - strand processed")
             
             # Check if this strand should trigger the Trader
-            print(f"🧠 Checking if should trigger Trader...")
+            self.logger.debug("Checking if should trigger Trader")
             should_trigger_trader = self._should_trigger_trader(strand)
-            print(f"🧠 Should trigger Trader: {should_trigger_trader}")
+            self.logger.debug(f"Should trigger Trader: {should_trigger_trader}")
             if should_trigger_trader:
-                print(f"🧠 Triggering Trader...")
+                self.logger.info("Triggering Trader")
                 await self._trigger_trader(strand)
-                print(f"🧠 Trader completed - strand processed")
+                self.logger.info("Trader completed - strand processed")
             
             # Legacy braid candidate check removed - not used by lowcap system
             
@@ -349,11 +348,7 @@ class UniversalLearningSystem:
             return strand
             
         except Exception as e:
-            self.logger.error(f"Error processing strand event: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
-            print(f"❌ Error processing strand event: {e}")
-            print(f"❌ Traceback: {traceback.format_exc()}")
+            self.logger.error(f"Error processing strand event: {e}", exc_info=True)
             return strand
     
     def _should_trigger_decision_maker(self, strand: Dict[str, Any]) -> bool:
@@ -374,7 +369,7 @@ class UniversalLearningSystem:
         action = content.get('action')
         tags = strand.get('tags', [])
         
-        print(f"🧠 Trader trigger check: kind={kind}, action={action}, tags={tags}")
+        self.logger.debug(f"Trader trigger check: kind={kind}, action={action}, tags={tags}")
         
         # Standard decision_lowcap approval
         decision_approval = (
@@ -391,43 +386,43 @@ class UniversalLearningSystem:
         
         should_trigger = decision_approval or gem_bot_auto
         
-        print(f"🧠 Trader trigger result: {should_trigger} (decision_approval={decision_approval}, gem_bot_auto={gem_bot_auto})")
+        self.logger.debug(f"Trader trigger result: {should_trigger} (decision_approval={decision_approval}, gem_bot_auto={gem_bot_auto})")
         return should_trigger
     
     async def _trigger_decision_maker(self, strand: Dict[str, Any]) -> None:
         """Trigger the Decision Maker with the strand"""
         try:
             parent_id_short = (strand.get('id', '')[:8] + '…') if strand.get('id') else 'unknown'
-            print(f"decision | Triggering for social strand {parent_id_short}")
+            self.logger.info(f"Triggering Decision Maker for social strand {parent_id_short}")
             
             # Import here to avoid circular imports
             from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
-            print(f"🧠 Decision Maker: Import successful")
+            self.logger.debug("Decision Maker: Import successful")
             
             # Check if decision maker is available
             if not self.decision_maker:
-                print(f"🧠 Decision Maker: Not available - skipping strand processing")
+                self.logger.warning("Decision Maker: Not available - skipping strand processing")
                 return
             
             # Process the strand with decision maker
-            print(f"🧠 Decision Maker: Processing strand {strand.get('id', 'unknown')}")
+            self.logger.debug(f"Decision Maker: Processing strand {strand.get('id', 'unknown')}")
             self.logger.info(f"Triggering Decision Maker for strand: {strand.get('id', 'unknown')}")
             result = await self.decision_maker.make_decision(strand)
             if result:
                 child_id_short = (result.get('id', '')[:8] + '…') if result.get('id') else 'unknown'
-                print(f"decision | Strand {child_id_short} (from {parent_id_short}) → action: {result.get('content', {}).get('action')}")
+                self.logger.info(f"Decision created: Strand {child_id_short} (from {parent_id_short}) → action: {result.get('content', {}).get('action')}")
             else:
-                print(f"decision | No decision created (rejected)")
+                self.logger.info(f"No decision created (rejected) for strand {parent_id_short}")
             
         except Exception as e:
-            print(f"🧠 Decision Maker: ERROR - {e}")
+            self.logger.error(f"Decision Maker: ERROR - {e}", exc_info=True)
             self.logger.error(f"Error triggering Decision Maker: {e}")
             import traceback
             traceback.print_exc()
     
     async def _trigger_trader(self, strand: Dict[str, Any]) -> None:
         """Trigger the Trader with the decision strand"""
-        print("🧠 Trader: Disabled in simplified PM stack – skipping strand.")
+        self.logger.debug("Trader: Disabled in simplified PM stack – skipping strand.")
         self.logger.info(
             "Trader trigger skipped for strand %s (legacy trader inactive)",
             strand.get('id'),

@@ -25,9 +25,11 @@ from llm_integration.openrouter_client import OpenRouterClient
 class SocialMediaMonitor:
     """Combined Twitter and Telegram monitoring"""
     
-    def __init__(self):
+    def __init__(self, quiet: bool = False):
         self.running = False
         self.tasks = []
+        self.quiet = quiet  # Suppress verbose output if True
+        self.logger = logging.getLogger('social_ingest')
         
         # Initialize real components
         self.supabase_manager = SupabaseManager()
@@ -49,17 +51,21 @@ class SocialMediaMonitor:
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals"""
-        print(f"\n🛑 Received signal {signum}, shutting down...")
+        if not self.quiet:
+            print(f"\n∅ Received signal {signum}, shutting down...")
+        self.logger.info(f"Received signal {signum}, shutting down")
         self.running = False
     
     async def start_monitoring(self):
         """Start monitoring both Twitter and Telegram"""
         try:
             self.running = True
-            print("🚀 Starting Social Media Monitor...")
-            print("📱 Monitoring Twitter and Telegram for crypto signals")
-            print("Press Ctrl+C to stop")
-            print()
+            if not self.quiet:
+                print("🚀 Starting Social Media Monitor...")
+                print("📱 Monitoring Twitter and Telegram for crypto signals")
+                print("Press Ctrl+C to stop")
+                print()
+            self.logger.info("Social media monitoring started")
             
             # Start Twitter monitoring with clean output
             twitter_task = asyncio.create_task(
@@ -77,7 +83,7 @@ class SocialMediaMonitor:
             await asyncio.gather(*self.tasks, return_exceptions=True)
             
         except Exception as e:
-            logging.error(f"Error in monitoring: {e}")
+            self.logger.error(f"Error in monitoring: {e}", exc_info=True)
         finally:
             await self.stop_monitoring()
     
@@ -89,14 +95,19 @@ class SocialMediaMonitor:
             twitter_curators = [c for c in curators if c.get('platform') == 'twitter']
             
             if not twitter_curators:
-                print("❌ No Twitter curators found")
+                if not self.quiet:
+                    print("❌ No Twitter curators found")
+                self.logger.warning("No Twitter curators found")
                 return
             
-            print(f"🔍 Found {len(twitter_curators)} Twitter curators")
-            print("📱 Starting sequential monitoring (30 seconds per curator)...")
+            if not self.quiet:
+                print(f"🔍 Found {len(twitter_curators)} Twitter curators")
+                print("📱 Starting sequential monitoring (30 seconds per curator)...")
+            self.logger.info(f"Starting Twitter monitoring for {len(twitter_curators)} curators")
             
             # Initialize Twitter scanner browser context (without starting its loop)
-            print("🔧 Initializing Twitter scanner browser...")
+            if not self.quiet:
+                print("🔧 Initializing Twitter scanner browser...")
             await self._initialize_twitter_scanner()
             
             current_index = 0
@@ -105,7 +116,9 @@ class SocialMediaMonitor:
                 curator = twitter_curators[current_index]
                 handle = curator.get('platform_data', {}).get('handle', curator.get('name', 'unknown'))
                 
-                print(f"\n📱 Checking {handle}...")
+                if not self.quiet:
+                    print(f"\n📱 Checking {handle}...")
+                self.logger.info(f"Checking curator: {handle}")
                 
                 try:
                     # Transform curator data to match Twitter scanner's expected format
@@ -120,24 +133,31 @@ class SocialMediaMonitor:
                     
                     # Call the Twitter scanner's check method directly
                     await self.twitter_scanner._check_curator(twitter_curator)
-                    print(f"   ✅ Checked {handle}")
+                    if not self.quiet:
+                        print(f"   ✅ Checked {handle}")
+                    self.logger.info(f"Checked curator: {handle}")
                     
                 except Exception as e:
-                    print(f"   ❌ Error checking {handle}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    if not self.quiet:
+                        print(f"   ❌ Error checking {handle}: {e}")
+                    self.logger.error(f"Error checking {handle}: {e}", exc_info=True)
                 
                 # Wait 30 seconds before checking next curator
-                print(f"⏳ Waiting 30 seconds before next curator...")
+                if not self.quiet:
+                    print(f"⏳ Waiting 30 seconds before next curator...")
                 await asyncio.sleep(30)
                 
                 # Move to next curator
                 current_index = (current_index + 1) % len(twitter_curators)
             
         except asyncio.CancelledError:
-            print("Twitter monitoring cancelled")
+            if not self.quiet:
+                print("Twitter monitoring cancelled")
+            self.logger.info("Twitter monitoring cancelled")
         except Exception as e:
-            print(f"Error in Twitter monitoring: {e}")
+            if not self.quiet:
+                print(f"Error in Twitter monitoring: {e}")
+            self.logger.error(f"Error in Twitter monitoring: {e}", exc_info=True)
         finally:
             # Clean up browser resources
             await self._cleanup_twitter_scanner()
@@ -158,10 +178,14 @@ class SocialMediaMonitor:
             # Create page from the context with cookies
             self.twitter_scanner.page = await self.twitter_scanner.context.new_page()
             
-            print("✅ Twitter scanner browser initialized")
+            if not self.quiet:
+                print("✅ Twitter scanner browser initialized")
+            self.logger.info("Twitter scanner browser initialized")
             
         except Exception as e:
-            print(f"❌ Failed to initialize Twitter scanner: {e}")
+            if not self.quiet:
+                print(f"❌ Failed to initialize Twitter scanner: {e}")
+            self.logger.error(f"Failed to initialize Twitter scanner: {e}", exc_info=True)
             raise
     
     async def _cleanup_twitter_scanner(self):
@@ -171,13 +195,19 @@ class SocialMediaMonitor:
                 await self.twitter_scanner.page.close()
             if self.twitter_scanner.browser:
                 await self.twitter_scanner.browser.close()
-            print("🧹 Twitter scanner cleaned up")
+            if not self.quiet:
+                print("🧹 Twitter scanner cleaned up")
+            self.logger.info("Twitter scanner cleaned up")
         except Exception as e:
-            print(f"Warning: Error cleaning up Twitter scanner: {e}")
+            if not self.quiet:
+                print(f"Warning: Error cleaning up Twitter scanner: {e}")
+            self.logger.warning(f"Error cleaning up Twitter scanner: {e}", exc_info=True)
     
     async def stop_monitoring(self):
         """Stop all monitoring tasks"""
-        print("🛑 Stopping monitoring...")
+        if not self.quiet:
+            print("🛑 Stopping monitoring...")
+        self.logger.info("Stopping monitoring")
         
         # Cancel all tasks
         for task in self.tasks:
@@ -188,7 +218,9 @@ class SocialMediaMonitor:
         if self.tasks:
             await asyncio.gather(*self.tasks, return_exceptions=True)
         
-        print("✅ Monitoring stopped")
+        if not self.quiet:
+            print("✅ Monitoring stopped")
+        self.logger.info("Monitoring stopped")
     
     async def test_connections(self):
         """Test both Twitter and Telegram connections"""

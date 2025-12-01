@@ -50,13 +50,13 @@ load_dotenv()
 
 class LiveMicroExecutor(PMExecutor):
     """
-    Thin wrapper around PMExecutor that clamps buy size to a target USD amount.
+    Thin wrapper around PMExecutor for live execution.
+    Uses percentage-based allocation (no USD cap).
     Stores the last execution result for harness reporting.
     """
 
-    def __init__(self, sb_client, usd_cap: float) -> None:
+    def __init__(self, sb_client) -> None:
         super().__init__(trader=None, sb_client=sb_client)
-        self.usd_cap = max(0.1, usd_cap)
         self.last_result: Dict[str, Any] | None = None
         self.last_decision: Dict[str, Any] | None = None
 
@@ -65,20 +65,8 @@ class LiveMicroExecutor(PMExecutor):
         decision_copy = dict(decision)
         position_copy = dict(position)
 
-        if decision_type in {"entry", "add", "trend_add"}:
-            size_frac = float(decision_copy.get("size_frac") or 0.0)
-            if size_frac <= 0:
-                result = {
-                    "status": "error",
-                    "error": f"Size fraction <= 0 for decision {decision_type}",
-                    "decision": decision_copy,
-                }
-                self.last_result = result
-                self.last_decision = decision_copy
-                return result
-            # Adjust usd_alloc_remaining so notional == usd_cap (size_frac * alloc = usd_cap)
-            desired_alloc = self.usd_cap / size_frac
-            position_copy["usd_alloc_remaining"] = max(desired_alloc, self.usd_cap)
+        # No USD cap - use percentage-based allocation as-is
+        # The position already has usd_alloc_remaining set from _set_allocation_caps()
 
         self.last_decision = decision_copy
         result = super().execute(decision_copy, position_copy)
@@ -88,16 +76,82 @@ class LiveMicroExecutor(PMExecutor):
 
 class ExecutorSmokeHarness(PMActionHarness):
     TEST_TICKER_ENV = "PM_CANARY_SYMBOLS"
+    # Always use Solana USDC balance for allocation calculations (portfolio base)
+    ALLOCATION_BASE_CHAIN = "solana"
 
-    def __init__(self, *, mode: str, max_usd: float, run_buy: bool, run_sell: bool):
+    def __init__(self, *, mode: str, allocation_pct: float, run_buy: bool, run_sell: bool, 
+                 token_contract: Optional[str] = None, token_chain: Optional[str] = None):
         super().__init__()
         self.mode = mode
-        self.max_usd = max(0.5, max_usd)
+        self.allocation_pct = max(0.01, min(100.0, allocation_pct))  # Clamp between 0.01% and 100%
         self.run_buy = run_buy
         self.run_sell = run_sell
-        os.environ.setdefault("MIN_BRIDGE_USD", f"{self.max_usd}")
+        # Override test token/chain if provided
+        if token_contract:
+            self.TEST_CONTRACT = token_contract
+        if token_chain:
+            self.TEST_CHAIN = token_chain.lower()
+        os.environ.setdefault("MIN_BRIDGE_USD", "1.0")
         os.environ.setdefault("NATIVE_GAS_THRESHOLD_USD", "1.0")
         os.environ.setdefault("INITIAL_NATIVE_GAS_USD", "1.0")
+
+    def _ensure_position(self) -> None:
+        """Override to create position directly for specified token/chain."""
+        self._refresh_position()
+        if self.position:
+            LOGGER.info(
+                "Found existing position id=%s status=%s",
+                self.position_id,
+                self.position.get("status"),
+            )
+            return
+
+        LOGGER.info("No %s position found for %s on %s – creating directly", 
+                   self.TEST_TIMEFRAME, self.TEST_CONTRACT, self.TEST_CHAIN)
+        
+        # Create position directly
+        import uuid
+        from datetime import datetime, timezone
+        
+        position_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Get token ticker from contract (last 4 chars) or use contract
+        ticker = self.TEST_CONTRACT[-4:] if len(self.TEST_CONTRACT) > 4 else self.TEST_CONTRACT[:4]
+        
+        payload = {
+            "id": position_id,
+            "token_contract": self.TEST_CONTRACT,
+            "token_chain": self.TEST_CHAIN,
+            "token_ticker": ticker,
+            "timeframe": self.TEST_TIMEFRAME,
+            "status": "watchlist",
+            "state": "S4",
+            "current_trade_id": None,
+            "total_allocation_pct": 0.0,  # Will be set by _set_allocation_caps
+            "total_allocation_usd": 0.0,
+            "total_extracted_usd": 0.0,
+            "usd_alloc_remaining": 0.0,
+            "total_quantity": 0.0,
+            "total_tokens_bought": 0.0,
+            "total_tokens_sold": 0.0,
+            "features": {
+                "uptrend_engine_v4": {
+                    "state": "S4",
+                    "price": 0.0,
+                },
+                "pm_execution_history": {},
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+        
+        self.sb.table("lowcap_positions").insert(payload).execute()
+        LOGGER.info("Created position id=%s for %s on %s", position_id, self.TEST_CONTRACT, self.TEST_CHAIN)
+        self._refresh_position()
+        
+        if not self.position:
+            raise RuntimeError(f"Failed to create test position for {self.TEST_CONTRACT} on {self.TEST_CHAIN}")
 
     def run(self) -> Dict[str, Any]:
         self._ensure_position()
@@ -130,7 +184,11 @@ class ExecutorSmokeHarness(PMActionHarness):
             trim_flag=False,
             emergency_exit=False,
         )
-        return self._execute_with_state(uptrend_state, expect_action="entry")
+        result = self._execute_with_state(uptrend_state, expect_action="entry")
+        # Add database verification after buy
+        if self.mode == "live" and result.get("executor_result", {}).get("status") == "success":
+            result["db_verification"] = self._verify_database_after_buy()
+        return result
 
     def _run_sell_smoke(self) -> Dict[str, Any]:
         LOGGER.info("=== Live executor SELL smoke ===")
@@ -152,19 +210,55 @@ class ExecutorSmokeHarness(PMActionHarness):
         return self._execute_with_state(uptrend_state, expect_action="emergency_exit")
 
     def _set_allocation_caps(self) -> None:
+        """Set allocation based on percentage of Solana USDC balance (portfolio base)."""
         if not self.position_id:
             return
+        
+        # Always use Solana USDC balance for allocation calculation (portfolio base)
+        wallet_result = (
+            self.sb.table("wallet_balances")
+            .select("usdc_balance,balance_usd")
+            .eq("chain", self.ALLOCATION_BASE_CHAIN.lower())
+            .limit(1)
+            .execute()
+        )
+        
+        if not wallet_result.data:
+            LOGGER.warning(f"No wallet_balances row found for chain={self.ALLOCATION_BASE_CHAIN}, using 0.0")
+            solana_usdc_balance = 0.0
+        else:
+            row = wallet_result.data[0]
+            solana_usdc_balance = float(row.get("usdc_balance") or row.get("balance_usd") or 0.0)
+        
+        # Calculate allocation from percentage
+        max_allocation_usd = solana_usdc_balance * (self.allocation_pct / 100.0)
+        
+        LOGGER.info(f"=== Allocation Calculation ===")
+        LOGGER.info(f"Portfolio base chain: {self.ALLOCATION_BASE_CHAIN}")
+        LOGGER.info(f"Solana USDC balance: ${solana_usdc_balance:,.2f}")
+        LOGGER.info(f"Allocation percentage: {self.allocation_pct}%")
+        LOGGER.info(f"Max allocation USD: ${max_allocation_usd:,.2f}")
+        LOGGER.info(f"Position chain: {self.TEST_CHAIN}")
+        LOGGER.info(f"==============================")
+        
         update = {
-            "total_allocation_pct": max(0.01, float(self.position.get("total_allocation_pct") or 0.01)),
+            "total_allocation_pct": self.allocation_pct,
         }
-        wallet = self.sb.table("wallet_balances").select("balance_usd").eq("chain", self.TEST_CHAIN).limit(1).execute()
-        balance_usd = float((wallet.data or [{}])[0].get("balance_usd") or 0.0)
-        alloc_pct = update["total_allocation_pct"]
-        max_allocation_usd = balance_usd * (alloc_pct / 100.0)
-        update["total_allocation_usd"] = max_allocation_usd
-        update["usd_alloc_remaining"] = max_allocation_usd
-        # If the slot is empty (watchlist + zero quantity) clear historical allocation so
-        # the next entry reflects only the live notional we send through the executor.
+        
+        # If the position is empty (watchlist + zero quantity), clear historical allocation
+        current_quantity = float(self.position.get("total_quantity") or 0.0)
+        if current_quantity == 0 and self.position.get("status") == "watchlist":
+            update["total_allocation_usd"] = 0.0
+            update["total_extracted_usd"] = 0.0
+            update["usd_alloc_remaining"] = max_allocation_usd
+        else:
+            # For existing positions, calculate remaining allocation
+            current_allocation = float(self.position.get("total_allocation_usd") or 0.0)
+            current_extracted = float(self.position.get("total_extracted_usd") or 0.0)
+            net_deployed = current_allocation - current_extracted
+            update["usd_alloc_remaining"] = max(0.0, max_allocation_usd - net_deployed)
+            LOGGER.info(f"Existing position: deployed=${net_deployed:,.2f}, remaining=${update['usd_alloc_remaining']:,.2f}")
+        
         self.sb.table("lowcap_positions").update(update).eq("id", self.position_id).execute()
         self._refresh_position()
 
@@ -174,7 +268,7 @@ class ExecutorSmokeHarness(PMActionHarness):
         preview = self._preview_actions(pm_tick)
 
         if self.mode == "live":
-            executor = LiveMicroExecutor(pm_tick.sb, usd_cap=self.max_usd)
+            executor = LiveMicroExecutor(pm_tick.sb)
         else:
             executor = HarnessMockExecutor(pm_tick.sb)
         pm_tick.executor = executor
@@ -194,8 +288,11 @@ class ExecutorSmokeHarness(PMActionHarness):
         if isinstance(executor, LiveMicroExecutor):
             result_summary["executor_result"] = executor.last_result
             result_summary["decision"] = executor.last_decision
+            # Store executor result for verification
+            self._last_executor_result = executor.last_result or {}
         else:
             result_summary["executor_result"] = "mock"
+            self._last_executor_result = {}
 
         if expect_action and strand:
             observed = (strand.get("content") or {}).get("decision_type")
@@ -288,13 +385,64 @@ class ExecutorSmokeHarness(PMActionHarness):
         rows = resp.data or []
         return rows[0] if rows else None
 
+    def _verify_database_after_buy(self) -> Dict[str, Any]:
+        """Verify database fields are correct after a buy execution."""
+        if not self.position_id:
+            return {"error": "no_position_id"}
+        
+        self._refresh_position()
+        if not self.position:
+            return {"error": "position_not_found"}
+        
+        exec_result = getattr(self, "_last_executor_result", {})
+        tokens_bought = float(exec_result.get("tokens_bought", 0.0))
+        notional_usd = float(exec_result.get("notional_usd", 0.0))
+        price = float(exec_result.get("price", 0.0))
+        
+        # Get current position values
+        db_total_quantity = float(self.position.get("total_quantity") or 0.0)
+        db_total_allocation_usd = float(self.position.get("total_allocation_usd") or 0.0)
+        db_total_tokens_bought = float(self.position.get("total_tokens_bought") or 0.0)
+        db_avg_entry_price = float(self.position.get("avg_entry_price") or 0.0) if self.position.get("avg_entry_price") is not None else 0.0
+        
+        verification = {
+            "executor": {
+                "tokens_bought": tokens_bought,
+                "notional_usd": notional_usd,
+                "price": price,
+            },
+            "database": {
+                "total_quantity": db_total_quantity,
+                "total_allocation_usd": db_total_allocation_usd,
+                "total_tokens_bought": db_total_tokens_bought,
+                "avg_entry_price": db_avg_entry_price,
+            },
+            "checks": {
+                "quantity_matches": abs(db_total_quantity - tokens_bought) < 0.0001 if tokens_bought > 0 else True,
+                "allocation_matches": abs(db_total_allocation_usd - notional_usd) < 0.01 if notional_usd > 0 else True,
+                "tokens_bought_matches": abs(db_total_tokens_bought - tokens_bought) < 0.0001 if tokens_bought > 0 else True,
+                "avg_price_reasonable": db_avg_entry_price > 0 and abs(db_avg_entry_price - price) < (price * 0.1) if price > 0 else False,
+            }
+        }
+        
+        # Calculate expected avg_entry_price
+        if db_total_tokens_bought > 0:
+            expected_avg = db_total_allocation_usd / db_total_tokens_bought
+            verification["checks"]["avg_price_correct"] = abs(db_avg_entry_price - expected_avg) < 0.0001
+        else:
+            verification["checks"]["avg_price_correct"] = False
+        
+        return verification
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="PM executor smoke harness")
     parser.add_argument("--mode", choices=["dry-run", "live"], default="dry-run", help="Use mock executor or live Li.Fi executor")
-    parser.add_argument("--max-usd", type=float, default=1.0, help="Target USD notional for micro trades (buy leg)")
+    parser.add_argument("--allocation-pct", type=float, default=2.0, help="Allocation percentage of Solana USDC balance (default: 2.0%%)")
     parser.add_argument("--skip-buy", action="store_true", help="Skip the buy leg")
     parser.add_argument("--skip-sell", action="store_true", help="Skip the sell leg")
+    parser.add_argument("--token-contract", type=str, help="Token contract address to test (overrides default)")
+    parser.add_argument("--token-chain", type=str, help="Token chain (base, solana, ethereum, bsc) - overrides default")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args()
 
@@ -304,9 +452,11 @@ def main() -> None:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
     harness = ExecutorSmokeHarness(
         mode=args.mode,
-        max_usd=args.max_usd,
+        allocation_pct=args.allocation_pct,
         run_buy=not args.skip_buy,
         run_sell=not args.skip_sell,
+        token_contract=args.token_contract,
+        token_chain=args.token_chain,
     )
     summary = harness.run()
     LOGGER.info("Executor smoke summary: %s", summary)
