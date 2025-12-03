@@ -220,7 +220,7 @@ Args:
     }
 
     # Exit ladders (profit targets from avg entry) — v1 simple implementation
-    # Exit ladders handled in per-minute position_monitor (runtime). Mapper focuses on structure & readiness.
+    # Exit ladders handled by PM Core Tick (runtime). Mapper focuses on structure & readiness.
 
     # Load config and envelope sizes
     cfg = load_pm_config()

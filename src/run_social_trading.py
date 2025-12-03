@@ -46,7 +46,6 @@ from intelligence.universal_learning.universal_learning_system import UniversalL
 from trading.jupiter_client import JupiterClient
 from trading.wallet_manager import WalletManager
 from trading.scheduled_price_collector import ScheduledPriceCollector
-from trading.position_monitor import PositionMonitor
 
 
 class SocialTradingSystem:
@@ -72,10 +71,8 @@ class SocialTradingSystem:
         self.llm_client = None
         self.social_ingest = None
         self.decision_maker = None
-        self.trader = None
         self.learning_system = None
         self.price_collector = None
-        self.position_monitor = None
         
         # Output tracking
         self.last_output_time = datetime.now()
@@ -173,53 +170,27 @@ class SocialTradingSystem:
                 learning_system=self.learning_system
             )
             
-            # Initialize trader (V2 - improved Base trading and modular design)
-            from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
+            # PriceOracle initialization (extracted from TraderLowcapSimpleV2)
+            from trading.price_oracle_factory import create_price_oracle
+            price_oracle = create_price_oracle()
+            print("   [⚡] Price Oracle... OK")
             
-            # Prepare trader config with both trading and lotus_buyback sections
-            trader_config = self.config.get('trading', {}).copy()
-            if 'lotus_buyback' in self.config:
-                trader_config['lotus_buyback'] = self.config['lotus_buyback']
-            
-            self.trader = TraderLowcapSimpleV2(
-                supabase_manager=self.supabase_manager,
-                config=trader_config
-            )
-            
-            # Share trader instance with learning system to avoid conflicts
-            self.learning_system.trader = self.trader
-            
-            # Set the decision maker reference in learning system
+            # Wire up dependencies
             self.learning_system.set_decision_maker(self.decision_maker)
-            
-            # Set trader reference in wallet manager for SPL token balance checking
-            self.wallet_manager.trader = self.trader
-            print(f"DEBUG: Set trader reference in wallet manager: {self.wallet_manager.trader}")
-            
-            # Attach wallet manager to supabase manager for price collector
             self.supabase_manager.wallet_manager = self.wallet_manager
             
-            # Initialize scheduled price collector
+            # Initialize scheduled price collector (using extracted PriceOracle)
             self.price_collector = ScheduledPriceCollector(
                 supabase_manager=self.supabase_manager,
-                price_oracle=self.trader.price_oracle
+                price_oracle=price_oracle
             )
             
-            # Initialize position monitor
-            self.position_monitor = PositionMonitor(
-                supabase_manager=self.supabase_manager,
-                trader=self.trader
-            )
-
-            # Register PM executor (event-driven) if actions are enabled
-            try:
+            # PM Executor is initialized directly in pm_core_tick.py (no registration needed)
+            # PM uses direct calls to PMExecutor, not event-driven execution
                 if os.getenv("ACTIONS_ENABLED", "0") == "1":
-                    from intelligence.lowcap_portfolio_manager.pm.executor import register_pm_executor
-                    # Supabase client reference
-                    sb_client = self.supabase_manager.db_manager.client if hasattr(self.supabase_manager, 'db_manager') else self.supabase_manager.client
-                    register_pm_executor(self.trader, sb_client)
-            except Exception as e:
-                logger.warning(f"PM executor registration skipped: {e}")
+                print("   [⚡] PM Executor... Enabled (Direct calls from PM Core Tick)")
+            else:
+                print("   [⋇] PM Executor... Disabled (Read-Only)")
             
             print("✅ All components initialized")
             return True
@@ -255,8 +226,8 @@ class SocialTradingSystem:
             # Start scheduled price collection (1-minute intervals)
             await self.price_collector.start_collection(interval_minutes=1)
             
-            # Start position monitoring (30-second intervals)
-            await self.position_monitor.start_monitoring(check_interval=30)
+            # Position management is handled by PM Core Tick (scheduled jobs)
+            # No separate position monitor needed
             
         except Exception as e:
             print(f"❌ Position management failed: {e}")

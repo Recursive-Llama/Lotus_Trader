@@ -388,12 +388,12 @@ class SocialIngestModule:
             self.logger.info(f"🔍 Verifying token {token_name} on {network} via DexScreener...")
             
             # Search for token on DexScreener
-                if token_info.get('contract_address'):
-                    params = {"q": token_info.get('contract_address')}
-                    self.logger.debug(f"Searching by contract address: {token_info.get('contract_address')}")
-                else:
-                    params = {"q": token_name}
-                    self.logger.debug(f"Searching by ticker: {token_name}")
+            if token_info.get('contract_address'):
+                params = {"q": token_info.get('contract_address')}
+                self.logger.debug(f"Searching by contract address: {token_info.get('contract_address')}")
+            else:
+                params = {"q": token_name}
+                self.logger.debug(f"Searching by ticker: {token_name}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.dexscreener_base_url, params=params) as response:

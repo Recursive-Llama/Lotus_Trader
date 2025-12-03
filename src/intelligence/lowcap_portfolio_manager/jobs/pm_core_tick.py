@@ -82,6 +82,29 @@ class PMCoreTick:
         # Initialize PM Executor (trader=None since we use Li.Fi SDK)
         self.executor = PMExecutor(trader=None, sb_client=self.sb)
         self._exposure_lookup: Optional["ExposureLookup"] = None
+        
+        # Initialize Telegram Signal Notifier (if enabled)
+        self.telegram_notifier = None
+        if os.getenv("TELEGRAM_NOTIFICATIONS_ENABLED", "0") == "1":
+            try:
+                bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                channel_id = os.getenv("TELEGRAM_CHANNEL_ID")
+                api_id = int(os.getenv("TELEGRAM_API_ID", "21826741"))
+                api_hash = os.getenv("TELEGRAM_API_HASH", "4643cce207a1a9d56d56a5389a4f1f52")
+                
+                if bot_token and channel_id:
+                    from src.communication.telegram_signal_notifier import TelegramSignalNotifier
+                    self.telegram_notifier = TelegramSignalNotifier(
+                        bot_token=bot_token,
+                        channel_id=channel_id,
+                        api_id=api_id,
+                        api_hash=api_hash
+                    )
+                    logger.info("Telegram notifications enabled")
+                else:
+                    logger.warning("TELEGRAM_NOTIFICATIONS_ENABLED=1 but TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID not set")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Telegram notifier: {e}")
 
     def _latest_phase(self) -> Dict[str, Any]:
         # Use portfolio-level meso phase for now
@@ -143,6 +166,206 @@ class PMCoreTick:
         regime_context["bucket_rank"] = bucket_snapshot.get("bucket_rank", [])
 
         return regime_context
+
+    def _swap_profit_to_lotus(self, position: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Swap 10% of position profit to Lotus Coin, then transfer 69% of those tokens to holding wallet.
+        
+        Args:
+            position: Position dict with profit information
+            
+        Returns:
+            Dict with:
+            - success: bool
+            - profit_usd: float
+            - swap_amount_usd: float
+            - lotus_tokens: float (total received)
+            - lotus_tokens_kept: float (31% kept in trading wallet)
+            - lotus_tokens_transferred: float (69% sent to holding wallet)
+            - swap_tx_hash: str
+            - transfer_tx_hash: str (optional)
+            - error: str (if failed)
+        """
+        try:
+            # Check if buyback is enabled
+            if os.getenv("LOTUS_BUYBACK_ENABLED", "0") != "1":
+                return {"success": True, "skipped": True, "reason": "Buyback disabled"}
+            
+            # Get configuration
+            lotus_contract = os.getenv("LOTUS_CONTRACT", "Ch4tXj2qf8V6a4GdpS4X3pxAELvbnkiKTHGdmXjLEXsC")
+            holding_wallet = os.getenv("LOTUS_HOLDING_WALLET", "AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd")
+            buyback_percentage = float(os.getenv("LOTUS_BUYBACK_PERCENTAGE", "10.0"))
+            transfer_percentage = float(os.getenv("LOTUS_TRANSFER_PERCENTAGE", "69.0"))
+            
+            # Calculate profit
+            # Use rpnl_usd (realized P&L) for fully closed positions
+            profit_usd = float(position.get("rpnl_usd", 0.0))
+            
+            # If rpnl_usd not available or zero, calculate from extracted vs allocated
+            if profit_usd == 0:
+                total_extracted = float(position.get("total_extracted_usd", 0.0))
+                total_allocated = float(position.get("total_allocation_usd", 0.0))
+                profit_usd = total_extracted - total_allocated
+            
+            # Only swap if profit is positive
+            if profit_usd <= 0:
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": f"No profit to swap (profit_usd={profit_usd:.2f})"
+                }
+            
+            # Calculate swap amount (10% of profit)
+            swap_amount_usd = profit_usd * (buyback_percentage / 100.0)
+            
+            # Minimum swap amount check (avoid dust)
+            min_swap_usd = float(os.getenv("LOTUS_BUYBACK_MIN_USD", "1.0"))
+            if swap_amount_usd < min_swap_usd:
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": f"Swap amount too small: ${swap_amount_usd:.2f} < ${min_swap_usd:.2f}"
+                }
+            
+            logger.info(f"Executing Lotus buyback: ${swap_amount_usd:.2f} (10% of ${profit_usd:.2f} profit)")
+            
+            # Swap USDC → Lotus Coin on Solana
+            # USDC has 6 decimals, so convert to smallest unit
+            usdc_amount = str(int(swap_amount_usd * 1_000_000))
+            
+            swap_result = self.executor._call_lifi_executor(
+                action="swap",
+                chain="solana",
+                from_token="USDC",
+                to_token=lotus_contract,
+                amount=usdc_amount,
+                slippage=0.5,  # 0.5% slippage tolerance
+                from_chain="solana",
+                to_chain="solana"
+            )
+            
+            if not swap_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Swap failed: {swap_result.get('error', 'Unknown error')}",
+                    "profit_usd": profit_usd,
+                    "swap_amount_usd": swap_amount_usd
+                }
+            
+            # Get Lotus tokens received from swap
+            # Li.Fi returns amount in smallest unit, need to convert
+            # Lotus token has 9 decimals (standard SPL token)
+            tokens_received_raw = swap_result.get("toAmount") or swap_result.get("toAmountMin") or "0"
+            try:
+                lotus_tokens = float(tokens_received_raw) / 1_000_000_000  # 9 decimals
+            except (ValueError, TypeError):
+                # Fallback: try to get from result directly
+                lotus_tokens = float(swap_result.get("tokens_received", 0.0))
+            
+            swap_tx_hash = swap_result.get("txHash") or swap_result.get("tx_hash")
+            
+            logger.info(f"Lotus swap successful: {lotus_tokens:.6f} tokens received (tx: {swap_tx_hash})")
+            
+            # Transfer 69% to holding wallet
+            transfer_amount = lotus_tokens * (transfer_percentage / 100.0)
+            transfer_result = None
+            
+            if transfer_amount > 0:
+                try:
+                    transfer_result = self._transfer_lotus_to_holding_wallet(transfer_amount, holding_wallet)
+                    if not transfer_result or not transfer_result.get("success"):
+                        logger.warning(f"Lotus transfer failed: {transfer_result.get('error') if transfer_result else 'Unknown error'}")
+                        # Don't fail the whole buyback if transfer fails - tokens are still in trading wallet
+                except Exception as e:
+                    logger.error(f"Error transferring Lotus tokens: {e}", exc_info=True)
+                    # Don't fail the whole buyback if transfer fails
+            
+            return {
+                "success": True,
+                "profit_usd": profit_usd,
+                "swap_amount_usd": swap_amount_usd,
+                "lotus_tokens": lotus_tokens,
+                "lotus_tokens_kept": lotus_tokens * (1.0 - transfer_percentage / 100.0),  # 31% kept
+                "lotus_tokens_transferred": transfer_amount if transfer_result and transfer_result.get("success") else 0.0,
+                "swap_tx_hash": swap_tx_hash,
+                "transfer_tx_hash": transfer_result.get("tx_hash") if transfer_result else None,
+                "transfer_success": transfer_result.get("success") if transfer_result else False
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Lotus buyback: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _transfer_lotus_to_holding_wallet(self, amount: float, holding_wallet: str) -> Optional[Dict[str, Any]]:
+        """
+        Transfer Lotus tokens to holding wallet using JSSolanaClient.
+        
+        Args:
+            amount: Amount of Lotus tokens to transfer
+            holding_wallet: Destination wallet address
+            
+        Returns:
+            Dict with success, tx_hash, error
+        """
+        try:
+            # Get Solana RPC URL and private key from environment
+            rpc_url = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+            private_key = os.getenv("SOLANA_PRIVATE_KEY")
+            
+            if not private_key:
+                return {
+                    "success": False,
+                    "error": "SOLANA_PRIVATE_KEY not set"
+                }
+            
+            # Import and create JSSolanaClient
+            from trading.js_solana_client import JSSolanaClient
+            js_client = JSSolanaClient(rpc_url=rpc_url, private_key=private_key)
+            
+            # Transfer tokens (async method, need to run in event loop)
+            import asyncio
+            try:
+                # Check if we're in an async context
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, create a task
+                    # But we're in sync context, so we'll need to use run_until_complete
+                    # Actually, we can't use run_until_complete if loop is running
+                    # So we'll create a new event loop
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(js_client.send_lotus_tokens(amount, holding_wallet))
+                    loop.close()
+                else:
+                    result = loop.run_until_complete(js_client.send_lotus_tokens(amount, holding_wallet))
+            except RuntimeError:
+                # No event loop, create one
+                result = asyncio.run(js_client.send_lotus_tokens(amount, holding_wallet))
+            
+            if result.get("success"):
+                logger.info(f"Lotus transfer successful: {amount:.6f} tokens → {holding_wallet} (tx: {result.get('tx_hash')})")
+                return {
+                    "success": True,
+                    "tx_hash": result.get("tx_hash") or result.get("signature"),
+                    "amount": amount
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Transfer failed"),
+                    "amount": amount
+                }
+                
+        except Exception as e:
+            logger.error(f"Error transferring Lotus tokens: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "amount": amount
+            }
 
     def _positions_for_exposure(self) -> List[Dict[str, Any]]:
         """
@@ -1544,6 +1767,263 @@ class PMCoreTick:
         
         return updates
     
+    def _send_execution_notification(
+        self,
+        position: Dict[str, Any],
+        decision_type: str,
+        exec_result: Dict[str, Any],
+        action: Dict[str, Any],
+        a_final: float,
+        e_final: float,
+        position_status_before: str = ""
+    ) -> None:
+        """Send Telegram notification after successful execution (non-blocking)"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            import asyncio
+            
+            token_ticker = position.get("token_ticker", "")
+            token_contract = position.get("token_contract", "")
+            chain = position.get("token_chain", "")
+            timeframe = position.get("timeframe", self.timeframe)
+            tx_hash = exec_result.get("tx_hash", "")
+            source_tweet_url = position.get("source_tweet_url")
+            
+            # Get uptrend engine signals
+            features = position.get("features") or {}
+            uptrend = features.get("uptrend_engine_v4") or {}
+            state = uptrend.get("state", "")
+            reasons = action.get("reasons") or {}
+            signal = reasons.get("flag", "")
+            size_frac = float(action.get("size_frac", 0.0))
+            
+            # Get position data (after update)
+            total_quantity = float(position.get("total_quantity", 0.0))
+            position_value_usd = float(position.get("current_usd_value", 0.0))
+            avg_entry_price_usd = float(position.get("avg_entry_price", 0.0))
+            total_pnl_usd = float(position.get("total_pnl_usd", 0.0))
+            total_pnl_pct = float(position.get("total_pnl_pct", 0.0))
+            rpnl_usd = float(position.get("rpnl_usd", 0.0))
+            rpnl_pct = float(position.get("rpnl_pct", 0.0))
+            
+            # Determine notification type and send
+            if decision_type in ("entry", "add"):
+                # Check if this is entry (first buy) or add
+                # Entry = decision_type is "entry" OR position status was "watchlist" before update (first buy)
+                is_entry = decision_type == "entry" or position_status_before == "watchlist"
+                
+                amount_usd = float(exec_result.get("notional_usd", 0.0))
+                entry_price_usd = float(exec_result.get("price", 0.0))
+                
+                if is_entry:
+                    # Entry notification
+                    asyncio.run(self.telegram_notifier.send_entry_notification(
+                        token_ticker=token_ticker,
+                        token_contract=token_contract,
+                        chain=chain,
+                        timeframe=timeframe,
+                        amount_usd=amount_usd,
+                        entry_price_usd=entry_price_usd,
+                        tx_hash=tx_hash,
+                        state=state,
+                        signal=signal,
+                        a_score=a_final,
+                        e_score=e_final,
+                        allocation_pct=None,
+                        source_tweet_url=source_tweet_url
+                    ))
+                else:
+                    # Add notification
+                    asyncio.run(self.telegram_notifier.send_add_notification(
+                        token_ticker=token_ticker,
+                        token_contract=token_contract,
+                        chain=chain,
+                        timeframe=timeframe,
+                        amount_usd=amount_usd,
+                        entry_price_usd=entry_price_usd,
+                        tx_hash=tx_hash,
+                        state=state,
+                        signal=signal,
+                        a_score=a_final,
+                        e_score=e_final,
+                        size_frac=size_frac,
+                        position_size=total_quantity,
+                        position_value_usd=position_value_usd,
+                        avg_entry_price_usd=avg_entry_price_usd,
+                        total_pnl_usd=total_pnl_usd,
+                        total_pnl_pct=total_pnl_pct,
+                        rpnl_usd=rpnl_usd,
+                        rpnl_pct=rpnl_pct,
+                        source_tweet_url=source_tweet_url
+                    ))
+            elif decision_type == "trim":
+                # Trim notification
+                tokens_sold = float(exec_result.get("tokens_sold", 0.0))
+                sell_price_usd = float(exec_result.get("price", 0.0))
+                value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
+                remaining_tokens = total_quantity
+                
+                asyncio.run(self.telegram_notifier.send_trim_notification(
+                    token_ticker=token_ticker,
+                    token_contract=token_contract,
+                    chain=chain,
+                    timeframe=timeframe,
+                    tokens_sold=tokens_sold,
+                    sell_price_usd=sell_price_usd,
+                    value_extracted_usd=value_extracted_usd,
+                    size_frac=size_frac,
+                    tx_hash=tx_hash,
+                    state=state,
+                    signal=signal,
+                    e_score=e_final,
+                    remaining_tokens=remaining_tokens,
+                    position_value_usd=position_value_usd,
+                    total_pnl_usd=total_pnl_usd,
+                    total_pnl_pct=total_pnl_pct,
+                    rpnl_usd=rpnl_usd,
+                    rpnl_pct=rpnl_pct,
+                    source_tweet_url=source_tweet_url
+                ))
+            elif decision_type == "emergency_exit":
+                # Emergency exit notification
+                tokens_sold = float(exec_result.get("tokens_sold", 0.0))
+                sell_price_usd = float(exec_result.get("price", 0.0))
+                value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
+                exit_reason = reasons.get("exit_reason", "emergency_exit")
+                
+                asyncio.run(self.telegram_notifier.send_emergency_exit_notification(
+                    token_ticker=token_ticker,
+                    token_contract=token_contract,
+                    chain=chain,
+                    timeframe=timeframe,
+                    tokens_sold=tokens_sold,
+                    sell_price_usd=sell_price_usd,
+                    value_extracted_usd=value_extracted_usd,
+                    tx_hash=tx_hash,
+                    state=state,
+                    reason=exit_reason,
+                    e_score=e_final,
+                    total_pnl_usd=total_pnl_usd,
+                    total_pnl_pct=total_pnl_pct,
+                    rpnl_usd=rpnl_usd,
+                    rpnl_pct=rpnl_pct,
+                    source_tweet_url=source_tweet_url
+                ))
+        except Exception as e:
+            logger.warning(f"Error sending execution notification: {e}")
+            # Don't block execution if notification fails
+    
+    def _send_position_summary_notification(
+        self,
+        position: Dict[str, Any],
+        uptrend: Dict[str, Any],
+        buyback_result: Optional[Dict[str, Any]]
+    ) -> None:
+        """Send Position Summary notification after closure (non-blocking)"""
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            import asyncio
+            
+            token_ticker = position.get("token_ticker", "")
+            token_contract = position.get("token_contract", "")
+            chain = position.get("token_chain", "")
+            timeframe = position.get("timeframe", self.timeframe)
+            source_tweet_url = position.get("source_tweet_url")
+            
+            # Get final exit info
+            features = position.get("features") or {}
+            exec_history = features.get("pm_execution_history") or {}
+            final_exit_type = "EMERGENCY_EXIT"  # Default, could be improved
+            exit_reason = f"S3 → S0 transition (trend ended, not fakeout)"
+            
+            # Get position metrics
+            total_allocation_usd = float(position.get("total_allocation_usd", 0.0))
+            total_extracted_usd = float(position.get("total_extracted_usd", 0.0))
+            rpnl_usd = float(position.get("rpnl_usd", 0.0))
+            rpnl_pct = float(position.get("rpnl_pct", 0.0))
+            total_pnl_usd = float(position.get("total_pnl_usd", 0.0))
+            total_pnl_pct = float(position.get("total_pnl_pct", 0.0))
+            
+            # Calculate hold time
+            first_entry = position.get("first_entry_timestamp")
+            closed_at = position.get("closed_at")
+            hold_time_days = None
+            if first_entry and closed_at:
+                try:
+                    from datetime import datetime
+                    entry_dt = datetime.fromisoformat(first_entry.replace('Z', '+00:00'))
+                    closed_dt = datetime.fromisoformat(closed_at.replace('Z', '+00:00'))
+                    hold_time_days = (closed_dt - entry_dt).total_seconds() / 86400.0
+                except Exception:
+                    pass
+            
+            # Get completed trades count
+            completed_trades = position.get("completed_trades", [])
+            completed_trades_count = len(completed_trades) if isinstance(completed_trades, list) else None
+            
+            # Get entry context
+            entry_context = None
+            curator = position.get("curator")
+            mcap_bucket = position.get("mcap_bucket")
+            if curator or mcap_bucket:
+                parts = []
+                if curator:
+                    parts.append(f"@{curator}")
+                if chain:
+                    parts.append(chain)
+                if mcap_bucket:
+                    parts.append(mcap_bucket)
+                entry_context = " / ".join(parts)
+            
+            # Format buyback result
+            lotus_buyback = None
+            if buyback_result and buyback_result.get("success"):
+                lotus_buyback = {
+                    "success": True,
+                    "profit_usd": rpnl_usd,
+                    "swap_amount_usd": buyback_result.get("swap_amount_usd", 0.0),
+                    "lotus_tokens": buyback_result.get("lotus_tokens", 0.0),
+                    "lotus_tokens_transferred": buyback_result.get("lotus_tokens_transferred", 0.0),
+                    "swap_tx_hash": buyback_result.get("swap_tx_hash"),
+                    "transfer_tx_hash": buyback_result.get("transfer_tx_hash")
+                }
+            elif buyback_result:
+                lotus_buyback = {
+                    "success": False,
+                    "error": buyback_result.get("error", "Unknown error")
+                }
+            
+            asyncio.run(self.telegram_notifier.send_position_summary_notification(
+                token_ticker=token_ticker,
+                token_contract=token_contract,
+                chain=chain,
+                timeframe=timeframe,
+                final_exit_type=final_exit_type,
+                exit_reason=exit_reason,
+                total_allocation_usd=total_allocation_usd,
+                total_extracted_usd=total_extracted_usd,
+                rpnl_usd=rpnl_usd,
+                rpnl_pct=rpnl_pct,
+                total_pnl_usd=total_pnl_usd,
+                total_pnl_pct=total_pnl_pct,
+                hold_time_days=hold_time_days,
+                rr=None,
+                return_mult=None,
+                max_drawdown_pct=None,
+                max_gain_mult=None,
+                completed_trades=completed_trades_count,
+                entry_context=entry_context,
+                lotus_buyback=lotus_buyback,
+                source_tweet_url=source_tweet_url
+            ))
+        except Exception as e:
+            logger.warning(f"Error sending position summary notification: {e}")
+            # Don't block closure if notification fails
+    
     def _calculate_rr_metrics(
         self,
         token_contract: str,
@@ -1773,7 +2253,7 @@ class PMCoreTick:
             # Get position details for R/R calculation (including features for S3 timestamp)
             position_details = (
                 self.sb.table("lowcap_positions")
-                .select("first_entry_timestamp,avg_entry_price,created_at,token_contract,token_chain,timeframe,current_trade_id,completed_trades,entry_context,total_quantity,features")
+                .select("first_entry_timestamp,avg_entry_price,created_at,token_contract,token_chain,timeframe,current_trade_id,completed_trades,entry_context,total_quantity,features,rpnl_usd,total_extracted_usd,total_allocation_usd,total_pnl_usd")
                 .eq("id", position_id)
                 .limit(1)
                 .execute()
@@ -2002,6 +2482,44 @@ class PMCoreTick:
                 "last_activity_timestamp": exit_timestamp.isoformat(),
                 "features": features,
             }).eq("id", position_id).execute()
+            
+            # Fetch updated position to get latest rpnl_usd for buyback calculation
+            updated_position = (
+                self.sb.table("lowcap_positions")
+                .select("rpnl_usd,total_extracted_usd,total_allocation_usd,total_pnl_usd,features")
+                .eq("id", position_id)
+                .limit(1)
+                .execute()
+            ).data
+            
+            position_for_buyback = updated_position[0] if updated_position else current_pos
+            
+            # Execute Lotus buyback (10% of profit → Lotus Coin, then transfer 69% to holding wallet)
+            try:
+                buyback_result = self._swap_profit_to_lotus(position_for_buyback)
+                if buyback_result and buyback_result.get("success"):
+                    logger.info(
+                        f"Lotus buyback successful for position {position_id}: "
+                        f"{buyback_result.get('lotus_tokens', 0):.6f} tokens, "
+                        f"{buyback_result.get('lotus_tokens_transferred', 0):.6f} transferred to holding wallet"
+                    )
+                    # Store buyback info in position features
+                    if not isinstance(features, dict):
+                        features = {}
+                    if "pm_execution_history" not in features:
+                        features["pm_execution_history"] = {}
+                    features["pm_execution_history"]["lotus_buyback"] = buyback_result
+                    self.sb.table("lowcap_positions").update({
+                        "features": features
+                    }).eq("id", position_id).execute()
+                elif buyback_result and not buyback_result.get("success"):
+                    logger.warning(f"Lotus buyback failed for position {position_id}: {buyback_result.get('error')}")
+            except Exception as e:
+                logger.error(f"Error executing Lotus buyback for position {position_id}: {e}", exc_info=True)
+                # Don't block position closure if buyback fails
+            
+            # Send Position Summary notification (non-blocking)
+            self._send_position_summary_notification(position_for_buyback, uptrend, buyback_result)
             
             # Emit position_closed strand
             regime_context = self._get_regime_context()
@@ -2438,10 +2956,17 @@ class PMCoreTick:
                         a_final = float(a_e_components.get("a_final", 0.5))
                         e_final = float(a_e_components.get("e_final", 0.5))
                         
+                        # Store position status before update (for entry detection)
+                        position_status_before = p.get("status", "")
+                        
                         self._update_position_after_execution(
                             p.get("id"), decision_type, exec_result, act, p, a_final, e_final
                         )
                         self._update_execution_history(p.get("id"), decision_type, exec_result, act)
+                        
+                        # Send Telegram notification (non-blocking)
+                        # Pass position_status_before to help determine if this is an entry
+                        self._send_execution_notification(p, decision_type, exec_result, act, a_final, e_final, position_status_before)
                 except Exception as e:
                     logger.error(f"Error executing action for position {p.get('id')}: {e}")
                     execution_results[f"{p.get('id')}:{decision_type}"] = {

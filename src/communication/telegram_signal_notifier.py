@@ -512,6 +512,328 @@ class TelegramSignalNotifier:
         
         return message
     
+    # ============================================================================
+    # New PM Notification Methods (matching design document)
+    # ============================================================================
+    
+    async def send_entry_notification(
+        self,
+        token_ticker: str,
+        token_contract: str,
+        chain: str,
+        timeframe: str,
+        amount_usd: float,
+        entry_price_usd: float,
+        tx_hash: str,
+        state: str,
+        signal: str,
+        a_score: float,
+        e_score: float,
+        allocation_pct: Optional[float] = None,
+        source_tweet_url: Optional[str] = None
+    ) -> bool:
+        """Send entry notification (initial position)"""
+        try:
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            # Format signal description
+            signal_desc = {
+                "buy_signal": "Entry zone (S1)",
+                "buy_flag": "Retest buy (S2)" if state == "S2" else "Entry",
+                "first_dip_buy_flag": "First dip buy (S3)",
+                "reclaimed_ema333": "Reclaimed EMA333 (S3)"
+            }.get(signal, signal)
+            
+            message = f"⚘𒀭 **LOTUS TRENCHER ENTRY** ⚘⟁⌖\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Chain:** {chain.upper()}\n"
+            message += f"**Timeframe:** {timeframe}\n\n"
+            message += f"**Amount:** ${amount_usd:.2f}\n"
+            message += f"**Entry Price:** ${entry_price_usd:.8f}\n"
+            if allocation_pct:
+                message += f"**Allocation:** {allocation_pct:.1f}% of portfolio\n\n"
+            message += f"**State:** {state}\n"
+            message += f"**Signal:** {signal_desc}\n"
+            message += f"**A/E:** {a_score:.2f}/{e_score:.2f}\n\n"
+            message += f"**Transaction:** [View]({tx_link})\n"
+            message += f"**Time:** {timestamp}\n"
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            message += f"\n⚘𒀭 **POSITION OPENED** ⚘⟁⌖"
+            
+            return await self._send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending entry notification: {e}")
+            return False
+    
+    async def send_add_notification(
+        self,
+        token_ticker: str,
+        token_contract: str,
+        chain: str,
+        timeframe: str,
+        amount_usd: float,
+        entry_price_usd: float,
+        tx_hash: str,
+        state: str,
+        signal: str,
+        a_score: float,
+        e_score: float,
+        size_frac: float,
+        position_size: float,
+        position_value_usd: float,
+        avg_entry_price_usd: float,
+        total_pnl_usd: float,
+        total_pnl_pct: float,
+        rpnl_usd: float,
+        rpnl_pct: float,
+        source_tweet_url: Optional[str] = None
+    ) -> bool:
+        """Send add notification (scaling up position)"""
+        try:
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            # Format signal description
+            signal_desc = {
+                "buy_flag": "Retest add (S2)" if state == "S2" else "DX buy (S3)",
+                "reclaimed_ema333": "Auto-rebuy (S3)"
+            }.get(signal, signal)
+            
+            message = f"⚘⥈ **LOTUS TRENCHER ADD** ⚘⟁⌖\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Chain:** {chain.upper()}\n"
+            message += f"**Timeframe:** {timeframe}\n\n"
+            message += f"**Amount Added:** ${amount_usd:.2f}\n"
+            message += f"**Entry Price:** ${entry_price_usd:.8f}\n"
+            message += f"**Size:** {size_frac*100:.1f}% of remaining allocation\n\n"
+            message += f"**State:** {state}\n"
+            message += f"**Signal:** {signal_desc}\n"
+            message += f"**A/E:** {a_score:.2f}/{e_score:.2f}\n\n"
+            message += f"**Position Size:** {position_size:.2f} tokens\n"
+            message += f"**Position Value:** ${position_value_usd:.2f}\n"
+            message += f"**Avg Entry:** ${avg_entry_price_usd:.8f}\n\n"
+            message += f"**Current P&L:** ${total_pnl_usd:+.2f} ({total_pnl_pct:+.1f}%)\n"
+            message += f"**Realized P&L:** ${rpnl_usd:+.2f} ({rpnl_pct:+.1f}%)\n\n"
+            message += f"**Transaction:** [View]({tx_link})\n"
+            message += f"**Time:** {timestamp}\n"
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            message += f"\n⚘⥈ **POSITION SCALED UP** ⚘⟁⌖"
+            
+            return await self._send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending add notification: {e}")
+            return False
+    
+    async def send_trim_notification(
+        self,
+        token_ticker: str,
+        token_contract: str,
+        chain: str,
+        timeframe: str,
+        tokens_sold: float,
+        sell_price_usd: float,
+        value_extracted_usd: float,
+        size_frac: float,
+        tx_hash: str,
+        state: str,
+        signal: str,
+        e_score: float,
+        remaining_tokens: float,
+        position_value_usd: float,
+        total_pnl_usd: float,
+        total_pnl_pct: float,
+        rpnl_usd: float,
+        rpnl_pct: float,
+        source_tweet_url: Optional[str] = None
+    ) -> bool:
+        """Send trim notification (partial exit)"""
+        try:
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            # Format signal description
+            signal_desc = {
+                "trim_flag": "Profit trim (S2)" if state == "S2" else "Exhaustion trim (S3)"
+            }.get(signal, signal)
+            
+            message = f"⚘𒋻 **LOTUS TRENCHER TRIM** ⚘⟁⌖\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Chain:** {chain.upper()}\n"
+            message += f"**Timeframe:** {timeframe}\n\n"
+            message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
+            message += f"**Sell Price:** ${sell_price_usd:.8f}\n"
+            message += f"**Value Extracted:** ${value_extracted_usd:.2f}\n"
+            message += f"**Size:** {size_frac*100:.1f}% of position\n\n"
+            message += f"**State:** {state}\n"
+            message += f"**Signal:** {signal_desc}\n"
+            message += f"**E Score:** {e_score:.2f}\n\n"
+            message += f"**Remaining:** {remaining_tokens:.2f} tokens\n"
+            message += f"**Position Value:** ${position_value_usd:.2f}\n\n"
+            message += f"**Current P&L:** ${total_pnl_usd:+.2f} ({total_pnl_pct:+.1f}%)\n"
+            message += f"**Realized P&L:** ${rpnl_usd:+.2f} ({rpnl_pct:+.1f}%)\n\n"
+            message += f"**Transaction:** [View]({tx_link})\n"
+            message += f"**Time:** {timestamp}\n"
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            message += f"\n⚘𒋻 **PARTIAL PROFIT SECURED** ⚘𒋻"
+            
+            return await self._send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending trim notification: {e}")
+            return False
+    
+    async def send_emergency_exit_notification(
+        self,
+        token_ticker: str,
+        token_contract: str,
+        chain: str,
+        timeframe: str,
+        tokens_sold: float,
+        sell_price_usd: float,
+        value_extracted_usd: float,
+        tx_hash: str,
+        state: str,
+        reason: str,
+        e_score: float,
+        total_pnl_usd: float,
+        total_pnl_pct: float,
+        rpnl_usd: float,
+        rpnl_pct: float,
+        source_tweet_url: Optional[str] = None
+    ) -> bool:
+        """Send emergency exit notification (full exit)"""
+        try:
+            tx_link = self._create_transaction_link(tx_hash, chain)
+            token_link = self._create_token_link(token_contract, chain)
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            # Format reason
+            reason_desc = {
+                "structural_exit": "Structural exit",
+                "trend_ending": "Trend ending",
+                "emergency_exit": "Trend ending" if state == "S3" else "Structural exit"
+            }.get(reason.lower(), reason)
+            
+            message = f"⚘𒉿 **LOTUS TRENCHER EXIT** ⚘⟁⌖\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Chain:** {chain.upper()}\n"
+            message += f"**Timeframe:** {timeframe}\n\n"
+            message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
+            message += f"**Sell Price:** ${sell_price_usd:.8f}\n"
+            message += f"**Value Extracted:** ${value_extracted_usd:.2f}\n\n"
+            message += f"**State:** {state}\n"
+            message += f"**Reason:** {reason_desc}\n"
+            message += f"**E Score:** {e_score:.2f}\n\n"
+            message += f"**Total P&L:** ${total_pnl_usd:+.2f} ({total_pnl_pct:+.1f}%)\n"
+            message += f"**Realized P&L:** ${rpnl_usd:+.2f} ({rpnl_pct:+.1f}%)\n\n"
+            message += f"**Transaction:** [View]({tx_link})\n"
+            message += f"**Time:** {timestamp}\n"
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            message += f"\n⚘𒉿 **FINAL EXIT - TREND ENDED** ⚘𒉿"
+            
+            return await self._send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending emergency exit notification: {e}")
+            return False
+    
+    async def send_position_summary_notification(
+        self,
+        token_ticker: str,
+        token_contract: str,
+        chain: str,
+        timeframe: str,
+        final_exit_type: str,
+        exit_reason: str,
+        total_allocation_usd: float,
+        total_extracted_usd: float,
+        rpnl_usd: float,
+        rpnl_pct: float,
+        total_pnl_usd: float,
+        total_pnl_pct: float,
+        hold_time_days: Optional[float] = None,
+        rr: Optional[float] = None,
+        return_mult: Optional[float] = None,
+        max_drawdown_pct: Optional[float] = None,
+        max_gain_mult: Optional[float] = None,
+        completed_trades: Optional[int] = None,
+        entry_context: Optional[str] = None,
+        lotus_buyback: Optional[Dict[str, Any]] = None,
+        source_tweet_url: Optional[str] = None
+    ) -> bool:
+        """Send position summary notification (full closure confirmation)"""
+        try:
+            token_link = self._create_token_link(token_contract, chain)
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            
+            message = f"⚘🝗⩜ **LOTUS TRENCHER POSITION SUMMARY** ⚘⟁⌖\n\n"
+            message += f"**Token:** [{token_ticker}]({token_link})\n"
+            message += f"**Chain:** {chain.upper()}\n"
+            message += f"**Timeframe:** {timeframe}\n\n"
+            message += f"**Final Exit:** {final_exit_type}\n"
+            message += f"**Exit Reason:** {exit_reason}\n\n"
+            message += f"**Total Invested:** ${total_allocation_usd:.2f}\n"
+            message += f"**Total Extracted:** ${total_extracted_usd:.2f}\n"
+            message += f"**Realized P&L:** ${rpnl_usd:+.2f} ({rpnl_pct:+.1f}%)\n"
+            message += f"**Total P&L:** ${total_pnl_usd:+.2f} ({total_pnl_pct:+.1f}%)\n\n"
+            
+            if hold_time_days is not None:
+                message += f"**Hold Time:** {hold_time_days:.1f} days\n"
+            if rr is not None:
+                message += f"**R/R:** {rr:.2f}\n"
+            if return_mult is not None:
+                message += f"**Return:** {return_mult:.2f}x\n"
+            if max_drawdown_pct is not None:
+                message += f"**Max Drawdown:** {max_drawdown_pct:.1f}%\n"
+            if max_gain_mult is not None:
+                message += f"**Max Gain:** {max_gain_mult:.2f}x\n"
+            
+            # Lotus buyback section
+            if lotus_buyback and lotus_buyback.get("success"):
+                message += f"\n⚘❈ **LOTUS BUYBACK**⚘❈\n"
+                profit_usd = lotus_buyback.get("profit_usd", 0)
+                swap_amount_usd = lotus_buyback.get("swap_amount_usd", 0)
+                lotus_tokens = lotus_buyback.get("lotus_tokens", 0)
+                transfer_amount = lotus_buyback.get("lotus_tokens_transferred", 0)
+                swap_tx = lotus_buyback.get("swap_tx_hash")
+                transfer_tx = lotus_buyback.get("transfer_tx_hash")
+                
+                message += f"**Profit:** ${profit_usd:.2f}\n"
+                message += f"**Swap Amount:** ${swap_amount_usd:.2f} (10%)\n"
+                message += f"**Lotus Tokens:** {lotus_tokens:.6f} ⚘❈\n"
+                message += f"**Transfer:** {transfer_amount:.6f} ⚘❈ → Holding Wallet\n"
+                if swap_tx:
+                    swap_link = self._create_transaction_link(swap_tx, "solana")
+                    message += f"**Swap TX:** [View]({swap_link})\n"
+                if transfer_tx:
+                    transfer_link = self._create_transaction_link(transfer_tx, "solana")
+                    message += f"**Transfer TX:** [View]({transfer_link})\n"
+            elif lotus_buyback and not lotus_buyback.get("success"):
+                message += f"\n⚘❈ **LOTUS BUYBACK**⚘❈\n"
+                message += f"**Status:** Failed\n"
+                message += f"**Error:** {lotus_buyback.get('error', 'Unknown error')}\n"
+            
+            if completed_trades is not None:
+                message += f"\n**Completed Trades:** {completed_trades}\n"
+            if entry_context:
+                message += f"**Entry Context:** {entry_context}\n"
+            
+            message += f"\n**Time:** {timestamp}\n"
+            if source_tweet_url:
+                message += f"**Source:** [Tweet]({source_tweet_url})\n"
+            message += f"\n⚘🝗⩜ **TREND ENDED PROFIT SECURED** ⚘🝗⩜"
+            
+            return await self._send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending position summary notification: {e}")
+            return False
+    
     async def _send_message(self, message: str) -> bool:
         """Send message to Telegram channel"""
         try:

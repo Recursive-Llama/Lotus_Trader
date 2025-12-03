@@ -467,22 +467,16 @@ class MockTDModule:
             return False
     
     async def _call_trader_lowcap_module(self, strand: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Call Trader Lowcap module to process decision lowcap strands"""
+        """Call Trader Lowcap module to process decision lowcap strands
+        
+        NOTE: This is legacy code. In v4, Decision Maker creates positions directly.
+        This method is kept for backward compatibility but is not used in the main flow.
+        """
         try:
-            # Import the simplified Trader Lowcap
-            from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
-            
-            # Initialize Trader Lowcap
-            trader = TraderLowcapSimpleV2(self.supabase_manager)
-            
-            # Process the decision lowcap strand
-            position = trader.execute_decision(strand)
-            
-            if position:
-                self.logger.info(f"✅ Trader Lowcap created position: {position.get('position_id')}")
-                return True
-            else:
-                self.logger.info(f"❌ Trader Lowcap failed to execute: {strand.get('id')}")
+            # LEGACY: TraderLowcapSimpleV2 has been removed
+            # In v4, Decision Maker creates positions directly, no trader module needed
+            self.logger.warning(f"Trader Lowcap module is legacy and not used in v4. Strand: {strand.get('id')}")
+            self.logger.info(f"Decision Maker now creates positions directly in v4 architecture")
                 return False
                 
         except Exception as e:

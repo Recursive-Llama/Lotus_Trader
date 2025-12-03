@@ -11,6 +11,9 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
+# Add src to Python path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 # --- Third-party Imports ---
 from supabase import create_client
 from supabase.lib.client_options import ClientOptions
@@ -23,9 +26,7 @@ from trading.wallet_manager import WalletManager
 from intelligence.universal_learning.universal_learning_system import UniversalLearningSystem
 from intelligence.social_ingest.social_ingest_basic import SocialIngestModule
 from intelligence.decision_maker_lowcap.decision_maker_lowcap_simple import DecisionMakerLowcapSimple
-from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
 from trading.scheduled_price_collector import ScheduledPriceCollector
-from trading.position_monitor import PositionMonitor
 
 # --- Job Imports ---
 from intelligence.lowcap_portfolio_manager.jobs.nav_compute_1h import main as nav_main
@@ -53,7 +54,6 @@ def setup_logging():
         'trader': 'logs/trader.log',
         'learning_system': 'logs/learning_system.log',
         'price_collector': 'logs/price_collector.log',
-        'position_monitor': 'logs/position_monitor.log',
         'schedulers': 'logs/schedulers.log',
         'system': 'logs/system.log'
     }
@@ -76,20 +76,77 @@ logger = logging.getLogger('system')
 class StrandMonitor:
     def __init__(self, supabase: SupabaseManager):
         self.sb = supabase
+        self.running = False
         
-    def start(self):
+    async def start(self):
+        """Start async realtime subscription"""
         try:
-            channel = self.sb.client.channel('ad_strands_monitor')
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_KEY")
+            if not supabase_url or not supabase_key:
+                raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY for realtime")
+            
+            # Create a new client instance for realtime (can use sync client in async context)
+            # The realtime subscription works by keeping the channel alive
+            client = create_client(supabase_url, supabase_key)
+            
+            # Set up realtime channel subscription
+            channel = client.channel('ad_strands_monitor')
+            
+            def on_insert(payload):
+                """Handle new strand insert"""
+                try:
+                    self.handle_strand(payload)
+                except Exception as e:
+                    logger.error(f"Error handling strand in callback: {e}", exc_info=True)
+            
+            # Subscribe to INSERT events on ad_strands table
             channel.on(
                 'postgres_changes',
                 event='INSERT',
                 schema='public',
                 table='ad_strands',
-                callback=self.handle_strand
+                callback=on_insert
             ).subscribe()
+            
+            self.running = True
+            logger.info("Strand monitor realtime subscription active")
+            
+            # Keep the subscription alive - the channel needs to stay open
+            # The realtime connection is maintained by the Supabase client
+            while self.running:
+                await asyncio.sleep(1)  # Just keep the loop alive
+                
         except Exception as e:
             logger.error(f"Failed to subscribe to realtime strands: {e}", exc_info=True)
             print(f"❦ Realtime subscription failed: {e}")
+            # Fallback to polling if realtime fails
+            logger.info("Falling back to polling mode")
+            await self._polling_fallback()
+
+    async def _polling_fallback(self):
+        """Fallback polling mode if realtime fails"""
+        logger.warning("Using polling fallback for strand monitoring")
+        self.running = True
+        last_id = None
+        while self.running:
+            try:
+                # Get latest strands
+                query = self.sb.client.table('ad_strands').select('*').order('created_at', desc=True).limit(10)
+                if last_id:
+                    query = query.gt('id', last_id)
+                result = query.execute()
+                
+                if result.data:
+                    # Process new strands
+                    for strand in reversed(result.data):  # Process oldest first
+                        self.handle_strand({'new': strand})
+                        last_id = strand.get('id')
+                
+                await asyncio.sleep(5)  # Poll every 5 seconds
+            except Exception as poll_error:
+                logger.error(f"Polling error: {poll_error}", exc_info=True)
+                await asyncio.sleep(5)
 
     def _get_stage_glyph(self, stage: str) -> str:
         mapping = {
@@ -172,9 +229,7 @@ class TradingSystem:
         self.learning_system = None
         self.social_ingest = None
         self.decision_maker = None
-        self.trader = None
         self.price_collector = None
-        self.position_monitor = None
         self.strand_monitor = None
         self.social_monitor = None
         
@@ -212,21 +267,21 @@ class TradingSystem:
         
         try:
             self.supabase_manager = SupabaseManager()
-            print("   [⋻] Supabase Manager... OK")
+            print("   ⋻ Supabase Manager... OK")
 
             self.llm_client = OpenRouterClient()
-            print("   [∴] LLM Client... OK")
+            print("   ∴ LLM Client... OK")
 
             self.jupiter_client = JupiterClient()
             self.wallet_manager = WalletManager()
-            print("   [🜄] Trading Core (Jupiter/Wallet)... OK")
+            print("   🜄 Trading Core (Jupiter/Wallet)... OK")
 
             self.learning_system = UniversalLearningSystem(
                 supabase_manager=self.supabase_manager,
                 llm_client=self.llm_client,
                 llm_config=None
             )
-            print("   [𓂀] Universal Learning System... Active")
+            print("   𓂀 Universal Learning System... Active")
 
             self.social_ingest = SocialIngestModule(
                 supabase_manager=self.supabase_manager,
@@ -238,68 +293,65 @@ class TradingSystem:
             # Get curator list for startup display
             curators = self.social_ingest.get_enabled_curators()
             twitter_curators = [c for c in curators if c.get('platform') == 'twitter']
-            twitter_handles = [c.get('platform_data', {}).get('handle', c.get('name', 'unknown')) for c in twitter_curators]
-            twitter_list = ', '.join([f"@{h}" for h in twitter_handles[:10]])  # Limit to 10 for display
-            if len(twitter_curators) > 10:
-                twitter_list += f" (+{len(twitter_curators) - 10} more)"
+            telegram_curators = [c for c in curators if c.get('platform') == 'telegram']
             
-            telegram_active = any(c.get('platform') == 'telegram' for c in curators)
+            # Format Twitter handles (remove @ prefix if present, then add one)
+            twitter_handles = []
+            for c in twitter_curators:
+                handle = c.get('platform_data', {}).get('handle', c.get('name', 'unknown'))
+                # Remove @ if already present, then add one
+                handle = handle.lstrip('@')
+                twitter_handles.append(f"@{handle}")
             
-            print("   [⟡] Social Ingest... Listening")
+            # Format Telegram handles
+            telegram_handles = []
+            for c in telegram_curators:
+                handle = c.get('platform_data', {}).get('handle', c.get('name', 'unknown'))
+                handle = handle.lstrip('@')
+                telegram_handles.append(f"@{handle}")
+            
+            print("   ⟡ Social Ingest... Listening")
             if twitter_curators:
+                twitter_list = ', '.join(twitter_handles)  # Show ALL curators
                 print(f"      Twitter: {len(twitter_curators)} curators ({twitter_list})")
-            if telegram_active:
-                print("      Telegram: active")
+            if telegram_curators:
+                telegram_list = ', '.join(telegram_handles)  # Show ALL curators
+                print(f"      Telegram: {len(telegram_curators)} curators ({telegram_list})")
+            elif not twitter_curators and not telegram_curators:
+                print("      No curators configured")
 
             self.decision_maker = DecisionMakerLowcapSimple(
                 supabase_manager=self.supabase_manager,
                 config=self.config,
                 learning_system=self.learning_system
             )
-            print("   [∆φ] Decision Maker... Ready")
+            print("   ∆φ Decision Maker... Ready")
 
-            # Trader initialization
-            from intelligence.trader_lowcap.trader_lowcap_simple_v2 import TraderLowcapSimpleV2
-            trader_config = self.config.get('trading', {}).copy()
-            if 'lotus_buyback' in self.config:
-                trader_config['lotus_buyback'] = self.config['lotus_buyback']
-            
-            self.trader = TraderLowcapSimpleV2(
-                supabase_manager=self.supabase_manager,
-                config=trader_config
-            )
+            # PriceOracle initialization (extracted from TraderLowcapSimpleV2)
+            from trading.price_oracle_factory import create_price_oracle
+            price_oracle = create_price_oracle()
+            print("   ⚡ Price Oracle... OK")
             
             # Wire up dependencies
-            self.learning_system.trader = self.trader
             self.learning_system.set_decision_maker(self.decision_maker)
-            self.wallet_manager.trader = self.trader
             self.supabase_manager.wallet_manager = self.wallet_manager
-            print("   [🜄] Trader (V2) & Dependencies... OK")
+            print("   🜄 Dependencies... OK")
 
             self.price_collector = ScheduledPriceCollector(
                 supabase_manager=self.supabase_manager,
-                price_oracle=self.trader.price_oracle
+                price_oracle=price_oracle
             )
-            print("   [⩜] Scheduled Price Collector... OK")
+            print("   ⩜ Scheduled Price Collector... OK")
 
-            self.position_monitor = PositionMonitor(
-                supabase_manager=self.supabase_manager,
-                trader=self.trader
-            )
-            print("   [⩜] Position Monitor... OK")
-
+            # PM Executor is initialized internally by PM Core Tick (no registration needed)
             if os.getenv("ACTIONS_ENABLED", "0") == "1":
-                from intelligence.lowcap_portfolio_manager.pm.executor import register_pm_executor
-                sb_client = self.supabase_manager.db_manager.client if hasattr(self.supabase_manager, 'db_manager') else self.supabase_manager.client
-                register_pm_executor(self.trader, sb_client)  # Fixed: trader first, then sb_client
-                print("   [⚡] PM Executor... Registered")
+                print("   ⚡ PM Executor... Enabled (via PM Core Tick)")
             else:
-                print("   [⋇] PM Executor... Disabled (Read-Only)")
+                print("   ⋇ PM Executor... Disabled (Read-Only)")
             
-            # Initialize Strand Monitor
+            # Initialize Strand Monitor (will start async in run())
             self.strand_monitor = StrandMonitor(self.supabase_manager)
-            self.strand_monitor.start()
-            print("   [⟖] Strand Monitor... Started")
+            print("   ⟖ Strand Monitor... Initialized")
 
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
@@ -452,6 +504,7 @@ class TradingSystem:
             scheduler_logger.info("Seed job: dom_main starting")
             await asyncio.to_thread(dom_main)
             scheduler_logger.info("Seed job: dom_main completed")
+            print("   ☼ Dominance ingest complete")
         except Exception as e:
             scheduler_logger.error(f"PM seed (dominance) error: {e}", exc_info=True)
             print(f"   ❦ Seed (Dominance) Failed: {e}")
@@ -460,6 +513,7 @@ class TradingSystem:
             scheduler_logger.info("Seed job: feat_main starting")
             await asyncio.to_thread(feat_main)
             scheduler_logger.info("Seed job: feat_main completed")
+            print("   ☼ Features tracker complete")
         except Exception as e:
             scheduler_logger.error(f"PM seed (features/phase) error: {e}", exc_info=True)
             print(f"   ❦ Seed (Features) Failed: {e}")
@@ -468,6 +522,7 @@ class TradingSystem:
             scheduler_logger.info("Seed job: bands_main starting")
             await asyncio.to_thread(bands_main)
             scheduler_logger.info("Seed job: bands_main completed")
+            print("   ☼ Bands calculation complete")
         except Exception as e:
             scheduler_logger.error(f"PM seed (bands) error: {e}", exc_info=True)
             print(f"   ❦ Seed (Bands) Failed: {e}")
@@ -476,11 +531,13 @@ class TradingSystem:
             scheduler_logger.info("Seed job: pm_core_main starting")
             await asyncio.to_thread(lambda: pm_core_main(timeframe="1h", learning_system=self.learning_system))
             scheduler_logger.info("Seed job: pm_core_main completed")
+            print("   ☼ PM Core tick complete")
         except Exception as e:
             scheduler_logger.error(f"PM seed (core) error: {e}", exc_info=True)
             print(f"   ❦ Seed (PM Core) Failed: {e}")
         
         print("   ⨵ Seed Jobs Complete")
+        print("   ↻ Starting recurring schedulers...")
         scheduler_logger.info("Seed phase completed")
 
         # 2. Recurring Schedule
@@ -547,7 +604,9 @@ class TradingSystem:
             except Exception as e:
                 scheduler_logger.error(f"HL WS ingester not started: {e}", exc_info=True)
         
-        print("   [↻] Schedulers... Active")
+        print("   ↻ Schedulers... Active")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("\n⚘⟁⌖ System Running - Monitoring strands...\n")
         scheduler_logger.info("All schedulers started")
         return tasks
 
@@ -587,10 +646,12 @@ class TradingSystem:
             self.tasks.append(price_task)
             logger.info("Price collector started")
             
-            # Start Position Monitor
-            position_task = asyncio.create_task(self.position_monitor.start_monitoring(check_interval=30))
-            self.tasks.append(position_task)
-            logger.info("Position monitor started")
+            # Note: PositionMonitor is legacy and removed - PM Core Tick handles all position management
+            
+            # Start Strand Monitor (async realtime subscription)
+            strand_task = asyncio.create_task(self.strand_monitor.start())
+            self.tasks.append(strand_task)
+            logger.info("Strand monitor started")
             
             # Keep alive
             await asyncio.gather(*self.tasks, return_exceptions=True)

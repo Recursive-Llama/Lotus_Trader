@@ -107,23 +107,16 @@ class Wallet(Protocol):
 
 
 class PositionRepository(Protocol):
-    # Minimal set; implemented by existing repository with same semantics
+    # v4 minimal set - only methods that work with v4 schema
     def get_position(self, position_id: str) -> Optional[Dict[str, Any]]:
         ...
 
     def update_position(self, position_id: str, position: Dict[str, Any]) -> bool:
         ...
 
-    def update_entries(self, position_id: str, entries: List[Dict[str, Any]]) -> bool:
+    def get_position_by_token(self, token_contract: str) -> Optional[Dict[str, Any]]:
         ...
 
-    def update_exits(self, position_id: str, exits: List[Dict[str, Any]]) -> bool:
-        ...
-
-    # Grouped commit helpers (optional; can be thin wrappers around existing methods)
-    def commit_entry_executed(self, position_id: str, entry_number: int, cost_native: float, cost_usd: float, tokens_bought: float) -> bool:
-        ...
-
-    def commit_exit_executed(self, position_id: str, exit_number: int, cost_native: float, cost_usd: float, tokens_sold: float) -> bool:
+    def update_tax_percentage(self, token_contract: str, tax_pct: float) -> bool:
         ...
 

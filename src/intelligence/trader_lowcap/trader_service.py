@@ -18,7 +18,6 @@ from .trader_ports import PriceProvider, TradeExecutor, Wallet, PositionReposito
 from . import trader_views
 from .trading_logger import trading_logger
 from .structured_logger import structured_logger, StateDelta, PerformanceMetrics
-import uuid
 
 
 class _PriceProviderAdapter(PriceProvider):
@@ -124,124 +123,6 @@ class TraderService:
         self.sol_executor = sol_executor
         self._js_solana_client = js_solana_client
         self._notifier = None
-
-    # ------------------------------
-    # Execute decision (v4 simplified - positions created by Decision Maker)
-    # ------------------------------
-    async def execute_decision(self, decision: dict) -> Optional[dict]:
-        """
-        Simplified v4 version: Decision Maker creates 4 positions per token.
-        This method just validates and triggers backfill.
-        
-        NOTE: In v4, Decision Maker creates positions directly.
-        This method is kept for backward compatibility and to trigger backfill.
-        """
-        decision_id = decision.get('id', str(uuid.uuid4()))
-        
-        try:
-            token = (decision.get('signal_pack') or {}).get('token') or {}
-            chain = (token.get('chain') or '').lower()
-            ticker = token.get('ticker')
-            contract = token.get('contract')
-            allocation_pct = float((decision.get('content', {}) or {}).get('allocation_pct') or 0)
-            
-            # Validate decision was approved
-            if (decision.get('content', {}) or {}).get('action') != 'approve':
-                trading_logger.info(f"Skipping non-approved decision: {ticker or 'UNKNOWN'}")
-                return None
-
-            # Check if positions already exist (idempotency check)
-            # In v4, Decision Maker creates positions, so we check if they exist
-            existing_positions = self.repo.client.table('lowcap_positions').select('id').eq(
-                'book_id', decision_id
-            ).execute()
-            
-            if existing_positions.data and len(existing_positions.data) > 0:
-                trading_logger.info(f"Positions already exist for decision {decision_id}, skipping")
-                return {
-                    'decision_id': decision_id,
-                    'token_ticker': ticker,
-                    'status': 'positions_exist',
-                    'position_count': len(existing_positions.data)
-                }
-
-            # Log decision processing
-            structured_logger.log_decision_approved(
-                decision_id=decision_id,
-                token=ticker or 'UNKNOWN',
-                chain=chain,
-                contract=contract,
-                allocation_pct=allocation_pct,
-                curator_score=float((decision.get('content', {}) or {}).get('curator_score', 0)),
-                constraints_passed=["decision_processing"],
-                reasoning="Triggering backfill for new token"
-            )
-            
-            trading_logger.log_trade_attempt(
-                    chain=chain,
-                token=ticker or 'UNKNOWN',
-                action='execute_decision',
-                details={
-                    'decision_id': decision_id,
-                    'allocation_pct': allocation_pct,
-                    'contract': contract,
-                    'note': 'v4: Positions created by Decision Maker, triggering backfill only'
-                }
-            )
-
-            # Trigger backfill for all 4 timeframes (async, non-blocking)
-            try:
-                import asyncio as _asyncio
-                async def _run_onboarding_backfill():
-                    """Backfill all 4 timeframes for the new token"""
-                    try:
-                        from intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import (
-                            backfill_token_1m,
-                            backfill_token_15m,
-                            backfill_token_1h,
-                            backfill_token_4h
-                        )
-                        
-                        # Backfill all 4 timeframes in parallel (14 days = 20160 minutes)
-                        lookback_minutes = 20160
-                        
-                        # Run all backfills concurrently
-                        results = await _asyncio.gather(
-                            _asyncio.to_thread(backfill_token_1m, contract, chain, lookback_minutes),
-                            _asyncio.to_thread(backfill_token_15m, contract, chain, lookback_minutes),
-                            _asyncio.to_thread(backfill_token_1h, contract, chain, lookback_minutes),
-                            _asyncio.to_thread(backfill_token_4h, contract, chain, lookback_minutes),
-                            return_exceptions=True
-                        )
-                        
-                        # Log results
-                        timeframes = ['1m', '15m', '1h', '4h']
-                        for i, result in enumerate(results):
-                            if isinstance(result, Exception):
-                                trading_logger.warning(f"Backfill {timeframes[i]} failed for {ticker}: {result}")
-                            else:
-                                inserted = result.get('inserted_rows', 0)
-                                trading_logger.info(f"Backfill {timeframes[i]} complete for {ticker}: {inserted} rows")
-                    except Exception as e:
-                        trading_logger.warning(f"Backfill failed for {ticker}: {e}")
-                        return
-                
-                _asyncio.create_task(_run_onboarding_backfill())
-            except Exception as e:
-                trading_logger.warning(f"Failed to trigger backfill for {ticker}: {e}")
-
-            return {
-                'decision_id': decision_id,
-                'token_ticker': ticker,
-                'allocation_pct': allocation_pct,
-                'status': 'backfill_triggered',
-                'note': 'v4: Positions should be created by Decision Maker'
-            }
-        except Exception as e:
-            trading_logger.errors.error(f"EXECUTE_DECISION_EXCEPTION | {ticker or 'UNKNOWN'} | {chain} | {str(e)}")
-            import traceback
-            trading_logger.errors.error(f"TRACEBACK: {traceback.format_exc()}")
-            return None
 
     # ------------------------------
     # Notifier integration (still useful for Telegram alerts)
