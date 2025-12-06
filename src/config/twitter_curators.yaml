@@ -216,7 +216,7 @@ curators:
     name: "TonyBetW"
     platforms:
       twitter:
-        handle: "tonyGewrit"
+        handle: "@tonyGewrit"
         active: true
         priority: "medium"
     tags: ["crypto", "trading", "alpha"]
