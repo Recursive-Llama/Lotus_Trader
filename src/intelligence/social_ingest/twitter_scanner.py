@@ -178,32 +178,15 @@ class TwitterScanner:
             
             # Check if first tweet is pinned (older than second tweet)
             is_pinned = len(tweets) >= 2 and self._is_pinned_tweet(tweets[0], tweets[1])
-            if is_pinned:
-                print(f"   📌 Pinned tweet detected - skipping")
-            
-            # Show most recent tweet info
-            most_recent_text = actual_most_recent_tweet.get('text', '')[:100]
-            most_recent_time = actual_most_recent_tweet.get('timestamp', '')
-            print(f"   📝 Most recent: {most_recent_text}...")
-            print(f"   🕐 Time: {most_recent_time}")
             
             # Check if we've seen this curator before
+            tokens_found = []
             if curator_id in self.curator_last_seen:
                 last_seen_url = self.curator_last_seen[curator_id]
 
-                # Optional context: show last seen info if available in current list
-                last_seen_ts = None
-                for t in tweets:
-                    if t.get('url', '') == last_seen_url:
-                        last_seen_ts = t.get('timestamp', None)
-                        break
-                last_seen_tail = last_seen_url.rsplit('/', 1)[-1] if last_seen_url else ''
-                if last_seen_url:
-                    print(f"   👀 Last seen: {last_seen_ts or 'unknown time'} (…{last_seen_tail})")
-
                 # If the most recent tweet is the same as last time, no new tweets
                 if most_recent_tweet_url == last_seen_url:
-                    print(f"   ⏸️  No new tweets (same as last check)")
+                    print(f"Scanning @{handle.replace('@', '')}: No new tweets")
                     return
 
                 # Collect new tweets strictly after last seen, skipping pinned if present
@@ -214,26 +197,37 @@ class TwitterScanner:
                     if tweet_url == last_seen_url:
                         break  # Stop when we reach the last seen tweet
                     new_tweets.append(tweet)
-
-                print(f"   🆕 Found {len(new_tweets)} new tweets")
             else:
                 # First time checking this curator - process only the actual most recent tweet
                 new_tweets = [actual_most_recent_tweet]
-                print(f"   🆕 First time checking - processing most recent tweet")
             
-            # Process new tweets
+            # Process new tweets (silently, log to debug)
             for tweet in new_tweets:
                 tweet_url = tweet.get('url', '')
                 if tweet_url and tweet_url not in self.processed_tweets:
-                    print(f"   🔍 Processing tweet: {tweet.get('text', '')[:50]}...")
-                    result = await self._process_tweet(curator, tweet)
+                    self.logger.debug(f"Processing tweet: {tweet.get('text', '')[:50]}...")
+                    # Process tweet and check if tokens were found
+                    result = await self._process_tweet_with_result(curator, tweet)
                     self.processed_tweets.add(tweet_url)
                     if result:
-                        print(f"   ✅ Tweet processed successfully")
-                    else:
-                        print(f"   ⚠️  No tokens found in tweet")
+                        # Extract token tickers from result (list of strands)
+                        if isinstance(result, list):
+                            for strand in result:
+                                if isinstance(strand, dict):
+                                    signal_pack = strand.get('signal_pack', {})
+                                    token_data = signal_pack.get('token', {})
+                                    ticker = token_data.get('ticker', '')
+                                    if ticker and ticker not in tokens_found:
+                                        tokens_found.append(ticker)
                 else:
-                    print(f"   ⏭️  Skipping duplicate tweet")
+                    self.logger.debug(f"Skipping duplicate tweet: {tweet_url}")
+            
+            # Single line summary per curator scan
+            if tokens_found:
+                tokens_str = ', '.join([f"${t}" for t in tokens_found])
+                print(f"Scanning @{handle.replace('@', '')}: {tokens_str} found")
+            else:
+                print(f"Scanning @{handle.replace('@', '')}: No tokens found")
             
             # Update last seen tweet for this curator
             self.curator_last_seen[curator_id] = most_recent_tweet_url
@@ -324,7 +318,12 @@ class TwitterScanner:
             return []
     
     async def _process_tweet(self, curator: Dict[str, Any], tweet: Dict[str, Any]):
-        """Process a single tweet for token information"""
+        """Process a single tweet for token information (returns True/False)"""
+        result = await self._process_tweet_with_result(curator, tweet)
+        return result is not None and len(result) > 0
+    
+    async def _process_tweet_with_result(self, curator: Dict[str, Any], tweet: Dict[str, Any]):
+        """Process a single tweet for token information (returns list of strands)"""
         try:
             # Download image if present
             image_data = None
@@ -344,15 +343,15 @@ class TwitterScanner:
             result = await self.social_ingest.process_social_signal(curator_id, message_data)
             
             if result and len(result) > 0:
-                self.logger.info(f"Processed tweet from {curator['handle']}: {tweet['text'][:50]}...")
-                return True
+                self.logger.debug(f"Processed tweet from {curator['handle']}: {tweet['text'][:50]}...")
+                return result
             else:
                 self.logger.debug(f"No token found in tweet from {curator['handle']}")
-                return False
+                return None
                 
         except Exception as e:
             self.logger.error(f"Error processing tweet: {e}")
-            return False
+            return None
     
     async def _download_image(self, image_url: str) -> Optional[bytes]:
         """Download image data from URL"""

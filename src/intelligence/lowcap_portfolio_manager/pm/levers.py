@@ -1,126 +1,17 @@
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # L2 Lever Engine:
-# Phases (Macro/Meso/Micro) and dominance/cut_pressure shape A/E only.
-# Downstream Actions use only A/E + geometry/flow confirmations; they never read phases directly.
-
-
-def _map_meso_policy(phase_meso: str) -> Tuple[float, float]:
-    p = (phase_meso or "").lower()
-    if p == "dip":
-        return 0.2, 0.8
-    if p == "double-dip":
-        return 0.4, 0.7
-    if p == "oh-shit":
-        return 0.9, 0.8
-    if p == "recover":
-        return 1.0, 0.5
-    if p == "good":
-        return 0.5, 0.3
-    if p == "euphoria":
-        # existing winners patient, new/laggards aggressive; use mid default
-        return 0.4, 0.5
-    return 0.5, 0.5
-
-
-def _apply_macro(a: float, e: float, phase_macro: str) -> Tuple[float, float]:
-    m = (phase_macro or "").lower()
-    if m == "dip":
-        return a * 0.6, e * 1.4
-    if m == "double-dip":
-        return a * 0.8, e * 1.2
-    if m == "oh-shit":
-        return a * 1.2, e * 0.8
-    if m == "recover":
-        return a * 1.3, e * 1.0
-    if m == "good":
-        return a * 1.1, e * 1.1
-    if m == "euphoria":
-        return a * 1.0, e * 1.4
-    return a, e
-
-
-def _apply_cut_pressure(a: float, e: float, cut_pressure: float, features: Dict[str, Any]) -> Tuple[float, float]:
-    """
-    Apply cut pressure with 9-position target curve.
-    Above 9: exponential dampening
-    Below 9: linear easing
-    """
-    cp = max(0.0, min(1.0, float(cut_pressure or 0.0)))
-    active_positions = int(features.get("active_positions", 0))
-    
-    # Apply base cut pressure
-    a_base = a * (1.0 - 0.33 * cp)
-    e_base = e * (1.0 + 0.33 * cp)
-    
-    # Apply 9-position curve
-    if active_positions > 9:
-        # Exponential dampening above 9
-        excess = active_positions - 9
-        a_final = a_base * math.exp(-0.10 * excess)
-        e_final = e_base * math.exp(+0.10 * excess)
-    elif active_positions < 9:
-        # Linear easing below 9
-        deficit = 9 - active_positions
-        a_final = min(1.0, a_base * (1 + 0.05 * deficit))
-        e_final = max(0.0, e_base * (1 - 0.05 * deficit))
-    else:
-        # Exactly 9 positions - no additional adjustment
-        a_final = a_base
-        e_final = e_base
-    
-    return a_final, e_final
+# Regime-driven A/E calculation using Uptrend Engine states across 5 drivers × 3 timeframes.
+# Replaces old phase-based system (phase_macro, phase_meso, cut_pressure).
+# Keeps: Intent deltas, Bucket multiplier (bucket ordering/rank)
+# Removed: Age boost, Market cap boost, Phase-based A/E
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
+    """Clamp value between lo and hi."""
     return max(lo, min(hi, x))
-
-
-def _compute_age_component(features: Dict[str, Any]) -> Tuple[float, float]:
-    """
-    Token age adjustments based on pair creation date
-    Returns: (a_boost, e_boost) as multipliers
-    """
-    # Calculate age from stored pair_created_at
-    pair_created_at = features.get("pair_created_at")
-    if not pair_created_at:
-        return 1.0, 1.0  # No boost if no pair creation date
-    
-    try:
-        created_dt = datetime.fromisoformat(pair_created_at.replace('Z', '+00:00'))
-        age_h = (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600
-    except:
-        return 1.0, 1.0  # No boost on error
-    
-    if age_h < 6:
-        return 1.15, 1.15  # +15% boost for <6 hours
-    elif age_h < 12:
-        return 1.10, 1.10  # +10% boost for <12 hours
-    elif age_h < 72:  # 3 days
-        return 1.05, 1.05  # +5% boost for <3 days
-    else:
-        return 1.0, 1.0    # No boost for >3 days
-
-
-def _compute_market_cap_component(features: Dict[str, Any]) -> Tuple[float, float]:
-    """
-    Market cap adjustments
-    Returns: (a_boost, e_boost) as multipliers
-    """
-    market_cap = float(features.get("market_cap", 0.0))
-    
-    if market_cap < 100000:  # <$100k
-        return 1.15, 1.15  # +15% boost
-    elif market_cap < 500000:  # <$500k
-        return 1.10, 1.10  # +10% boost
-    elif market_cap < 1000000:  # <$1m
-        return 1.05, 1.05  # +5% boost
-    else:
-        return 1.0, 1.0    # No boost for >$1m
 
 
 def _compute_bucket_multiplier(
@@ -168,39 +59,6 @@ def _compute_bucket_multiplier(
     return multiplier, diag
 
 
-def _apply_intent_deltas(a: float, e: float, features: Dict[str, Any]) -> Tuple[float, float, Dict[str, float]]:
-    """
-    Apply intent-based deltas to A/E scores.
-    Technical analysis components removed - only intent channels remain.
-    """
-    # Intent channels (aggregate simple signals if present)
-    intent = features.get("intent_metrics") or {}
-    hi_buy = float(intent.get("hi_buy", 0.0))
-    med_buy = float(intent.get("med_buy", 0.0))
-    profit = float(intent.get("profit", 0.0))
-    sell = float(intent.get("sell", 0.0))
-    mock = float(intent.get("mock", 0.0))
-
-    deltas = {"dA": 0.0, "dE": 0.0}
-
-    # Intent channels (corrected mock severity)
-    deltas["dA"] += 0.25 * _clamp(hi_buy, 0.0, 1.0)
-    deltas["dE"] -= 0.10 * _clamp(hi_buy, 0.0, 1.0)
-    deltas["dA"] += 0.15 * _clamp(med_buy, 0.0, 1.0)
-    deltas["dE"] -= 0.05 * _clamp(med_buy, 0.0, 1.0)
-    deltas["dA"] -= 0.15 * _clamp(profit, 0.0, 1.0)
-    deltas["dE"] += 0.15 * _clamp(profit, 0.0, 1.0)
-    deltas["dA"] -= 0.25 * _clamp(sell, 0.0, 1.0)
-    deltas["dE"] += 0.35 * _clamp(sell, 0.0, 1.0)
-    deltas["dA"] -= 0.30 * _clamp(mock, 0.0, 1.0)  # Fixed: stronger than profit
-    deltas["dE"] += 0.50 * _clamp(mock, 0.0, 1.0)  # Fixed: stronger than profit
-
-    # Clamp combined intent impact per lever to ±0.4
-    dA = _clamp(deltas["dA"], -0.4, 0.4)
-    dE = _clamp(deltas["dE"], -0.4, 0.4)
-    return a + dA, e + dE, {"dA": dA, "dE": dE, "intent_components": {
-        "hi_buy": hi_buy, "med_buy": med_buy, "profit": profit, "sell": sell, "mock": mock
-    }}
 
 
 def _compute_position_sizing(a_final: float) -> float:
@@ -213,55 +71,100 @@ def _compute_position_sizing(a_final: float) -> float:
 
 
 def compute_levers(
-    phase_macro: str,
-    phase_meso: str,
-    cut_pressure: float,
     features: Dict[str, Any],
     bucket_context: Dict[str, Any] | None = None,
     position_bucket: str | None = None,
     bucket_config: Dict[str, Any] | None = None,
+    exec_timeframe: str = "1h",  # Trading timeframe for regime A/E calculation
 ) -> Dict[str, Any]:
     """
     Compute continuous A (add appetite) and E (exit assertiveness) in [0,1].
-    Note: Macro/Meso/Micro phases and dominance influence A/E here only.
-    Actions (entry/exit/redeploy) downstream rely solely on A/E + geometry/flow.
+    
+    Uses regime-driven A/E from Uptrend Engine states (BTC, ALT, bucket, BTC.d, USDT.d)
+    across 3 timeframes (1d macro, 1h meso, 1m micro).
+    
+    Keeps:
+    - Intent deltas (hi_buy, profit, sell, mock)
+    - Bucket multiplier (bucket ordering/rank)
+    
+    Removed:
+    - Phase-based A/E (phase_macro, phase_meso, cut_pressure)
+    - Age boost
+    - Market cap boost
     """
-    # Global components
-    a_pol, e_pol = _map_meso_policy(phase_meso)
-    a_mac, e_mac = _apply_macro(a_pol, e_pol, phase_macro)
-    a_cp, e_cp = _apply_cut_pressure(a_mac, e_mac, cut_pressure, features)
+    from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import (
+        RegimeAECalculator,
+    )
     
-    # Per-token components
-    a_intent, e_intent, intent_diag = _apply_intent_deltas(a_cp, e_cp, features)
-    a_age, e_age = _compute_age_component(features)
-    a_mcap, e_mcap = _compute_market_cap_component(features)
+    # Get intent deltas from features
+    intent = features.get("intent_metrics") or {}
+    intent_delta_a = (
+        0.25 * float(intent.get("hi_buy", 0.0)) +
+        0.15 * float(intent.get("med_buy", 0.0)) -
+        0.15 * float(intent.get("profit", 0.0)) -
+        0.25 * float(intent.get("sell", 0.0)) -
+        0.30 * float(intent.get("mock", 0.0))
+    )
+    intent_delta_e = (
+        -0.10 * float(intent.get("hi_buy", 0.0)) -
+        0.05 * float(intent.get("med_buy", 0.0)) +
+        0.15 * float(intent.get("profit", 0.0)) +
+        0.35 * float(intent.get("sell", 0.0)) +
+        0.50 * float(intent.get("mock", 0.0))
+    )
     
-    # Combine components
-    a_base = a_intent
-    e_base = e_intent
+    # Clamp intent deltas (capped at ±0.4 per original design)
+    intent_delta_a = _clamp(intent_delta_a, -0.4, 0.4)
+    intent_delta_e = _clamp(intent_delta_e, -0.4, 0.4)
     
-    a_boost = a_age * a_mcap
-    e_boost = e_age * e_mcap
-
+    # Compute regime-based A/E
+    try:
+        calculator = RegimeAECalculator()
+        a_regime, e_regime = calculator.compute_ae_for_token(
+            token_bucket=position_bucket or "small",
+            exec_timeframe=exec_timeframe,
+            intent_delta_a=intent_delta_a,
+            intent_delta_e=intent_delta_e,
+        )
+    except Exception as e:
+        # Fallback to neutral if regime calculation fails
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Regime A/E calculation failed, using neutral: {e}")
+        a_regime = 0.5
+        e_regime = 0.5
+    
+    # Apply bucket multiplier (bucket ordering)
     bucket_multiplier, bucket_diag = _compute_bucket_multiplier(position_bucket, bucket_context, bucket_config)
     
-    # Final calculation
-    a_final = _clamp(a_base * a_boost * bucket_multiplier, 0.0, 1.0)
-    e_final = _clamp(e_base * e_boost / max(bucket_multiplier, 0.2), 0.0, 1.0)
+    # Final calculation (bucket multiplier affects A, inverse affects E)
+    a_final = _clamp(a_regime * bucket_multiplier, 0.0, 1.0)
+    e_final = _clamp(e_regime / max(bucket_multiplier, 0.2), 0.0, 1.0)
     
     # Continuous position sizing
     position_size_frac = _compute_position_sizing(a_final)
     
-    # Enhanced diagnostics
+    # Diagnostics
+    intent_diag = {
+        "dA": intent_delta_a,
+        "dE": intent_delta_e,
+        "intent_components": {
+            "hi_buy": float(intent.get("hi_buy", 0.0)),
+            "med_buy": float(intent.get("med_buy", 0.0)),
+            "profit": float(intent.get("profit", 0.0)),
+            "sell": float(intent.get("sell", 0.0)),
+            "mock": float(intent.get("mock", 0.0)),
+        }
+    }
+    
     diagnostics = {
         **intent_diag,
         "components": {
-            "global": {"phase": (a_pol, e_pol), "macro": (a_mac, e_mac), "cut_pressure": (a_cp, e_cp)},
-            "per_token": {"age": (a_age, e_age), "mcap": (a_mcap, e_mcap)},
-            "boosts": {"a_boost": a_boost, "e_boost": e_boost, "bucket_multiplier": bucket_multiplier}
+            "regime": {"a_regime": a_regime, "e_regime": e_regime},
+            "bucket": {"multiplier": bucket_multiplier},
         },
         "bucket": bucket_diag,
-        "position_sizing": {"continuous_frac": position_size_frac}
+        "position_sizing": {"continuous_frac": position_size_frac},
     }
     
     return {

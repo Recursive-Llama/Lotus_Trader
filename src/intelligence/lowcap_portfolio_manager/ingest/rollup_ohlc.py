@@ -160,11 +160,12 @@ class GenericOHLCRollup:
             self.logger.debug(f"{timeframe.value} bar already exists for {boundary_ts}, skipping")
             return 0
         
-        self.logger.info(f"Rolling up {data_source.value} data to {timeframe.value} at {when}")
+        self.logger.info(f"Rolling up {data_source.value} data to {timeframe.value} at {when} (boundary: {boundary_ts})")
         
         # Get 1m data for the timeframe window
+        # Use boundary_ts as the end point to ensure we get the correct window
         if data_source == DataSource.MAJORS:
-            bars = self._get_majors_1m_data(timeframe, when)
+            bars = self._get_majors_1m_data(timeframe, boundary_ts)
         else:
             bars = self._get_lowcap_1m_data(timeframe, when)
         
@@ -191,15 +192,26 @@ class GenericOHLCRollup:
         self.logger.info(f"Rolled up {written} {timeframe.value} bars at {boundary_ts}")
         return written
     
-    def _get_majors_1m_data(self, timeframe: Timeframe, when: datetime) -> List[Dict]:
-        """Get majors 1m data from majors_price_data_ohlc (timeframe='1m') for the timeframe window"""
+    def _get_majors_1m_data(self, timeframe: Timeframe, boundary_ts: datetime) -> List[Dict]:
+        """Get majors 1m data from majors_price_data_ohlc (timeframe='1m') for the timeframe window
+        
+        Args:
+            timeframe: Target timeframe (e.g., M5 for 5m rollup)
+            boundary_ts: The boundary timestamp (start of the period being rolled up)
+                        For 5m rollup at 12:05:00, boundary_ts = 12:05:00, and we need bars from 12:00:00 to 12:05:00
+        """
         timeframe_minutes = self._get_timeframe_minutes(timeframe)
-        start_time = when - timedelta(minutes=timeframe_minutes)
+        # Look back timeframe_minutes * 2 to ensure we have enough data (like lowcap does)
+        # This provides a buffer in case of timing issues or missing bars
+        start_time = boundary_ts - timedelta(minutes=timeframe_minutes * 2)
         
         # Read from majors_price_data_ohlc with timeframe='1m'
+        # Get bars from start_time up to (but not including) boundary_ts
         result = self.sb.table("majors_price_data_ohlc").select(
             "token_contract,chain,timestamp,open_usd,high_usd,low_usd,close_usd,open_native,high_native,low_native,close_native,volume"
-        ).eq("chain", "hyperliquid").eq("timeframe", "1m").gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=False).execute()
+        ).eq("chain", "hyperliquid").eq("timeframe", "1m").gte("timestamp", start_time.isoformat()).lt("timestamp", boundary_ts.isoformat()).order("timestamp", desc=False).execute()
+        
+        self.logger.debug(f"Majors 1m data query: timeframe={timeframe.value}, boundary_ts={boundary_ts}, start_time={start_time}, found {len(result.data or [])} bars")
         
         # Convert to match lowcap format
         converted_data = []

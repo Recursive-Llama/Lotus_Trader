@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
 from supabase import create_client, Client  # type: ignore
-from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions, plan_actions_v4
+from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions_v4
 from src.intelligence.lowcap_portfolio_manager.pm.levers import compute_levers
 from src.intelligence.lowcap_portfolio_manager.pm.executor import PMExecutor
 from src.intelligence.lowcap_portfolio_manager.pm.config import load_pm_config, fetch_and_merge_db_config
@@ -39,27 +39,7 @@ def bucket_cf_improvement(missed_rr: Optional[float]) -> str:
     return "large"
 
 
-def _map_meso_to_policy(phase: str) -> tuple[float, float]:
-    p = (phase or "").lower()
-    if p == "dip":
-        return 0.2, 0.8
-    if p == "double-dip":
-        return 0.4, 0.7
-    if p == "oh-shit":
-        return 0.9, 0.8
-    if p == "recover":
-        return 1.0, 0.5
-    if p == "good":
-        return 0.5, 0.3
-    if p == "euphoria":
-        return 0.4, 0.5
-    return 0.5, 0.5
-
-
-def _apply_cut_pressure(a: float, e: float, cut_pressure: float) -> tuple[float, float]:
-    a2 = max(0.0, min(1.0, a * (1.0 - 0.33 * max(0.0, cut_pressure))))
-    e2 = max(0.0, min(1.0, e * (1.0 + 0.33 * max(0.0, cut_pressure))))
-    return a2, e2
+# Removed: _map_meso_to_policy() - no longer used (replaced by regime engine)
 
 
 class PMCoreTick:
@@ -106,60 +86,72 @@ class PMCoreTick:
             except Exception as e:
                 logger.warning(f"Failed to initialize Telegram notifier: {e}")
 
-    def _latest_phase(self) -> Dict[str, Any]:
-        # Use portfolio-level meso phase for now
-        res = (
-            self.sb.table("phase_state")
-            .select("phase,score,ts")
-            .eq("token", "PORTFOLIO")
-            .eq("horizon", "meso")
-            .order("ts", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        return rows[0] if rows else {"phase": None, "score": 0.0}
-    
-    def _get_regime_context(self) -> Dict[str, Dict[str, Any]]:
+    def _get_bucket_regime_state(self, bucket: str | None) -> Dict[str, str]:
         """
-        Get regime phases plus bucket summaries for regime_context.
+        Get regime states (S0, S1, S2, S3) for a bucket driver across all timeframes.
+        
+        Args:
+            bucket: Token's cap bucket (e.g., "nano", "small", "mid", "big")
         
         Returns:
-            Dict with keys: macro/meso/micro entries plus bucket_phases, bucket_rank, bucket_population.
+            Dict with keys: "macro", "meso", "micro" mapping to regime state strings (S0, S1, S2, S3)
+            Defaults to "S4" if not found
         """
-        regime_context = {}
+        default_state = {"macro": "S4", "meso": "S4", "micro": "S4"}
         
-        for horizon in ["macro", "meso", "micro"]:
-            try:
-                res = (
-                    self.sb.table("phase_state")
-                    .select("phase,score,ts")
-                    .eq("token", "PORTFOLIO")
-                    .eq("horizon", horizon)
-                    .order("ts", desc=True)
+        if not bucket:
+            return default_state
+        
+        try:
+            # Regime drivers are stored in lowcap_positions with status='regime_driver'
+            # Now that schema allows '1d', we use regime timeframes directly
+            tf_mapping = {
+                "macro": "1d",  # 1d regime timeframe (now stored directly as 1d)
+                "meso": "1h",   # 1h regime timeframe
+                "micro": "1m",  # 1m regime timeframe
+            }
+            
+            states = {}
+            for horizon, pos_tf in tf_mapping.items():
+                result = (
+                    self.sb.table("lowcap_positions")
+                    .select("state, features")
+                    .eq("status", "regime_driver")
+                    .eq("token_ticker", bucket)
+                    .eq("timeframe", pos_tf)
+                    .order("updated_at", desc=True)
                     .limit(1)
                     .execute()
                 )
-                rows = res.data or []
-                if rows:
-                    regime_context[horizon] = {
-                        "phase": rows[0].get("phase") or "",
-                        "score": float(rows[0].get("score") or 0.0),
-                        "ts": rows[0].get("ts") or datetime.now(timezone.utc).isoformat()
-                    }
+                
+                if result.data:
+                    row = result.data[0]
+                    # Try to get state from features.uptrend_engine_v4.state first, fallback to state column
+                    features = row.get("features") or {}
+                    uptrend = features.get("uptrend_engine_v4") or {}
+                    state = uptrend.get("state") or row.get("state", "S4")
+                    states[horizon] = str(state)
                 else:
-                    regime_context[horizon] = {
-                        "phase": "",
-                        "score": 0.0,
-                        "ts": datetime.now(timezone.utc).isoformat()
-                    }
-            except Exception as e:
-                logger.warning(f"Error fetching {horizon} phase: {e}")
-                regime_context[horizon] = {
-                    "phase": "",
-                    "score": 0.0,
-                    "ts": datetime.now(timezone.utc).isoformat()
-                }
+                    states[horizon] = "S4"
+            
+            return states
+        except Exception as e:
+            logger.warning(f"Error fetching regime states for bucket {bucket}: {e}")
+            return default_state
+    
+    def _get_regime_context(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get regime context with bucket summaries for regime_context.
+        
+        Note: Old phase_state table (Dip, Recover, etc.) is no longer used.
+        Regime states (S0, S1, S2, S3) are now read from lowcap_positions with status='regime_driver'.
+        
+        Returns:
+            Dict with keys: bucket_phases, bucket_rank, bucket_population.
+        """
+        regime_context = {}
+        
+        # Get bucket snapshot (still used for bucket ordering/multipliers)
         bucket_snapshot = fetch_bucket_phase_snapshot(self.sb)
         regime_context["bucket_phases"] = bucket_snapshot.get("bucket_phases", {})
         regime_context["bucket_population"] = bucket_snapshot.get("bucket_population", {})
@@ -408,14 +400,6 @@ class PMCoreTick:
         except Exception as exc:
             logger.warning(f"Exposure lookup build failed: {exc}")
             return None
-
-    def _latest_cut_pressure(self) -> float:
-        res = self.sb.table("portfolio_bands").select("cut_pressure").order("ts", desc=True).limit(1).execute()
-        rows = res.data or []
-        try:
-            return float((rows[0] or {}).get("cut_pressure") or 0.0)
-        except Exception:
-            return 0.0
 
     def _active_positions(self) -> List[Dict[str, Any]]:
         """
@@ -2577,7 +2561,7 @@ class PMCoreTick:
             logger.error(f"Error handling position closure for {position_id}: {e}")
             return False
     
-    def _write_strands(self, position: Dict[str, Any], token: str, now: datetime, a_val: float, e_val: float, phase: str, cut_pressure: float, actions: list[dict], execution_results: Dict[str, Dict[str, Any]] = None, regime_context: Dict[str, Dict[str, Any]] = None, token_bucket: Optional[str] = None) -> None:
+    def _write_strands(self, position: Dict[str, Any], token: str, now: datetime, a_val: float, e_val: float, phase: str, actions: list[dict], execution_results: Dict[str, Dict[str, Any]] = None, regime_context: Dict[str, Dict[str, Any]] = None, token_bucket: Optional[str] = None) -> None:
         """
         Write strands for PM actions.
         
@@ -2587,8 +2571,7 @@ class PMCoreTick:
             now: Current timestamp
             a_val: Aggressiveness score
             e_val: Exit assertiveness score
-            phase: Meso phase
-            cut_pressure: Cut pressure value
+            phase: Regime state string (e.g., "Macro S0, Meso S1, Micro S3") from bucket driver
             actions: List of action dicts
             execution_results: Execution results dict
             regime_context: Regime context with macro/meso/micro phases
@@ -2614,11 +2597,10 @@ class PMCoreTick:
                 lever_diag = (act.get("lever_diag") or {})  # actions may not include; fallback below
             except Exception:
                 lever_diag = {}
-            reasons = {**(act.get("reasons") or {}), **lever_diag, "phase_meso": phase, "cut_pressure": cut_pressure}
+            reasons = {**(act.get("reasons") or {}), **lever_diag, "regime_state": phase}  # phase is formatted string like "Macro S0, Meso S1, Micro S3"
             # Derive a simple ordered reasons list for audit (stable key order)
             preferred_order = [
                 "phase_meso",
-                "cut_pressure",
                 "envelope",
                 "mode",
                 "sr_break",
@@ -2792,24 +2774,8 @@ class PMCoreTick:
 
     def run(self) -> int:
         now = datetime.now(timezone.utc)
-        meso = self._latest_phase()
-        phase = meso.get("phase") or ""
-        cp = self._latest_cut_pressure()
-        # Load macro phase (portfolio-level); neutral if missing
-        macro_row = (
-            self.sb.table("phase_state")
-            .select("phase,ts")
-            .eq("token", "PORTFOLIO")
-            .eq("horizon", "macro")
-            .order("ts", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or [{}]
-        )[0]
-        macro_phase = macro_row.get("phase") or ""
         
-        # Get regime context (macro/meso/micro) for all PM strands
+        # Get regime context (bucket summaries) for all PM strands
         regime_context = self._get_regime_context()
         pm_cfg = load_pm_config()
         pm_cfg = fetch_and_merge_db_config(pm_cfg, self.sb)
@@ -2821,7 +2787,6 @@ class PMCoreTick:
         bucket_map = self._fetch_token_buckets(token_keys)
         written = 0
         actions_enabled = (os.getenv("ACTIONS_ENABLED", "0") == "1")
-        use_v4 = (os.getenv("PM_USE_V4", "1") == "1")  # Default to v4, can disable with env var
         
         for p in positions:
             token_contract = p.get("token_contract")
@@ -2829,19 +2794,22 @@ class PMCoreTick:
             token = token_contract or p.get("token_ticker") or "UNKNOWN"
             features = p.get("features") or {}
             token_bucket = bucket_map.get((token_contract, token_chain)) or bucket_map.get((token_contract, None))
+            
+            # Get regime states for this token's bucket across all timeframes (for logging)
+            regime_states = self._get_bucket_regime_state(token_bucket)
+            # Format as string for backward compatibility with plan_actions_v4
+            regime_state_str = f"Macro {regime_states['macro']}, Meso {regime_states['meso']}, Micro {regime_states['micro']}"
 
             # Compute levers first so we can log A/E values in episode events
             le = compute_levers(
-                macro_phase,
-                str(phase),
-                cp,
                 features,
                 bucket_context=regime_context,
                 position_bucket=token_bucket,
                 bucket_config=bucket_cfg,
+                exec_timeframe=self.timeframe,  # Trading timeframe for regime A/E
             )
-            a_final = float(le["A_value"])  # per-position intent deltas + age/mcap boosts
-            e_final = float(le["E_value"])  # cut_pressure and macro applied
+            a_final = float(le["A_value"])  # regime-driven A + intent deltas + bucket multiplier
+            e_final = float(le["E_value"])  # regime-driven E + intent deltas + bucket multiplier
             position_size_frac = float(le.get("position_size_frac", 0.33))  # continuous sizing
 
             episode_strands: List[Dict[str, Any]] = []
@@ -2895,21 +2863,18 @@ class PMCoreTick:
                 except Exception as e:
                     logger.warning(f"Error recalculating P&L fields for position {p.get('id')}: {e}")
             
-            # Use v4 if enabled, otherwise fall back to old plan_actions
-            if use_v4 and actions_enabled:
+            # Use plan_actions_v4 (legacy plan_actions removed)
+            if actions_enabled:
                 # Get feature flags from config (if available)
-                feature_flags = {}
                 feature_flags = pm_cfg.get("feature_flags", {})
                 
                 actions = plan_actions_v4(
-                    p, a_final, e_final, str(phase), self.sb,
+                    p, a_final, e_final, regime_state_str, self.sb,
                     regime_context=regime_context,
                     token_bucket=token_bucket,
                     feature_flags=feature_flags,
                     exposure_lookup=exposure_lookup
                 )
-            elif actions_enabled:
-                actions = plan_actions(p, a_final, e_final, str(phase), exposure_lookup=exposure_lookup)
             else:
                 actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
             
@@ -2923,9 +2888,9 @@ class PMCoreTick:
                             "a_final": a_final,
                             "e_final": e_final,
                             "position_size_frac": position_size_frac,
-                            "phase_macro": macro_phase,
-                            "phase_meso": str(phase),
-                            "cut_pressure": cp,
+                            "regime_state": regime_states,  # Dict: {"macro": "S0", "meso": "S1", "micro": "S3"}
+                            "regime_state_str": regime_state_str,  # Formatted string for logging
+                            "token_bucket": token_bucket or "unknown",
                             "active_positions": len(positions)
                         }
                     }
@@ -2979,7 +2944,7 @@ class PMCoreTick:
             self._check_position_closure(p, "", {}, {})
             
             # Write strands with execution results
-            self._write_strands(p, str(token), now, a_final, e_final, str(phase), cp, actions, execution_results, regime_context, token_bucket)
+            self._write_strands(p, str(token), now, a_final, e_final, regime_state_str, actions, execution_results, regime_context, token_bucket)
             written += len(actions)
         logger.info("pm_core_tick (%s) wrote %d strands for %d positions", self.timeframe, written, len(positions))
         return written

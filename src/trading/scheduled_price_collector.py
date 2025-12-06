@@ -72,8 +72,8 @@ class ScheduledPriceCollector:
         """Main collection loop"""
         last_heartbeat = datetime.now(timezone.utc)
         while self.collecting:
-            # Elevated to WARNING for initial visibility that the loop is alive
-            logger.warning("Price collection tick")
+            # Log tick at debug level - heartbeat is logged every 5 minutes at INFO level
+            logger.debug("Price collection tick")
             try:
                 await self._collect_prices_for_active_positions()
                 # Lightweight heartbeat approximately every 5 minutes
@@ -448,29 +448,45 @@ class ScheduledPriceCollector:
             price_data['liquidity_change_1m'] = 0
 
     async def _log_heartbeat(self):
-        """Log a lightweight heartbeat with recent insert counts per chain."""
+        """Log a lightweight heartbeat with heart glyph and HL WS status."""
         try:
             client = self.supabase_manager.client
             cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-            counts: Dict[str, int] = {}
-            for chain in ['solana', 'ethereum', 'base', 'bsc']:
-                try:
-                    # Try to use exact count if supported
-                    result = client.table('lowcap_price_data_1m').select('token_contract', count='exact').eq('chain', chain).gte('timestamp', cutoff).execute()
-                    count_val = getattr(result, 'count', None)
-                    if count_val is None:
-                        count_val = len(result.data or [])
-                    counts[chain] = int(count_val)
-                except Exception:
-                    # Best effort: fallback without breaking heartbeat
-                    try:
-                        data = client.table('lowcap_price_data_1m').select('token_contract').eq('chain', chain).gte('timestamp', cutoff).limit(1000).execute().data or []
-                        counts[chain] = len(data)
-                    except Exception:
-                        counts[chain] = -1
-            logger.warning(f"Price collector heartbeat: last_5m rows -> {counts}")
+            
+            # Check lowcap price data (simplified - check for new 1m rows in last 5 mins)
+            try:
+                result = client.table('lowcap_price_data_ohlc').select('token_contract').eq('timeframe', '1m').gte('timestamp', cutoff).limit(1).execute()
+                has_lowcap_data = len(result.data or []) > 0
+            except Exception:
+                has_lowcap_data = False
+            
+            # Check Hyperliquid WS status (majors data)
+            hl_status = "?"
+            try:
+                hl_result = client.table('majors_price_data_ohlc').select('timestamp').eq('source', 'hyperliquid').order('timestamp', desc=True).limit(1).execute()
+                if hl_result.data:
+                    latest_ts = datetime.fromisoformat(hl_result.data[0]['timestamp'].replace('Z', '+00:00'))
+                    age_minutes = (datetime.now(timezone.utc) - latest_ts).total_seconds() / 60
+                    if age_minutes < 5:
+                        hl_status = "✓"
+                    elif age_minutes < 30:
+                        hl_status = "⚠"
+                    else:
+                        hl_status = "✗"
+                else:
+                    hl_status = "✗"
+            except Exception:
+                hl_status = "?"
+            
+            # Simple heartbeat: ❦ glyph + status indicators
+            status_parts = []
+            if has_lowcap_data:
+                status_parts.append("lowcap")
+            status_parts.append(f"HL:{hl_status}")
+            
+            logger.info(f"❦ {' '.join(status_parts)}")
         except Exception as e:
-            logger.warning(f"Price collector heartbeat error: {e}")
+            logger.debug(f"Heartbeat check error: {e}")
 
     async def _update_all_positions_pnl(self):
         """Update P&L for all active positions using current database prices"""
@@ -606,39 +622,31 @@ class ScheduledPriceCollector:
             return 0.0
 
     async def _update_all_wallet_balances(self):
-        """Update wallet balances for all active chains"""
+        """
+        Update wallet balances for home chain (Solana) only.
+        
+        All trading capital is on Solana USDC. Other chains (Base, Ethereum, BSC) are only
+        used for gas via Li.Fi swaps, so we don't need to track their balances.
+        """
         try:
-            # Get unique chains from active positions
-            active_positions = await self._get_active_positions()
-            chains = set()
-            for position in active_positions:
-                chain = (position.get('token_chain') or '').lower()
-                if chain:
-                    chains.add(chain)
+            home_chain = os.getenv("HOME_CHAIN", "solana").lower()
             
-            if not chains:
-                logger.info("No active chains found for wallet balance update")
-                return
-            
-            logger.info(f"Updating wallet balances for {len(chains)} chains: {sorted(chains)}")
-            
-            # Update wallet balance for each chain
-            for chain in chains:
-                await self._update_wallet_balance_for_chain(chain)
-            
-            # Also update Lotus wallet balance
-            if hasattr(self.supabase_manager, 'wallet_manager'):
-                await self.supabase_manager.wallet_manager.update_lotus_wallet_balance()
+            # Only update home chain (Solana) - this is where all USDC capital is
+            await self._update_wallet_balance_for_chain(home_chain)
                 
         except Exception as e:
             logger.error(f"Error updating wallet balances: {e}")
     
     async def _update_wallet_balance_for_chain(self, chain: str):
         """
-        Update wallet balance for a specific chain.
+        Update wallet balance for Solana (home chain) only.
         
-        For Solana (home chain): Fetch both USDC balance and native token (SOL) balance
-        For other chains: Fetch only native token balance (for gas)
+        Tracks:
+        - SOL balance: For gas tracking only (not trading capital)
+        - USDC balance: This is the trading capital (all capital is on Solana USDC)
+        
+        Note: Other chains (Base, Ethereum, BSC) are not tracked - we trade via Li.Fi
+        from Solana USDC, so their balances are irrelevant.
         """
         try:
             # Get wallet balance from the wallet manager
@@ -652,58 +660,45 @@ class ScheduledPriceCollector:
                     logger.warning(f"No wallet manager available for {chain} balance update")
                     return
             
-            home_chain = os.getenv("HOME_CHAIN", "solana").lower()
-            is_home_chain = chain.lower() == home_chain
-            
             updates = {
                 'chain': chain,
                 'wallet_address': wallet_manager.get_wallet_address(chain),
                 'last_updated': datetime.now(timezone.utc).isoformat()
             }
             
-            # Always fetch native token balance (for gas tracking)
+            # Fetch native token balance (SOL) - for gas tracking only
+            # Note: Native tokens (SOL/ETH/BNB) are NOT trading capital, just gas
             native_balance = await wallet_manager.get_balance(chain, None)  # None for native token
             if native_balance is not None:
                 updates['balance'] = float(native_balance)
-                # Get USD rate for native token (for display/reference)
-                usd_rate = await self._get_native_usd_rate_async(chain)
-                if usd_rate > 0:
-                    updates['balance_usd'] = float(native_balance) * usd_rate
+                # Don't convert to USD - native tokens are just for gas, not trading capital
+                # balance_usd field is not meaningful for native tokens in this context
             else:
                 logger.warning(f"Could not get {chain} native token balance")
                 updates['balance'] = 0.0
             
-            # For home chain (Solana), also fetch USDC balance
-            if is_home_chain:
-                # USDC contract addresses by chain
-                usdc_addresses = {
-                    'solana': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-                    'ethereum': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-                    'base': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-                    'bsc': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d'
-                }
-                
-                usdc_address = usdc_addresses.get(chain.lower())
-                if usdc_address:
-                    try:
-                        usdc_balance = await wallet_manager.get_balance(chain, usdc_address)
-                        if usdc_balance is not None:
-                            # USDC has 6 decimals, convert to USD
-                            updates['usdc_balance'] = float(usdc_balance)
-                            logger.debug(f"Updated {chain} USDC balance: {usdc_balance:.2f}")
-                        else:
-                            logger.warning(f"Could not get {chain} USDC balance")
-                            updates['usdc_balance'] = 0.0
-                    except Exception as e:
-                        logger.warning(f"Error fetching USDC balance for {chain}: {e}")
-                        updates['usdc_balance'] = 0.0
+            # Fetch USDC balance - THIS is the trading capital
+            # All capital is centralized on Solana USDC (home chain)
+            usdc_address = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  # Solana USDC
+            try:
+                usdc_balance = await wallet_manager.get_balance(chain, usdc_address)
+                if usdc_balance is not None:
+                    # USDC balance IS the trading capital (already in USD terms)
+                    updates['usdc_balance'] = float(usdc_balance)
+                    logger.debug(f"Updated {chain} USDC balance: {usdc_balance:.2f}")
+                else:
+                    logger.warning(f"Could not get {chain} USDC balance")
+                    updates['usdc_balance'] = 0.0
+            except Exception as e:
+                logger.warning(f"Error fetching USDC balance for {chain}: {e}")
+                updates['usdc_balance'] = 0.0
             
             # Update wallet balance in database
             self.supabase_manager.client.table('wallet_balances').upsert(updates).execute()
             
-            balance_display = f"{updates.get('balance', 0):.6f}"
-            if is_home_chain and 'usdc_balance' in updates:
-                balance_display += f" (USDC: ${updates.get('usdc_balance', 0):.2f})"
+            balance_display = f"{updates.get('balance', 0):.6f} SOL"
+            if 'usdc_balance' in updates:
+                balance_display += f", ${updates.get('usdc_balance', 0):.2f} USDC"
             logger.debug(f"Updated {chain} wallet balance: {balance_display}")
             
         except Exception as e:

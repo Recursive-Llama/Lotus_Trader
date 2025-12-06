@@ -2,13 +2,12 @@
 Universal Learning System
 
 This module provides the core universal learning system that works with all strand types.
-It integrates universal scoring and clustering to create a unified learning pipeline.
+It processes strands and triggers downstream modules (Decision Maker, PM).
 
 The system implements:
-1. Universal scoring for all strands
-2. Two-tier clustering (column + pattern)
-3. Threshold-based promotion to braids
-4. Integration with existing learning system
+1. Strand event processing (position_closed, social signals, decisions)
+2. Coefficient updates from closed trades (timeframe weights)
+3. Integration with existing learning system (pattern scope aggregation, LLM research layer)
 
 This is the foundation that CIL specialized learning builds upon.
 """
@@ -17,10 +16,7 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
 
-from .universal_scoring import UniversalScoring
-from .universal_clustering import UniversalClustering, Cluster
 from .coefficient_updater import CoefficientUpdater
-from .bucket_vocabulary import BucketVocabulary
 from llm_integration.prompt_manager import PromptManager
 from llm_integration.openrouter_client import OpenRouterClient
 from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import process_position_closed_strand
@@ -63,10 +59,7 @@ class UniversalLearningSystem:
             self.prompt_manager = None
         
         # Initialize components
-        self.scoring = UniversalScoring(supabase_manager)
-        self.clustering = UniversalClustering()
         self.coefficient_updater = CoefficientUpdater(supabase_manager.client)
-        self.bucket_vocab = BucketVocabulary()
         
         # Initialize LLM Learning Layer (build from day 1, phased enablement)
         self.llm_research_layer = LLMResearchLayer(
@@ -74,233 +67,18 @@ class UniversalLearningSystem:
             llm_client=llm_client,
             enablement=None  # Uses defaults, can be updated later
         )
-        
-        # Learning configuration
-        self.promotion_thresholds = {
-            'min_strands': 5,
-            'min_avg_persistence': 0.6,
-            'min_avg_novelty': 0.5,
-            'min_avg_surprise': 0.4
-        }
     
     def set_decision_maker(self, decision_maker):
         """Set the decision maker instance to use"""
         self.decision_maker = decision_maker
-    
-    async def process_strands_into_braid(self, strands: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Process a cluster of strands into a braid using the learning system
-        
-        This method integrates with the existing learning system to create braids.
-        It takes strands directly (no conversion needed) and creates a braid.
-        
-        Args:
-            strands: List of strand dictionaries to process into braid
-            
-        Returns:
-            Braid strand dictionary
-        """
-        try:
-            if not strands:
-                return {}
-            
-            # Legacy scoring system disabled - no longer calculating persistence/novelty/surprise scores
-            # for strand in strands:
-            #     if 'persistence_score' not in strand:
-            #         self.scoring.update_strand_scores(strand)
-            
-            # Create braid from strands
-            braid = await self._create_braid_from_strands(strands)
-            
-            self.logger.info(f"Created braid from {len(strands)} strands")
-            return braid
-            
-        except Exception as e:
-            self.logger.error(f"Error processing strands into braid: {e}")
-            return {}
-    
-    async def cluster_and_promote_strands(self, strands: List[Dict[str, Any]], braid_level: int = 0) -> List[Dict[str, Any]]:
-        """
-        Complete clustering and promotion flow
-        
-        This is the main method that:
-        1. Calculates scores for all strands
-        2. Clusters strands using two-tier clustering
-        3. Promotes qualifying clusters to braids
-        
-        Args:
-            strands: List of strand dictionaries to process
-            braid_level: Braid level to cluster (0=strand, 1=braid, 2=metabraid, etc.)
-            
-        Returns:
-            List of created braids
-        """
-        try:
-            if not strands:
-                return []
-            
-            # Step 1: Legacy scoring system disabled - no longer calculating scores
-            # self.logger.info(f"Calculating scores for {len(strands)} strands")
-            # for strand in strands:
-            #     self.scoring.update_strand_scores(strand)
-            
-            # Step 2: Cluster strands using two-tier clustering
-            self.logger.info(f"Clustering {len(strands)} strands at braid level {braid_level}")
-            clusters = self.clustering.cluster_strands(strands, braid_level)
-            
-            # Step 3: Check thresholds and promote to braids
-            braids = []
-            for cluster in clusters:
-                if self.clustering.cluster_meets_threshold(cluster, self.promotion_thresholds):
-                    self.logger.info(f"Cluster {cluster.cluster_key} meets threshold, promoting to braid")
-                    braid = await self.process_strands_into_braid(cluster.strands)
-                    if braid:
-                        braids.append(braid)
-                else:
-                    self.logger.debug(f"Cluster {cluster.cluster_key} does not meet threshold")
-            
-            self.logger.info(f"Created {len(braids)} braids from {len(strands)} strands")
-            return braids
-            
-        except Exception as e:
-            self.logger.error(f"Error in cluster and promote strands: {e}")
-            return []
-    
-    async def _create_braid_from_strands(self, strands: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Create a braid strand from a cluster of strands
-        
-        Args:
-            strands: List of strand dictionaries to create braid from
-            
-        Returns:
-            Braid strand dictionary
-        """
-        try:
-            if not strands:
-                return {}
-            
-            # Calculate average scores
-            avg_persistence = sum(s.get('persistence_score', 0.0) for s in strands) / len(strands)
-            avg_novelty = sum(s.get('novelty_score', 0.0) for s in strands) / len(strands)
-            avg_surprise = sum(s.get('surprise_rating', 0.0) for s in strands) / len(strands)
-            
-            # Generate braid ID
-            braid_id = f"braid_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{len(strands)}"
-            
-            # Create braid strand
-            braid = {
-                'id': braid_id,
-                'kind': 'braid',
-                'braid_level': 1,  # Braids are level 1
-                'source_strands': strands,
-                'persistence_score': avg_persistence,
-                'novelty_score': avg_novelty,
-                'surprise_rating': avg_surprise,
-                'created_at': datetime.now(timezone.utc),
-                'agent_id': 'universal_learning_system',
-                'module': 'alpha',
-                'tags': {'learning': True, 'braid': True},
-                'content': {
-                    'type': 'braid',
-                    'source_count': len(strands),
-                    'avg_persistence': avg_persistence,
-                    'avg_novelty': avg_novelty,
-                    'avg_surprise': avg_surprise,
-                    'created_from': 'universal_learning_system'
-                }
-            }
-            
-            # Determine braid type based on strand types
-            braid_type = self._determine_braid_type(strands)
-            
-            # Generate LLM lesson using braiding prompts
-            lesson = await self.braiding_prompts.generate_braid_lesson(strands, braid_type)
-            braid['lesson'] = lesson
-            braid['content']['lesson'] = lesson
-            braid['content']['braid_type'] = braid_type
-            
-            return braid
-            
-        except Exception as e:
-            self.logger.error(f"Error creating braid from strands: {e}")
-            return {}
-    
-    def _determine_braid_type(self, strands: List[Dict[str, Any]]) -> str:
-        """
-        Determine braid type based on strand types
-        
-        Args:
-            strands: List of strands to analyze
-            
-        Returns:
-            Braid type string
-        """
-        try:
-            if not strands:
-                return 'universal_braid'
-            
-            # Get unique agent IDs
-            agent_ids = set(s.get('agent_id', 'unknown') for s in strands)
-            kinds = set(s.get('kind', 'unknown') for s in strands)
-            
-            # Determine type based on majority
-            if len(agent_ids) == 1:
-                agent_id = list(agent_ids)[0]
-                if agent_id == 'raw_data_intelligence':
-                    return 'raw_data_intelligence'
-                elif agent_id == 'central_intelligence_layer':
-                    return 'central_intelligence_layer'
-                elif 'trading' in agent_id.lower():
-                    return 'trading_plan'
-            
-            # Check for trading plans
-            if 'trading_plan' in kinds:
-                return 'trading_plan'
-            
-            # Mixed types
-            if len(agent_ids) > 1 or len(kinds) > 1:
-                return 'mixed_braid'
-            
-            # Default to universal
-            return 'universal_braid'
-            
-        except Exception as e:
-            self.logger.error(f"Error determining braid type: {e}")
-            return 'universal_braid'
-    
-    
-    async def save_braid_to_database(self, braid: Dict[str, Any]) -> bool:
-        """
-        Save braid to database
-        
-        Args:
-            braid: Braid dictionary to save
-            
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        try:
-            # Save to AD_strands table
-            result = self.supabase_manager.client.table('ad_strands').insert(braid).execute()
-            
-            if result.data:
-                self.logger.info(f"Saved braid {braid['id']} to database")
-                return True
-            else:
-                self.logger.error(f"Failed to save braid {braid['id']} to database")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error saving braid to database: {e}")
-            return False
     
     async def process_strand_event(self, strand: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a single strand event from social ingest or other modules
         
         This method is called when a new strand is created and needs to be processed
-        by the learning system. It handles scoring, clustering, and triggering downstream modules.
+        by the learning system. It handles position_closed strands for learning updates
+        and triggers downstream modules (Decision Maker, Trader).
         
         Args:
             strand: Strand dictionary to process
@@ -513,17 +291,16 @@ class UniversalLearningSystem:
         timeframe: str
     ) -> None:
         """
-        Update learning coefficients from a closed trade (Phase 2: EWMA + Interaction Patterns).
+        Update learning coefficients from a closed trade.
         
         This method:
-        1. Normalizes bucket values using BucketVocabulary
-        2. Updates single-factor coefficients using EWMA with temporal decay
-        3. Updates interaction patterns
-        4. Applies importance bleed to avoid double-counting
-        5. Updates global R/R baseline
+        1. Updates timeframe weight using EWMA with temporal decay (stored in learning_configs)
+        2. Updates global R/R baseline (needed for timeframe weight normalization)
+        
+        Only timeframe weights are updated - these control DM allocation split across timeframes.
         
         Args:
-            entry_context: Lever values at entry (curator, chain, mcap_bucket, vol_bucket, etc.)
+            entry_context: Lever values at entry (not used for updates, but kept for compatibility)
             completed_trade: Trade summary with R/R metrics
             timeframe: Timeframe for this trade (1m, 15m, 1h, 4h)
         """
@@ -542,94 +319,26 @@ class UniversalLearningSystem:
             else:
                 trade_timestamp = datetime.now(timezone.utc)
             
-            self.logger.info(f"Updating coefficients for R/R={rr:.3f}, timeframe={timeframe}, trade_timestamp={trade_timestamp.isoformat()}")
+            self.logger.info(f"Updating timeframe weight for R/R={rr:.3f}, timeframe={timeframe}, trade_timestamp={trade_timestamp.isoformat()}")
             
-            # Normalize bucket values using BucketVocabulary
-            normalized_context = entry_context.copy()
-            if entry_context.get('mcap_bucket'):
-                normalized_context['mcap_bucket'] = self.bucket_vocab.normalize_bucket('mcap', entry_context['mcap_bucket'])
-            if entry_context.get('vol_bucket'):
-                normalized_context['vol_bucket'] = self.bucket_vocab.normalize_bucket('vol', entry_context['vol_bucket'])
-            if entry_context.get('age_bucket'):
-                normalized_context['age_bucket'] = self.bucket_vocab.normalize_bucket('age', entry_context['age_bucket'])
-            if entry_context.get('mcap_vol_ratio_bucket'):
-                normalized_context['mcap_vol_ratio_bucket'] = self.bucket_vocab.normalize_bucket('mcap_vol_ratio', entry_context['mcap_vol_ratio_bucket'])
-            
-            # Extract lever values from normalized entry_context
-            curator = normalized_context.get('curator')
-            chain = normalized_context.get('chain')
-            mcap_bucket = normalized_context.get('mcap_bucket')
-            vol_bucket = normalized_context.get('vol_bucket')
-            age_bucket = normalized_context.get('age_bucket')
-            intent = normalized_context.get('intent')
-            mapping_confidence = normalized_context.get('mapping_confidence')
-            mcap_vol_ratio_bucket = normalized_context.get('mcap_vol_ratio_bucket')
-            
-            # Update single-factor coefficients using EWMA
-            levers_to_update = []
-            
-            if curator:
-                levers_to_update.append(('curator', curator))
-            if chain:
-                levers_to_update.append(('chain', chain))
-            if mcap_bucket:
-                levers_to_update.append(('cap', mcap_bucket))
-            if vol_bucket:
-                levers_to_update.append(('vol', vol_bucket))
-            if age_bucket:
-                levers_to_update.append(('age', age_bucket))
-            if intent:
-                levers_to_update.append(('intent', intent))
-            if mapping_confidence:
-                levers_to_update.append(('mapping_confidence', mapping_confidence))
-            if mcap_vol_ratio_bucket:
-                levers_to_update.append(('mcap_vol_ratio', mcap_vol_ratio_bucket))
-            
-            # Update timeframe coefficient
+            # Update timeframe weight (only coefficient we actually use - stored in learning_configs)
             if timeframe:
-                levers_to_update.append(('timeframe', timeframe))
-            
-            # Update each lever coefficient using EWMA
-            for lever_name, lever_key in levers_to_update:
                 self.coefficient_updater.update_coefficient_ewma(
                     module='dm',
                     scope='lever',
-                    name=lever_name,
-                    key=lever_key,
+                    name='timeframe',
+                    key=timeframe,
                     rr_value=rr,
                     trade_timestamp=trade_timestamp
                 )
-            
-            # Update interaction pattern
-            interaction_result = self.coefficient_updater.update_interaction_pattern(
-                entry_context=normalized_context,
-                rr_value=rr,
-                trade_timestamp=trade_timestamp
-            )
-            
-            # Apply importance bleed if interaction pattern exists and is significant
-            if interaction_result:
-                interaction_weight = interaction_result.get('weight', 1.0)
-                if abs(interaction_weight - 1.0) >= 0.1:  # Only apply if interaction is significant
-                    adjusted_weights = self.coefficient_updater.apply_importance_bleed(
-                        entry_context=normalized_context,
-                        interaction_weight=interaction_weight
-                    )
+                self.logger.info(f"Updated timeframe weight for {timeframe} (R/R={rr:.3f})")
+            else:
+                self.logger.warning(f"No timeframe provided for coefficient update")
                     
-                    # Update single-factor weights with bleed applied
-                    for lever_name, (lever_key, adjusted_weight) in adjusted_weights.items():
-                        # Update the weight in the database
-                        self.supabase_manager.client.table("learning_coefficients").update({
-                            "weight": adjusted_weight,
-                            "updated_at": datetime.now(timezone.utc).isoformat()
-                        }).eq("module", "dm").eq("scope", "lever").eq("name", lever_name).eq("key", lever_key).execute()
-                        
-                        self.logger.debug(f"Applied importance bleed to {lever_name}.{lever_key}: weight adjusted to {adjusted_weight:.3f}")
-            
-            # Update global R/R baseline using EWMA
+            # Update global R/R baseline using EWMA (needed for timeframe weight normalization)
             await self._update_global_rr_baseline_ewma(rr, trade_timestamp)
             
-            self.logger.info(f"Updated {len(levers_to_update)} single-factor coefficient(s) and interaction pattern from closed trade")
+            self.logger.info(f"Updated timeframe coefficient and global R/R baseline from closed trade")
             
         except Exception as e:
             self.logger.error(f"Error updating coefficients from closed trade: {e}")
@@ -747,98 +456,3 @@ class UniversalLearningSystem:
     
     # Legacy braid candidate methods removed - not used by lowcap system
     # The lowcap system uses learning_braids table directly, not braid_candidate flags
-    
-    async def process_strands_batch(self, strands: List[Dict[str, Any]], save_to_db: bool = True) -> Dict[str, Any]:
-        """
-        Process a batch of strands through the complete learning pipeline
-        
-        Args:
-            strands: List of strand dictionaries to process
-            save_to_db: Whether to save created braids to database
-            
-        Returns:
-            Dictionary with processing results
-        """
-        try:
-            results = {
-                'input_strands': len(strands),
-                'created_braids': [],
-                'errors': []
-            }
-            
-            # Process strands at different braid levels
-            for braid_level in [0, 1, 2]:  # strands, braids, metabraids
-                self.logger.info(f"Processing braid level {braid_level}")
-                
-                # Filter strands for this braid level
-                level_strands = [s for s in strands if s.get('braid_level', 0) == braid_level]
-                
-                if not level_strands:
-                    continue
-                
-                # Cluster and promote
-                braids = await self.cluster_and_promote_strands(level_strands, braid_level)
-                
-                # Save to database if requested
-                if save_to_db:
-                    for braid in braids:
-                        success = await self.save_braid_to_database(braid)
-                        if success:
-                            results['created_braids'].append(braid)
-                        else:
-                            results['errors'].append(f"Failed to save braid {braid.get('id', 'unknown')}")
-                else:
-                    results['created_braids'].extend(braids)
-            
-            self.logger.info(f"Batch processing complete: {len(results['created_braids'])} braids created")
-            return results
-            
-        except Exception as e:
-            self.logger.error(f"Error in batch processing: {e}")
-            results['errors'].append(str(e))
-            return results
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test the universal learning system
-    from utils.supabase_manager import SupabaseManager
-    
-    # Initialize components
-    supabase_manager = SupabaseManager()
-    learning_system = UniversalLearningSystem(supabase_manager)
-    
-    # Test strands
-    test_strands = [
-        {
-            'id': 'strand_1',
-            'kind': 'signal',
-            'agent_id': 'raw_data_intelligence',
-            'timeframe': '1h',
-            'regime': 'bull',
-            'pattern_type': 'divergence',
-            'braid_level': 0,
-            'sig_confidence': 0.8,
-            'sig_sigma': 0.7
-        },
-        {
-            'id': 'strand_2',
-            'kind': 'signal',
-            'agent_id': 'raw_data_intelligence',
-            'timeframe': '1h',
-            'regime': 'bull',
-            'pattern_type': 'divergence',
-            'braid_level': 0,
-            'sig_confidence': 0.7,
-            'sig_sigma': 0.6
-        }
-    ]
-    
-    # Test processing
-    import asyncio
-    
-    async def test_learning():
-        results = await learning_system.process_strands_batch(test_strands, save_to_db=False)
-        print(f"Processing results: {results}")
-    
-    asyncio.run(test_learning())

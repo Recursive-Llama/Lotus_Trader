@@ -184,7 +184,16 @@ class SocialIngestModule:
             # Process each token found
             created_strands = []
             for token_info in extraction_result['tokens']:
+                # Guard against None or invalid token_info entries
+                if not token_info or not isinstance(token_info, dict):
+                    self.logger.warning(f"Skipping invalid token_info entry: {token_info}")
+                    continue
+                
                 token_name = token_info.get('token_name', 'unknown')
+                if not token_name or token_name == 'unknown':
+                    self.logger.debug(f"Skipping token_info with no token_name: {token_info}")
+                    continue
+                
                 identifier_used = "contract" if token_info.get('contract_address') else "ticker"
                 self.logger.debug(f"Processing token: {token_name} (using {identifier_used})")
                 
@@ -493,13 +502,22 @@ class SocialIngestModule:
                                     token_details['mapping_reason'] = mapping_reason if mapping_reason else 'ticker_only'
                                     # Store identification source for signal_pack
                                     token_details['identification_source'] = identification_source
-                                    # Determine mapping_status
-                                    if not network:
+                                    # Determine mapping_status based on DexScreener result (not pre-search network)
+                                    # If DexScreener found the token and provided a chain, it's resolved
+                                    dex_chain = token_details.get('chain', '').lower()
+                                    if not dex_chain or dex_chain == 'unknown':
+                                        # DexScreener didn't provide a valid chain
                                         token_details['mapping_status'] = 'chain_unresolved'
                                     elif token_info.get('contract_address'):
+                                        # Contract address provided - highest confidence
+                                        token_details['mapping_status'] = 'resolved'
+                                    elif network:
+                                        # Pre-search chain detection succeeded
                                         token_details['mapping_status'] = 'resolved'
                                     else:
-                                        token_details['mapping_status'] = 'resolved'  # Default to resolved if we got this far
+                                        # Chain came from DexScreener only (no pre-detection)
+                                        # Still resolved since DexScreener found it
+                                        token_details['mapping_status'] = 'resolved'
                                     
                                     self.logger.info(f"✅ Found verified token: {token_details['ticker']} on {token_details['chain']}")
                                     return token_details
@@ -820,8 +838,11 @@ class SocialIngestModule:
         """
         Detect blockchain network from token info and context.
         
+        This is a PRE-SEARCH hint to help filter DexScreener results.
+        The actual chain will come from DexScreener API response.
+        
         Args:
-            token_info: Token information from LLM extraction
+            token_info: Token information from LLM extraction (should not be None)
             curator: Optional curator dict with chain_counts for prior weighting
             
         Returns:
@@ -830,16 +851,23 @@ class SocialIngestModule:
             - mapping_reason: How chain was resolved ("contract_link", "ticker+chain_phrase", "curator_chain_prior", "ticker_only", "")
         """
         try:
+            # Guard against None token_info - this should not happen in normal flow
+            if not token_info:
+                self.logger.warning("_detect_chain called with None token_info - this should not happen")
+                return '', ""
+            
             mapping_reason = ""
             chain_score = {}
             
             # Check if network was explicitly mentioned (highest priority)
-            network = token_info.get('network', '').lower()
+            network_raw = token_info.get('network')
+            network = str(network_raw).lower() if network_raw else ''
             if network in ['solana', 'ethereum', 'base', 'polygon', 'arbitrum', 'bsc', 'bnb', 'tron']:
                 return network, "ticker+chain_phrase"
             
             # Check for chain-specific keywords in additional info
-            additional_info = token_info.get('additional_info', '').lower()
+            additional_info_raw = token_info.get('additional_info')
+            additional_info = str(additional_info_raw).lower() if additional_info_raw else ''
             if any(keyword in additional_info for keyword in ['sol', 'solana', 'raydium', 'jupiter']):
                 chain_score['solana'] = 1.0
                 mapping_reason = "ticker+chain_phrase"
@@ -861,13 +889,22 @@ class SocialIngestModule:
             
             # Add curator chain prior as small weight (if available and no explicit chain found)
             if curator and not chain_score:
-                chain_counts = curator.get('chain_counts', {})
-                if chain_counts and isinstance(chain_counts, dict):
-                    total_count = sum(chain_counts.values())
-                    if total_count > 0:
-                        for chain, count in chain_counts.items():
-                            chain_score[chain] = 0.1 * (count / total_count)  # Small weight (0.1x normalized)
-                        mapping_reason = "curator_chain_prior"
+                if isinstance(curator, dict):
+                    chain_counts = curator.get('chain_counts', {})
+                    if chain_counts and isinstance(chain_counts, dict):
+                        total_count = sum(chain_counts.values())
+                        if total_count > 0:
+                            for chain, count in chain_counts.items():
+                                # Ensure chain is a valid string before processing
+                                if chain and isinstance(chain, str):
+                                    try:
+                                        chain_lower = chain.lower()
+                                        chain_score[chain_lower] = 0.1 * (count / total_count)  # Small weight (0.1x normalized)
+                                    except (AttributeError, TypeError) as e:
+                                        self.logger.debug(f"Skipping invalid chain in chain_counts: {chain} ({e})")
+                                        continue
+                            if chain_score:  # Only set mapping_reason if we actually added scores
+                                mapping_reason = "curator_chain_prior"
             
             # Return best chain if we have scores
             if chain_score:
@@ -1411,37 +1448,9 @@ class SocialIngestModule:
         """
         regime_context = {}
         
-        for horizon in ["macro", "meso", "micro"]:
-            try:
-                res = (
-                    self.supabase_manager.client.table("phase_state")
-                    .select("phase,score,ts")
-                    .eq("token", "PORTFOLIO")
-                    .eq("horizon", horizon)
-                    .order("ts", desc=True)
-                    .limit(1)
-                    .execute()
-                )
-                rows = res.data or []
-                if rows:
-                    regime_context[horizon] = {
-                        "phase": rows[0].get("phase") or "",
-                        "score": float(rows[0].get("score") or 0.0),
-                        "ts": rows[0].get("ts") or datetime.now(timezone.utc).isoformat()
-                    }
-                else:
-                    regime_context[horizon] = {
-                        "phase": "",
-                        "score": 0.0,
-                        "ts": datetime.now(timezone.utc).isoformat()
-                    }
-            except Exception as e:
-                self.logger.warning(f"Error fetching {horizon} phase: {e}")
-                regime_context[horizon] = {
-                    "phase": "",
-                    "score": 0.0,
-                    "ts": datetime.now(timezone.utc).isoformat()
-                }
+        # Note: Old phase_state table (Dip, Recover, etc.) is no longer used.
+        # Regime states (S0, S1, S2, S3) are now computed by RegimeAECalculator from lowcap_positions.
+        # Phase fields are kept empty for backward compatibility but not used for decisions.
         bucket_snapshot = fetch_bucket_phase_snapshot(self.supabase_manager.client)
         regime_context["bucket_phases"] = bucket_snapshot.get("bucket_phases", {})
         regime_context["bucket_population"] = bucket_snapshot.get("bucket_population", {})

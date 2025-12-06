@@ -16,7 +16,7 @@ CREATE TABLE lowcap_positions (
     token_ticker TEXT,                      -- "PEPE", "BONK" (optional, for display)
     
     -- TIMEFRAME (NEW - key to multi-timeframe model)
-    timeframe TEXT NOT NULL,                -- "1m", "15m", "1h", "4h"
+    timeframe TEXT NOT NULL,                -- "1m", "15m", "1h", "4h", "1d" (1d for regime drivers)
     
     -- UNIQUE CONSTRAINT: One position per (token, chain, timeframe)
     CONSTRAINT unique_token_timeframe UNIQUE (token_contract, token_chain, timeframe),
@@ -122,16 +122,16 @@ CREATE TRIGGER trigger_update_lowcap_position_updated_at
 
 -- Add check constraint for status enum
 ALTER TABLE lowcap_positions ADD CONSTRAINT check_status 
-    CHECK (status IN ('dormant', 'watchlist', 'active', 'paused', 'archived'));
+    CHECK (status IN ('dormant', 'watchlist', 'active', 'paused', 'archived', 'regime_driver'));
 
 -- Add check constraint for timeframe enum
 ALTER TABLE lowcap_positions ADD CONSTRAINT check_timeframe 
-    CHECK (timeframe IN ('1m', '15m', '1h', '4h'));
+    CHECK (timeframe IN ('1m', '15m', '1h', '4h', '1d'));
 
 -- Comments for documentation
 COMMENT ON TABLE lowcap_positions IS 'Multi-timeframe positions: 4 positions per token (1m, 15m, 1h, 4h), each with independent allocation and tracking';
-COMMENT ON COLUMN lowcap_positions.timeframe IS 'Timeframe for this position: 1m, 15m, 1h, or 4h';
-COMMENT ON COLUMN lowcap_positions.status IS 'Position status: dormant (< 300 bars), watchlist (ready to trade), active (holding), paused, archived';
+COMMENT ON COLUMN lowcap_positions.timeframe IS 'Timeframe for this position: 1m, 15m, 1h, 4h, or 1d (1d used for regime drivers)';
+COMMENT ON COLUMN lowcap_positions.status IS 'Position status: dormant (< 300 bars), watchlist (ready to trade), active (holding), paused, archived, regime_driver (regime engine driver positions)';
 COMMENT ON COLUMN lowcap_positions.state IS 'Latest uptrend engine state snapshot (S0-S4)';
 COMMENT ON COLUMN lowcap_positions.bars_count IS 'Number of OHLC bars available for this timeframe (gates trading)';
 COMMENT ON COLUMN lowcap_positions.alloc_policy IS 'Timeframe-specific config JSONB (allocation splits, thresholds, etc.)';

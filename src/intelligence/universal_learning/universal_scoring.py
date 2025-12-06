@@ -45,10 +45,11 @@ class UniversalScoring:
         self.module_scoring = None
         if supabase_manager:
             try:
-                from module_specific_scoring import ModuleSpecificScoring
+                from .module_specific_scoring import ModuleSpecificScoring
                 self.module_scoring = ModuleSpecificScoring()
             except ImportError as e:
-                self.logger.warning(f"Could not import module-specific scoring: {e}")
+                # Module-specific scoring is optional - fail silently
+                self.logger.debug(f"Module-specific scoring not available: {e}")
                 self.module_scoring = None
     
     def calculate_persistence_score(self, strand: Dict[str, Any]) -> float:

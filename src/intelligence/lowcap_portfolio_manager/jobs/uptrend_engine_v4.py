@@ -119,18 +119,26 @@ class UptrendEngineV4:
 
     # --------------- Data access helpers ---------------
     
-    def _active_positions(self) -> List[Dict[str, Any]]:
+    def _active_positions(self, include_regime_drivers: bool = False) -> List[Dict[str, Any]]:
         """Get positions for this timeframe (watchlist, active - skip dormant/paused/archived).
         
         Note: Dormant positions (< 350 bars) are skipped - not enough data for analysis.
         Watchlist positions (≥ 350 bars) are processed for bootstrap/warmup (no signals).
         Active positions are processed normally (signals enabled).
+        
+        Args:
+            include_regime_drivers: If True, also include regime_driver positions.
+                                   Set to True when running for regime engine.
         """
+        statuses = ["watchlist", "active"]
+        if include_regime_drivers:
+            statuses.append("regime_driver")
+        
         res = (
             self.sb.table("lowcap_positions")
             .select("id,token_contract,token_chain,features,status")
             .eq("timeframe", self.timeframe)
-            .in_("status", ["watchlist", "active"])  # Skip dormant - not enough data
+            .in_("status", statuses)
             .limit(2000)
             .execute()
         )
@@ -1233,13 +1241,19 @@ class UptrendEngineV4:
         ema_vals: Dict[str, float],
         features: Dict[str, Any],
         extra: Dict[str, Any],
+        prev_state: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build state payload with diagnostics."""
+        """Build state payload with diagnostics.
+        
+        Args:
+            prev_state: Previous state for transition tracking (regime A/E calculator)
+        """
         payload = {
             "token_contract": contract,
             "chain": chain,
             "ts": _now_iso(),
             "state": state,
+            "prev_state": prev_state,  # For regime transition detection
             "price": price,
             "ema": ema_vals,
             **extra,  # Includes diagnostics, flags, scores, etc.
@@ -1247,11 +1261,16 @@ class UptrendEngineV4:
         }
         return payload
 
-    def run(self) -> int:
-        """Main loop: process all active positions and emit state signals."""
+    def run(self, include_regime_drivers: bool = False) -> int:
+        """Main loop: process all active positions and emit state signals.
+        
+        Args:
+            include_regime_drivers: If True, also process regime_driver positions.
+                                   Set to True when running for regime engine.
+        """
         now = datetime.now(timezone.utc)
         updated = 0
-        positions = self._active_positions()
+        positions = self._active_positions(include_regime_drivers=include_regime_drivers)
         
         for p in positions:
             try:
@@ -1271,6 +1290,11 @@ class UptrendEngineV4:
                 ema_slopes = self._get_ema_slopes(ta)
                 last = self._latest_close_1h(contract, chain)
                 price = last["close"]
+                
+                # Fallback to TA latest_price for regime drivers 
+                # (they use regime_price_data_ohlc, not lowcap_price_data_ohlc)
+                if price <= 0:
+                    price = float(ta.get("latest_price") or 0.0)
                 
                 if price <= 0:
                     continue
@@ -1310,15 +1334,30 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
                         updated += 1
                         continue
                     elif self._check_s0_order(ema_vals):
-                            prev_state = "S0"
+                        # Bootstrap to S0: Write state immediately
+                        payload = self._build_payload(
+                            "S0",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            {},
+                            prev_state=prev_state,
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        updated += 1
+                        continue
                     else:
-                        # No state - wait until clear trend emerges
+                        # No clear order - wait until clear trend emerges (S4)
                         payload = self._build_payload(
                             "S4",  # or "no_state"
                             contract,
@@ -1327,6 +1366,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {"watch_only": True},
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1346,6 +1386,7 @@ class UptrendEngineV4:
                             "exit_position": True,
                             "exit_reason": "fast_band_at_bottom",
                         },
+                        prev_state=prev_state,
                     )
                     features["uptrend_engine_v4"] = payload
                     self._write_features(pid, features)
@@ -1376,6 +1417,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1391,6 +1433,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {},
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1415,6 +1458,7 @@ class UptrendEngineV4:
                             {
                                 "diagnostics": {},  # S2 diagnostics added below
                             },
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1434,6 +1478,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1453,6 +1498,7 @@ class UptrendEngineV4:
                             {
                                 "diagnostics": {},  # Will be populated when staying in S1
                             },
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1474,6 +1520,7 @@ class UptrendEngineV4:
                             {
                                 "diagnostics": {},  # S3 scores added below
                             },
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1517,6 +1564,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1545,6 +1593,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1559,6 +1608,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {"diagnostics": {"bootstrap": "S0_from_S4"}},
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1573,6 +1623,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {"watch_only": True},
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1604,6 +1655,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             {"exit_position": True, "exit_reason": "all_emas_below_333"},
+                            prev_state=prev_state,  # Critical for emergency exit detection
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1766,6 +1818,7 @@ class UptrendEngineV4:
                             ema_vals,
                             features,
                             extra_data,
+                            prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
                         self._write_features(pid, features)
@@ -1783,17 +1836,19 @@ class UptrendEngineV4:
         return updated
 
 
-def main(timeframe: str = "1h") -> None:
+def main(timeframe: str = "1h", include_regime_drivers: bool = False) -> None:
     """Entry point for running engine.
     
     Args:
         timeframe: Timeframe to process ("1m", "15m", "1h", "4h")
+        include_regime_drivers: If True, also process regime_driver positions
     """
     import logging
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     engine = UptrendEngineV4(timeframe=timeframe)
-    updated = engine.run()
-    logger.info("Uptrend Engine v4 (%s) updated %d positions", timeframe, updated)
+    updated = engine.run(include_regime_drivers=include_regime_drivers)
+    logger.info("Uptrend Engine v4 (%s) updated %d positions (regime_drivers=%s)", 
+                timeframe, updated, include_regime_drivers)
 
 
 if __name__ == "__main__":

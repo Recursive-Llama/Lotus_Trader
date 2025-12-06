@@ -65,12 +65,16 @@ class WalletManager:
         self.config = config or {}
         self.wallets = {}
         self.rpc_clients = {}
+        self.js_solana_client = None
         
         # Initialize RPC clients
         self._setup_rpc_clients()
         
         # Load existing wallets from .env
         self._load_wallets()
+        
+        # Initialize JSSolanaClient for SPL token balance checks
+        self._setup_js_solana_client()
     
     def _setup_rpc_clients(self):
         """Setup RPC clients for each network"""
@@ -129,6 +133,34 @@ class WalletManager:
                 
         except Exception as e:
             logger.error(f"Error loading wallets: {e}")
+    
+    def _setup_js_solana_client(self):
+        """Setup JSSolanaClient for SPL token balance checks"""
+        try:
+            solana_key = os.getenv('SOL_WALLET_PRIVATE_KEY')
+            if not solana_key:
+                logger.debug("No SOL_WALLET_PRIVATE_KEY found - JSSolanaClient not initialized")
+                return
+            
+            # Get RPC URL (same logic as _setup_rpc_clients)
+            helius_key = os.getenv('HELIUS_API_KEY')
+            if helius_key:
+                rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            else:
+                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+            
+            # Initialize JSSolanaClient
+            try:
+                from trading.js_solana_client import JSSolanaClient
+                self.js_solana_client = JSSolanaClient(rpc_url=rpc_url, private_key=solana_key)
+                logger.info("✅ JSSolanaClient initialized for SPL token balance checks")
+            except ImportError:
+                logger.warning("JSSolanaClient not available - SPL token balances will not work")
+            except Exception as e:
+                logger.warning(f"Failed to initialize JSSolanaClient: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Error setting up JSSolanaClient: {e}")
     
     def _load_solana_wallet(self, private_key: str) -> Optional[Any]:
         """Load Solana wallet from private key"""
@@ -264,8 +296,6 @@ class WalletManager:
     
     async def _get_solana_balance(self, token_address: str = None) -> Optional[Decimal]:
         """Get Solana balance (SOL or SPL token)"""
-        print(f"DEBUG: WalletManager _get_solana_balance called with token_address: {token_address}")
-        logger.warning(f"WalletManager _get_solana_balance called with token_address: {token_address}")
         try:
             if not self.wallets.get('solana') or 'solana' not in self.rpc_clients:
                 logger.warning("WalletManager: No Solana wallet or RPC client available")
@@ -277,29 +307,19 @@ class WalletManager:
             if token_address:
                 # SPL token balance
                 try:
-                    # Get the JSSolanaClient from the trader if available
-                    logger.warning(f"WalletManager trader reference: {hasattr(self, 'trader')}")
-                    if hasattr(self, 'trader'):
-                        logger.warning(f"WalletManager trader object: {self.trader}")
-                        if self.trader:
-                            logger.warning(f"WalletManager trader has js_solana_client: {hasattr(self.trader, 'js_solana_client')}")
-                            if hasattr(self.trader, 'js_solana_client'):
-                                logger.warning(f"WalletManager js_solana_client: {self.trader.js_solana_client}")
-                    
-                    if hasattr(self, 'trader') and self.trader and hasattr(self.trader, 'js_solana_client') and self.trader.js_solana_client:
-                        js_client = self.trader.js_solana_client
-                        logger.warning(f"Calling comprehensive token balance for {token_address}")
-                        result = await js_client.get_spl_token_balance(token_address, str(wallet_pubkey))
-                        logger.warning(f"Comprehensive token balance result: {result}")
+                    # Use JSSolanaClient initialized in __init__
+                    if self.js_solana_client:
+                        result = await self.js_solana_client.get_spl_token_balance(token_address, str(wallet_pubkey))
                         
                         if result.get('success'):
-                            # The new method returns the balance already converted to proper units
+                            # The method returns the balance already converted to proper units
                             balance_str = result.get('balance', '0')
                             balance = Decimal(balance_str)
-                            logger.warning(f"Token balance for {token_address}: {balance}")
+                            logger.debug(f"Token balance for {token_address}: {balance}")
                             return balance
                         else:
-                            logger.warning(f"Failed to get token balance: {result.get('error')}")
+                            error_msg = result.get('error', 'Unknown error')
+                            logger.warning(f"Failed to get token balance: {error_msg}")
                             return Decimal('0')
                     else:
                         logger.warning("JSSolanaClient not available for token balance check")
@@ -329,10 +349,9 @@ class WalletManager:
             
             logger.info(f"Getting Lotus token balance from correct wallet: {lotus_wallet}")
             
-            # Use JS client directly with the correct wallet address
-            if hasattr(self, 'trader') and self.trader and hasattr(self.trader, 'js_solana_client') and self.trader.js_solana_client:
-                js_client = self.trader.js_solana_client
-                result = await js_client.get_spl_token_balance(lotus_contract, lotus_wallet)
+            # Use JSSolanaClient initialized in __init__
+            if self.js_solana_client:
+                result = await self.js_solana_client.get_spl_token_balance(lotus_contract, lotus_wallet)
                 
                 if result.get('success'):
                     balance_str = result.get('balance', '0')

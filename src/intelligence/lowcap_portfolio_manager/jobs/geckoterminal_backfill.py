@@ -66,6 +66,9 @@ def _fetch_gt_pools_by_token(network: str, token_mint: str) -> Dict[str, Any]:
     """Fetch pools for a token from GeckoTerminal"""
     url = f"{GT_BASE}/networks/{network}/tokens/{token_mint}/pools?include=dex,base_token,quote_token&per_page=50"
     resp = requests.get(url, headers=GT_HEADERS, timeout=15)
+    if resp.status_code == 404:
+        # Token not found on GeckoTerminal - return empty result
+        return {"data": None}
     resp.raise_for_status()
     return resp.json()
 
@@ -448,7 +451,17 @@ def backfill_token_timeframe(
     else:
         picked = _select_canonical_pool_from_gt(chain, token_contract)
         if not picked:
-            raise RuntimeError("No pools found on GeckoTerminal for token")
+            # Token not found on GeckoTerminal - return gracefully
+            logger.warning(f"GeckoTerminal: Token not found ({chain}) - skipping backfill")
+            return {
+                'token_contract': token_contract,
+                'chain': chain,
+                'timeframe': timeframe,
+                'pool_address': None,
+                'dex_id': '',
+                'inserted_rows': 0,
+                'error': 'token_not_found'
+            }
         pool_addr, dex_id, quote_symbol = picked
         _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id)
     
@@ -535,8 +548,9 @@ def backfill_token_timeframe(
     if len(rows_to_insert) > bars_target:
         rows_to_insert = rows_to_insert[-bars_target:]
     elif len(rows_to_insert) < bars_min:
-        logger.warning(f"Only got {len(rows_to_insert)} bars for {timeframe}, minimum is {bars_min}")
-        # Still proceed, but log the warning
+        # Log at debug level - individual warnings are consolidated at decision_maker level
+        logger.debug(f"Backfill {token_contract[:8]}.../{chain}/{timeframe}: Got {len(rows_to_insert)} bars (minimum: {bars_min})")
+        # Still proceed, but log at debug level
 
     # Deduplicate rows by (token_contract, chain, timeframe, timestamp) before inserting
     seen = set()
@@ -548,7 +562,7 @@ def backfill_token_timeframe(
             unique_rows.append(r)
     
     if len(unique_rows) < len(rows_to_insert):
-        logger.warning(f"Deduplicated {len(rows_to_insert)} rows to {len(unique_rows)} unique rows")
+        logger.debug(f"Deduplicated {len(rows_to_insert)} rows to {len(unique_rows)} unique rows")
     rows_to_insert = unique_rows
 
     inserted = 0

@@ -350,9 +350,8 @@ class SocialTradingSystem:
 
         # Import job entrypoints lazily
         from intelligence.lowcap_portfolio_manager.jobs.nav_compute_1h import main as nav_main
-        from intelligence.lowcap_portfolio_manager.jobs.dominance_ingest_1h import main as dom_main
+        # Legacy: dominance_ingest_1h and bands_calc removed - regime engine handles A/E via RegimeAECalculator
         from intelligence.lowcap_portfolio_manager.jobs.tracker import main as feat_main
-        from intelligence.lowcap_portfolio_manager.jobs.bands_calc import main as bands_main
         from intelligence.lowcap_portfolio_manager.jobs.geometry_build_daily import main as geom_daily_main
         from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import main as pm_core_main
         from intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import main as uptrend_engine_main
@@ -486,7 +485,6 @@ class SocialTradingSystem:
 
         # Fire background schedulers
         asyncio.create_task(schedule_hourly(2, nav_main))
-        asyncio.create_task(schedule_hourly(3, dom_main))
         asyncio.create_task(schedule_5min(0, feat_main))  # Tracker every 5 minutes
         
         # v4: Multi-timeframe TA Tracker
@@ -539,8 +537,6 @@ class SocialTradingSystem:
         asyncio.create_task(schedule_15min(0, uptrend_engine_15m_job))  # 15m Uptrend Engine every 15 minutes
         asyncio.create_task(schedule_hourly(1, uptrend_engine_1h_job))  # 1h Uptrend Engine every 1 hour
         asyncio.create_task(schedule_4h(0, uptrend_engine_4h_job))  # 4h Uptrend Engine every 4 hours
-        
-        asyncio.create_task(schedule_hourly(5, bands_main))
         
         # v4: Multi-timeframe Geometry Builder (runs every 1 hour for all timeframes)
         def geometry_build_1m_job():
@@ -637,17 +633,9 @@ class SocialTradingSystem:
         # One-shot seed after startup: dominance → features/phase → bands → pm_core
         async def seed_pm_once():
             try:
-                await asyncio.to_thread(dom_main)
-            except Exception as e:
-                print(f"PM seed (dominance) error: {e}")
-            try:
                 await asyncio.to_thread(feat_main)
             except Exception as e:
                 print(f"PM seed (features/phase) error: {e}")
-            try:
-                await asyncio.to_thread(bands_main)
-            except Exception as e:
-                print(f"PM seed (bands) error: {e}")
             try:
                 await asyncio.to_thread(pm_core_main)
             except Exception as e:

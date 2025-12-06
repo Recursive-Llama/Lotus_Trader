@@ -153,13 +153,17 @@ curators:
   - id: "crypticsden"
     name: "Cryptic's Den"
     platforms:
+      twitter:
+        handle: "@crypticd22"
+        active: true
+        priority: "high"
       telegram:
         handle: "@crypticsden22"
         channel_id: -1002263903412
         active: true
         priority: "high"
-    tags: ["alpha", "calls"]
-    notes: "Telegram-only curator; verified TG channel id -1002263903412"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @crypticd22 and Telegram @crypticsden22; verified TG channel id -1002263903412"
 
   - id: "sachs"
     name: "Sachs"
@@ -176,7 +180,7 @@ curators:
     name: "Eleetmo"
     platforms:
       twitter:
-        handle: "@eleetmowiz"
+        handle: "@eleetmo"
         active: true
         priority: "high"
       telegram:
@@ -185,7 +189,7 @@ curators:
         active: true
         priority: "high"
     tags: ["alpha", "calls", "multi_platform"]
-    notes: "Multi-platform curator; Twitter @eleetmowiz and Telegram @eleetmoramblings"
+    notes: "Multi-platform curator; Twitter @eleetmo and Telegram @eleetmoramblings"
 
   - id: "breakb0nes"
     name: "breakb0nes"
@@ -212,11 +216,56 @@ curators:
     name: "TonyBetW"
     platforms:
       twitter:
-        handle: "@TonyBetW"
+        handle: "tonyGewrit"
         active: true
         priority: "medium"
     tags: ["crypto", "trading", "alpha"]
     notes: "Twitter curator added via request"
+
+  - id: "trizanator"
+    name: "Trizanator"
+    platforms:
+      twitter:
+        handle: "@Trizanator"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "crypto_wallet4"
+    name: "Crypto Wallet4"
+    platforms:
+      twitter:
+        handle: "@crypto_wallet4"
+        active: true
+        priority: "medium"
+    tags: ["crypto", "alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "99_bollish"
+    name: "99 Bollish"
+    platforms:
+      twitter:
+        handle: "@99_Bollish"
+        active: true
+        priority: "medium"
+    tags: ["crypto", "alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "giba_machado"
+    name: "Giba | Kingdom"
+    platforms:
+      twitter:
+        handle: "@giba_machado"
+        active: true
+        priority: "high"
+      telegram:
+        handle: "@GibaTrades"
+        channel_id: "GibaTrades"
+        active: true
+        priority: "high"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @giba_machado and Telegram @GibaTrades"
 
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"

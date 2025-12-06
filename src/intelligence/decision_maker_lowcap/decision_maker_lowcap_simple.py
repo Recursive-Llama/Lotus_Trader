@@ -73,37 +73,9 @@ class DecisionMakerLowcapSimple:
         """
         regime_context = {}
         
-        for horizon in ["macro", "meso", "micro"]:
-            try:
-                res = (
-                    self.supabase_manager.client.table("phase_state")
-                    .select("phase,score,ts")
-                    .eq("token", "PORTFOLIO")
-                    .eq("horizon", horizon)
-                    .order("ts", desc=True)
-                    .limit(1)
-                    .execute()
-                )
-                rows = res.data or []
-                if rows:
-                    regime_context[horizon] = {
-                        "phase": rows[0].get("phase") or "",
-                        "score": float(rows[0].get("score") or 0.0),
-                        "ts": rows[0].get("ts") or datetime.now(timezone.utc).isoformat()
-                    }
-                else:
-                    regime_context[horizon] = {
-                        "phase": "",
-                        "score": 0.0,
-                        "ts": datetime.now(timezone.utc).isoformat()
-                    }
-            except Exception as e:
-                self.logger.warning(f"Error fetching {horizon} phase: {e}")
-                regime_context[horizon] = {
-                    "phase": "",
-                    "score": 0.0,
-                    "ts": datetime.now(timezone.utc).isoformat()
-                }
+        # Note: Old phase_state table (Dip, Recover, etc.) is no longer used.
+        # Regime states (S0, S1, S2, S3) are now computed by RegimeAECalculator from lowcap_positions.
+        # Phase fields are kept empty for backward compatibility but not used for decisions.
         bucket_snapshot = fetch_bucket_phase_snapshot(self.supabase_manager.client)
         regime_context["bucket_phases"] = bucket_snapshot.get("bucket_phases", {})
         regime_context["bucket_population"] = bucket_snapshot.get("bucket_population", {})
@@ -111,11 +83,65 @@ class DecisionMakerLowcapSimple:
 
         return regime_context
     
+    def _get_bucket_regime_state(self, bucket: Optional[str]) -> Dict[str, str]:
+        """
+        Get regime states (S0, S1, S2, S3) for a bucket driver across all timeframes.
+        
+        Args:
+            bucket: Token's cap bucket (e.g., "nano", "small", "mid", "big")
+        
+        Returns:
+            Dict with keys: "macro", "meso", "micro" mapping to regime state strings (S0, S1, S2, S3)
+            Defaults to "S4" if not found
+        """
+        default_state = {"macro": "S4", "meso": "S4", "micro": "S4"}
+        
+        if not bucket:
+            return default_state
+        
+        try:
+            # Regime drivers are stored in lowcap_positions with status='regime_driver'
+            tf_mapping = {
+                "macro": "1d",  # 1d regime timeframe
+                "meso": "1h",   # 1h regime timeframe
+                "micro": "1m",  # 1m regime timeframe
+            }
+            
+            states = {}
+            for horizon, pos_tf in tf_mapping.items():
+                result = (
+                    self.supabase_manager.client.table("lowcap_positions")
+                    .select("state, features")
+                    .eq("status", "regime_driver")
+                    .eq("token_ticker", bucket)
+                    .eq("timeframe", pos_tf)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                
+                if result.data:
+                    row = result.data[0]
+                    # Try to get state from features.uptrend_engine_v4.state first, fallback to state column
+                    features = row.get("features") or {}
+                    uptrend = features.get("uptrend_engine_v4") or {}
+                    state = uptrend.get("state") or row.get("state", "S4")
+                    states[horizon] = str(state)
+                else:
+                    states[horizon] = "S4"
+            
+            return states
+        except Exception as e:
+            self.logger.warning(f"Error fetching regime states for bucket {bucket}: {e}")
+            return default_state
+    
     def _augment_dm_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         regime_context = self._get_regime_context()
-        context['macro_phase'] = (regime_context.get('macro') or {}).get('phase') or "Unknown"
-        context['meso_phase'] = (regime_context.get('meso') or {}).get('phase') or "Unknown"
-        context['micro_phase'] = (regime_context.get('micro') or {}).get('phase') or "Unknown"
+        # Note: Old phase labels (Dip, Recover, etc.) are no longer used.
+        # Regime states (S0, S1, S2, S3) are computed by RegimeAECalculator.
+        context['macro_phase'] = "N/A"  # Legacy field, not used
+        context['meso_phase'] = "N/A"  # Legacy field, not used
+        context['micro_phase'] = "N/A"  # Legacy field, not used
         
         if not context.get('bucket') and context.get('mcap_bucket'):
             context['bucket'] = context['mcap_bucket']
@@ -233,9 +259,17 @@ class DecisionMakerLowcapSimple:
             
             # Enhanced logging with intent information
             if intent_analysis:
-                intent_type = intent_analysis.get('intent_analysis', {}).get('intent_type', 'unknown')
-                multiplier = intent_analysis.get('intent_analysis', {}).get('allocation_multiplier', 1.0)
-                print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f}, intent: {intent_type}, {multiplier}x)")
+                intent_data = intent_analysis.get('intent_analysis', {})
+                intent_type = intent_data.get('intent_type', 'unknown')
+                multiplier = intent_data.get('allocation_multiplier', 1.0)
+                reasoning = intent_data.get('reasoning', '')
+                # Show reasoning if available (LLM review of the tweet/message)
+                if reasoning:
+                    # Truncate reasoning if too long for console output
+                    reasoning_short = reasoning[:60] + '...' if len(reasoning) > 60 else reasoning
+                    print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f}, intent: {intent_type}, {multiplier}x) | {reasoning_short}")
+                else:
+                    print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f}, intent: {intent_type}, {multiplier}x)")
             else:
                 print(f"decision | APPROVED {token_ticker} alloc {allocation_pct}% (curator {curator_score:.2f})")
             return decision
@@ -429,11 +463,6 @@ class DecisionMakerLowcapSimple:
         """Create approval decision strand"""
         token_data = social_signal['signal_pack']['token']
         venue_data = social_signal['signal_pack']['venue']
-        chain = token_data.get('chain', '').lower()
-        
-        # Get total_allocation_usd for backward compatibility
-        total_allocation_usd = await self._get_total_allocation_usd(chain)
-        allocation_usd = (allocation_pct / 100.0) * total_allocation_usd
         
         # Get regime context (macro/meso/micro phases)
         regime_context = self._get_regime_context()
@@ -455,8 +484,7 @@ class DecisionMakerLowcapSimple:
                 "token": token_data,
                 "venue": venue_data,
                 "action": "approve",
-                "allocation_pct": allocation_pct,
-                "allocation_usd": allocation_usd,  # For backward compatibility
+                "allocation_pct": allocation_pct,  # DM only provides percentage - PM calculates USD at execution time
                 "curator_confidence": curator_score,
                 "reasoning": self._build_approval_reasoning(curator_score, allocation_pct, intent_analysis)
             },
@@ -475,31 +503,23 @@ class DecisionMakerLowcapSimple:
             await self._create_positions_for_token(created_decision, allocation_pct, token_data, curator_score, intent_analysis, decision_id=created_decision.get('id'))
             
             # Trigger learning system to process the decision strand
-            print(f"🔄 Decision Maker: Checking if learning system is available...")
-            print(f"🔄 Decision Maker: hasattr learning_system: {hasattr(self, 'learning_system')}")
-            print(f"🔄 Decision Maker: learning_system is not None: {self.learning_system is not None}")
+            # Trigger learning system callback if available (silent unless error)
+            self.logger.debug("Decision Maker: Checking if learning system is available...")
             
             # Check if learning system is available and has the process_strand_event method
             if (hasattr(self, 'learning_system') and 
                 self.learning_system and 
                 hasattr(self.learning_system, 'process_strand_event') and
                 callable(getattr(self.learning_system, 'process_strand_event', None))):
-                print(f"🔄 Triggering learning system for decision strand...")
-                print(f"🔄 Decision strand ID: {created_decision.get('id')}")
-                print(f"🔄 Decision strand kind: {created_decision.get('kind')}")
-                print(f"🔄 Decision strand action: {created_decision.get('content', {}).get('action')}")
-                print(f"🔄 Decision strand tags: {created_decision.get('tags', [])}")
+                self.logger.debug(f"Triggering learning system for decision strand: {created_decision.get('id')}")
                 try:
                     # Use await for sequential processing - wait for completion
-                    print(f"   🔄 Calling learning system with await...")
                     result = await self.learning_system.process_strand_event(created_decision)
-                    print(f"   ✅ Learning system completed: {result}")
+                    self.logger.debug(f"Learning system completed for strand {created_decision.get('id')}")
                 except Exception as e:
-                    print(f"   ❌ Error calling learning system: {e}")
-                    import traceback
-                    print(f"   Traceback: {traceback.format_exc()}")
+                    self.logger.error(f"❌ Error calling learning system: {e}", exc_info=True)
             else:
-                print(f"🔄 No learning system available for decision strand callback (learning_system is {type(self.learning_system).__name__ if hasattr(self, 'learning_system') and self.learning_system else 'None'})")
+                self.logger.debug(f"No learning system available for decision strand callback")
             
             return created_decision
         except Exception as e:
@@ -567,32 +587,6 @@ class DecisionMakerLowcapSimple:
         except Exception as e:
             self.logger.error(f"Failed to create rejection decision: {e}")
             return None
-    
-    async def _get_total_allocation_usd(self, chain: str) -> float:
-        """
-        Get current wallet balance in USD to calculate total_allocation_usd
-        
-        Args:
-            chain: Chain to get balance for (solana, ethereum, base, bsc)
-            
-        Returns:
-            Total allocation USD (balance in USD)
-        """
-        try:
-            # Get balance from wallet_balances table
-            result = self.supabase_manager.client.table('wallet_balances').select('balance_usd').eq('chain', chain).execute()
-            
-            if result.data and len(result.data) > 0:
-                balance_usd = float(result.data[0].get('balance_usd', 0))
-                self.logger.info(f"Current {chain} balance: ${balance_usd:,.2f}")
-                return balance_usd
-            else:
-                self.logger.warning(f"No balance found for {chain}, using default $10,000")
-                return 10000.0  # Default fallback
-                
-        except Exception as e:
-            self.logger.error(f"Error getting wallet balance for {chain}: {e}")
-            return 10000.0  # Default fallback
     
     async def _check_bars_count(self, token_contract: str, chain: str, timeframe: str) -> int:
         """
@@ -703,6 +697,13 @@ class DecisionMakerLowcapSimple:
             entry_context['timeframe_splits'] = timeframe_splits  # Store splits per timeframe
             entry_context['created_at'] = datetime.now(timezone.utc).isoformat()
             
+            # Add regime state at entry time (macro/meso/micro)
+            token_bucket = entry_context.get('mcap_bucket')
+            regime_state = self._get_bucket_regime_state(token_bucket)
+            entry_context['regime_state_macro'] = regime_state.get('macro', 'S4')
+            entry_context['regime_state_meso'] = regime_state.get('meso', 'S4')
+            entry_context['regime_state_micro'] = regime_state.get('micro', 'S4')
+            
             # Create alloc_policy JSONB (only percentages, no fixed USD)
             alloc_policy = {
                 'timeframe_splits': timeframe_splits,
@@ -748,16 +749,71 @@ class DecisionMakerLowcapSimple:
                     'updated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Insert position
-                try:
-                    result = self.supabase_manager.client.table('lowcap_positions').insert(position).execute()
-                    if result.data:
-                        positions_created.append(timeframe)
-                        self.logger.info(f"Created {timeframe} position for {token_ticker}: {allocation_pct * timeframe_pct:.2f}% (status: {initial_status}, bars: {bars_count})")
+                # Check if position already exists before inserting
+                existing = (
+                    self.supabase_manager.client.table('lowcap_positions')
+                    .select('id,status,curator_sources')
+                    .eq('token_contract', token_contract)
+                    .eq('token_chain', token_chain)
+                    .eq('timeframe', timeframe)
+                    .limit(1)
+                    .execute()
+                )
+                
+                if existing.data:
+                    # Position already exists - update curator_sources to append new curator
+                    existing_position = existing.data[0]
+                    existing_id = existing_position.get('id')
+                    existing_status = existing_position.get('status', 'unknown')
+                    
+                    # Get existing curator_sources (JSONB array)
+                    existing_sources = existing_position.get('curator_sources') or []
+                    if not isinstance(existing_sources, list):
+                        existing_sources = []
+                    
+                    # Check if this curator already in sources
+                    curator_id = decision['content'].get('curator_id')
+                    already_added = any(src.get('curator_id') == curator_id for src in existing_sources)
+                    
+                    if not already_added:
+                        # Append new curator source
+                        new_source = {
+                            'curator_id': curator_id,
+                            'confidence': curator_score,
+                            'is_primary': False,  # First curator is primary
+                            'signal_id': decision['content'].get('source_strand_id'),
+                            'added_at': datetime.now(timezone.utc).isoformat()
+                        }
+                        existing_sources.append(new_source)
+                        
+                        # Update position with new curator_sources
+                        try:
+                            self.supabase_manager.client.table('lowcap_positions').update({
+                                'curator_sources': existing_sources,
+                                'updated_at': datetime.now(timezone.utc).isoformat()
+                            }).eq('id', existing_id).execute()
+                            self.logger.info(f"Updated curator_sources for {token_ticker}/{timeframe}: added {curator_id}")
+                        except Exception as e:
+                            self.logger.error(f"Error updating curator_sources for {token_ticker}/{timeframe}: {e}")
                     else:
-                        self.logger.error(f"Failed to create {timeframe} position for {token_ticker}")
-                except Exception as e:
-                    self.logger.error(f"Error creating {timeframe} position for {token_ticker}: {e}")
+                        self.logger.debug(f"Curator {curator_id} already in sources for {token_ticker}/{timeframe}")
+                    
+                    self.logger.debug(f"Position already exists for {token_ticker}/{timeframe} (status: {existing_status}) - curator_sources updated")
+                else:
+                    # Insert position
+                    try:
+                        result = self.supabase_manager.client.table('lowcap_positions').insert(position).execute()
+                        if result.data:
+                            positions_created.append(timeframe)
+                            self.logger.info(f"Created {timeframe} position for {token_ticker}: {allocation_pct * timeframe_pct:.2f}% (status: {initial_status}, bars: {bars_count})")
+                        else:
+                            self.logger.error(f"Failed to create {timeframe} position for {token_ticker}")
+                    except Exception as e:
+                        # Check if it's a duplicate key error (position was created between check and insert)
+                        if 'duplicate key' in str(e).lower() or '23505' in str(e):
+                            self.logger.debug(f"Position already exists for {token_ticker}/{timeframe} (race condition) - skipping")
+                        else:
+                            self.logger.error(f"Error creating {timeframe} position for {token_ticker}: {e}")
             
             # Backfill position_id to decision_lowcap strand after positions are created
             if len(positions_created) > 0:
@@ -834,10 +890,10 @@ class DecisionMakerLowcapSimple:
                     
                     self.logger.info(f"🔄 Starting backfill for {token_ticker} (4 timeframes, sequential, synchronous)")
                     
-                    # Run backfills sequentially (synchronous calls)
+                    # Run backfills sequentially and collect results
+                    backfill_results = {}
                     for tf in timeframes_to_backfill:
                         try:
-                            self.logger.info(f"🔄 Backfilling {tf} for {token_ticker}...")
                             result = backfill_token_timeframe(
                                 token_contract,
                                 token_chain,
@@ -845,16 +901,18 @@ class DecisionMakerLowcapSimple:
                                 lookback_minutes
                             )
                             inserted = result.get('inserted_rows', 0)
-                            if inserted > 0:
-                                self.logger.info(f"✅ Backfill {tf} complete for {token_ticker}: {inserted} rows inserted")
+                            error = result.get('error')
+                            if error == 'token_not_found':
+                                backfill_results[tf] = 'ERR'
                             else:
-                                self.logger.warning(f"⚠️ Backfill {tf} for {token_ticker}: {inserted} rows (may already exist)")
+                                backfill_results[tf] = inserted
                         except Exception as e:
-                            self.logger.error(f"❌ Backfill {tf} failed for {token_ticker}: {e}")
-                            import traceback
-                            self.logger.error(traceback.format_exc())
+                            self.logger.error(f"Backfill {tf} failed for {token_ticker}: {e}")
+                            backfill_results[tf] = 'ERR'
                     
-                    self.logger.info(f"✅ All backfills complete for {token_ticker}")
+                    # Single line summary: Backfill TOKEN: 1m/15m/1h/4h bars
+                    bars_summary = f"{backfill_results.get('1m', 0)}/{backfill_results.get('15m', 0)}/{backfill_results.get('1h', 0)}/{backfill_results.get('4h', 0)}"
+                    self.logger.info(f"Backfill {token_ticker}: {bars_summary}")
                     
                     # Trigger TA Tracker and Uptrend Engine immediately (don't wait for schedule)
                     try:
@@ -895,8 +953,12 @@ class DecisionMakerLowcapSimple:
                 
                 return True
             else:
-                self.logger.warning(f"⚠️ Only created {len(positions_created)}/4 positions for {token_ticker}")
-                return False
+                # Some positions already existed (duplicate key) - this is expected
+                if len(positions_created) == 0:
+                    self.logger.info(f"𐄷 All positions already exist for {token_ticker} (using existing positions)")
+                else:
+                    self.logger.info(f"ℹ️  Created {len(positions_created)}/4 new positions for {token_ticker} ({4 - len(positions_created)} already existed)")
+                return True  # Still return True - existing positions are valid
                 
         except Exception as e:
             self.logger.error(f"Error creating positions for token: {e}")

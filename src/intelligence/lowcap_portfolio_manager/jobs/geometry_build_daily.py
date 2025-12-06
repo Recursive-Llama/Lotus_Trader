@@ -17,6 +17,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple, Optional
 import json
 import requests  # type: ignore
+# Set non-GUI backend before importing pyplot (prevents macOS crash on background threads)
+import matplotlib
+matplotlib.use('Agg')  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.dates as mdates  # type: ignore
 
@@ -1404,6 +1407,7 @@ class GeometryBuilder:
                     ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                     
                     plt.xticks(rotation=45)
+                    plt.draw()  # Draw figure before tight_layout to ensure all axes are rendered
                     plt.tight_layout()
                     
                     # Use token name for file naming (token_name already defined above)

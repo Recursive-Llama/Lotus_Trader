@@ -73,18 +73,24 @@ class OneMinuteRollup:
         return Bar(token=token, ts=ts_minute, open=open_price, high=high_price, low=low_price, close=close_price, volume=quote_volume)
 
     def roll_minute(self, when: Optional[datetime] = None, symbols: Optional[List[str]] = None) -> int:
-        """Roll up a single minute for optional symbols; returns bars written."""
+        """Roll up a single minute for optional symbols; returns bars written.
+        
+        If when is None, rolls up the most recent complete minute (2 minutes ago to avoid race conditions).
+        """
         if when is None:
-            when = datetime.now(tz=timezone.utc) - timedelta(seconds=5)
+            # Look back 2 minutes to ensure we're rolling up a complete minute
+            # This avoids race conditions where ticks are still coming in
+            when = datetime.now(tz=timezone.utc) - timedelta(minutes=2)
         when = self._to_utc(when)
         start, end = self._minute_bounds(when)
 
         bars: List[Bar] = []
         # fetch distinct tokens to process
         if symbols is None:
-            # Using a heuristic: select distinct tokens with ticks in window
-            resp = self.sb.rpc("exec_sql", {"sql": f"SELECT DISTINCT token FROM public.majors_trades_ticks WHERE ts >= '{start.isoformat()}' AND ts < '{end.isoformat()}'"}).execute()
-            tokens = [r["token"] for r in (resp.data or [])]
+            # Get distinct tokens from ticks in window using direct query
+            # Query all ticks and extract unique tokens (simpler than exec_sql)
+            res = self.sb.table("majors_trades_ticks").select("token").gte("ts", start.isoformat()).lt("ts", end.isoformat()).execute()
+            tokens = list(set(r["token"] for r in (res.data or [])))
         else:
             tokens = symbols
 

@@ -8,8 +8,9 @@ import os
 import signal
 import sys
 import json
+import threading
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 # Add src to Python path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -30,13 +31,14 @@ from trading.scheduled_price_collector import ScheduledPriceCollector
 
 # --- Job Imports ---
 from intelligence.lowcap_portfolio_manager.jobs.nav_compute_1h import main as nav_main
-from intelligence.lowcap_portfolio_manager.jobs.dominance_ingest_1h import main as dom_main
+# Legacy: dominance_ingest_1h and bands_calc removed - regime engine handles A/E via RegimeAECalculator
 from intelligence.lowcap_portfolio_manager.jobs.tracker import main as feat_main
-from intelligence.lowcap_portfolio_manager.jobs.bands_calc import main as bands_main
 from intelligence.lowcap_portfolio_manager.jobs.geometry_build_daily import main as geom_daily_main
 from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import main as pm_core_main
 from intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import main as uptrend_engine_main
 from intelligence.lowcap_portfolio_manager.jobs.update_bars_count import main as update_bars_count_main
+from intelligence.lowcap_portfolio_manager.jobs.bootstrap_system import BootstrapSystem
+from intelligence.lowcap_portfolio_manager.jobs.regime_runner import run_regime_pipeline
 from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import run_aggregator as pattern_scope_aggregator_job
 from intelligence.lowcap_portfolio_manager.jobs.lesson_builder_v5 import build_lessons_from_pattern_scope_stats
 from intelligence.lowcap_portfolio_manager.jobs.override_materializer import run_override_materializer
@@ -61,16 +63,116 @@ def setup_logging():
     # Configure root logger to suppress debug/info to console
     logging.basicConfig(level=logging.WARNING)
 
+    # Rotate logs if they exceed 10MB
+    from logging.handlers import RotatingFileHandler
+    MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+    BACKUP_COUNT = 3  # Keep 3 backup files
+
     for name, log_file in loggers.items():
         logger = logging.getLogger(name)
         logger.setLevel(logging.INFO)
-        handler = logging.FileHandler(log_file)
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=MAX_LOG_SIZE,
+            backupCount=BACKUP_COUNT
+        )
         handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         logger.addHandler(handler)
         logger.propagate = False
 
 setup_logging()
 logger = logging.getLogger('system')
+
+# Glyph stream for progress indicators (matching bootstrap_system.py)
+GLYPH_STREAM = [
+    "⚘", "⟁", "⌖", "❈",  # Core system
+    "⋇", "⟡", "↻", "∴", "⧖", "∅", "∞",  # Operations
+    "⧉", "⨳", "⨴", "⨵", "⩜", "⋻", "⟖",  # Processes
+    "𓂀", "𐄷", "𒀭", "𒉿", "ᛝ", "ᛟ",  # Events
+    "🜁", "🜂", "🜃", "🜄", "🜇", "🜔",  # States
+    "∆φ", "ℏ", "ψ(ω)", "∫", "φ", "θ", "ρ",  # Math/Physics
+]
+
+
+def show_glyph_loading(message: str, operation: Callable, *args, **kwargs):
+    """
+    Run an operation while showing animated glyph loading indicator.
+    
+    Args:
+        message: Message to display (e.g., "Bootstrap System...")
+        operation: Function to run
+        *args, **kwargs: Arguments to pass to operation
+    
+    Returns:
+        Result of operation
+    """
+    stop_progress = threading.Event()
+    glyph_idx = [0]  # Use list to allow modification in nested function
+    
+    def progress_loop():
+        while not stop_progress.is_set():
+            glyph = GLYPH_STREAM[glyph_idx[0] % len(GLYPH_STREAM)]
+            sys.stdout.write(f"\r   {message} {glyph}")
+            sys.stdout.flush()
+            glyph_idx[0] += 1
+            if stop_progress.wait(0.2):  # Update every 200ms
+                break
+    
+    # Start progress indicator in background thread
+    progress_thread = threading.Thread(target=progress_loop, daemon=True)
+    progress_thread.start()
+    
+    try:
+        # Run the operation
+        result = operation(*args, **kwargs)
+        return result
+    finally:
+        # Stop progress indicator
+        stop_progress.set()
+        progress_thread.join(timeout=0.5)
+        # Clear the progress line
+        sys.stdout.write(f"\r   {message}")
+        sys.stdout.flush()
+
+
+async def show_glyph_loading_async(message: str, coro):
+    """
+    Run an async operation while showing animated glyph loading indicator.
+    
+    Args:
+        message: Message to display (e.g., "Starting Hyperliquid WS...")
+        coro: Coroutine to run
+    
+    Returns:
+        Result of coroutine
+    """
+    stop_progress = threading.Event()
+    glyph_idx = [0]
+    
+    def progress_loop():
+        while not stop_progress.is_set():
+            glyph = GLYPH_STREAM[glyph_idx[0] % len(GLYPH_STREAM)]
+            sys.stdout.write(f"\r   {message} {glyph}")
+            sys.stdout.flush()
+            glyph_idx[0] += 1
+            if stop_progress.wait(0.2):
+                break
+    
+    # Start progress indicator in background thread
+    progress_thread = threading.Thread(target=progress_loop, daemon=True)
+    progress_thread.start()
+    
+    try:
+        # Run the async operation
+        result = await coro
+        return result
+    finally:
+        # Stop progress indicator
+        stop_progress.set()
+        progress_thread.join(timeout=0.5)
+        # Clear the progress line
+        sys.stdout.write(f"\r   {message}")
+        sys.stdout.flush()
 
 # --- Strand Monitor (Glyphic System) ---
 class StrandMonitor:
@@ -79,69 +181,33 @@ class StrandMonitor:
         self.running = False
         
     async def start(self):
-        """Start async realtime subscription"""
-        try:
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_KEY")
-            if not supabase_url or not supabase_key:
-                raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY for realtime")
-            
-            # Create a new client instance for realtime (can use sync client in async context)
-            # The realtime subscription works by keeping the channel alive
-            client = create_client(supabase_url, supabase_key)
-            
-            # Set up realtime channel subscription
-            channel = client.channel('ad_strands_monitor')
-            
-            def on_insert(payload):
-                """Handle new strand insert"""
-                try:
-                    self.handle_strand(payload)
-                except Exception as e:
-                    logger.error(f"Error handling strand in callback: {e}", exc_info=True)
-            
-            # Subscribe to INSERT events on ad_strands table
-            channel.on(
-                'postgres_changes',
-                event='INSERT',
-                schema='public',
-                table='ad_strands',
-                callback=on_insert
-            ).subscribe()
-            
-            self.running = True
-            logger.info("Strand monitor realtime subscription active")
-            
-            # Keep the subscription alive - the channel needs to stay open
-            # The realtime connection is maintained by the Supabase client
-            while self.running:
-                await asyncio.sleep(1)  # Just keep the loop alive
-                
-        except Exception as e:
-            logger.error(f"Failed to subscribe to realtime strands: {e}", exc_info=True)
-            print(f"❦ Realtime subscription failed: {e}")
-            # Fallback to polling if realtime fails
-            logger.info("Falling back to polling mode")
-            await self._polling_fallback()
+        """Start polling mode for strand monitoring"""
+        # Use polling mode (realtime requires async client which adds complexity)
+        # Polling is sufficient since actual processing happens via direct method calls
+        await self._polling_fallback()
 
     async def _polling_fallback(self):
-        """Fallback polling mode if realtime fails"""
-        logger.warning("Using polling fallback for strand monitoring")
+        """Polling mode for strand monitoring"""
+        logger.info("Strand monitor using polling mode (5s interval)")
         self.running = True
-        last_id = None
+        last_created_at = None
         while self.running:
             try:
-                # Get latest strands
-                query = self.sb.client.table('ad_strands').select('*').order('created_at', desc=True).limit(10)
-                if last_id:
-                    query = query.gt('id', last_id)
+                # Get latest strands - use created_at timestamp for reliable tracking
+                query = self.sb.client.table('ad_strands').select('*').order('created_at', desc=False).limit(50)
+                if last_created_at:
+                    query = query.gt('created_at', last_created_at)
                 result = query.execute()
                 
                 if result.data:
-                    # Process new strands
-                    for strand in reversed(result.data):  # Process oldest first
+                    # Process new strands (already in chronological order)
+                    for strand in result.data:
                         self.handle_strand({'new': strand})
-                        last_id = strand.get('id')
+                        strand_created_at = strand.get('created_at')
+                        if strand_created_at:
+                            # Track the latest timestamp we've seen
+                            if not last_created_at or strand_created_at > last_created_at:
+                                last_created_at = strand_created_at
                 
                 await asyncio.sleep(5)  # Poll every 5 seconds
             except Exception as poll_error:
@@ -168,14 +234,23 @@ class StrandMonitor:
             output = ""
             
             if kind == 'social_lowcap':
-                curator = record.get('signal_pack', {}).get('curator_id', 'Unknown')
-                chain = record.get('signal_pack', {}).get('token_chain', '')
-                conf = module_intel.get('confidence_score', 0)
-                output = f"⟡  SOCIAL   | {curator} → {symbol} ({chain}) | Conf: {conf}"
+                # Curator is nested: signal_pack.curator.id
+                signal_pack = record.get('signal_pack', {})
+                curator_obj = signal_pack.get('curator', {})
+                curator = curator_obj.get('id', curator_obj.get('handle', 'Unknown'))
+                # Chain is in signal_pack.token.chain
+                token_data = signal_pack.get('token', {})
+                chain = token_data.get('chain', '')
+                # Intent type from intent_analysis
+                intent_analysis = signal_pack.get('intent_analysis', {})
+                intent_data = intent_analysis.get('intent_analysis', {}) if isinstance(intent_analysis, dict) else {}
+                intent_type = intent_data.get('intent_type', 'unknown')
+                output = f"⟡  SOCIAL   | {curator} → {symbol} ({chain}) | Intent: {intent_type}"
                 
             elif kind == 'decision_lowcap':
                 action = content.get('action', 'WAIT')
-                alloc = content.get('allocation_percentage', 0)
+                # Decision Maker writes 'allocation_pct', not 'allocation_percentage'
+                alloc = content.get('allocation_pct', content.get('allocation_percentage', 0))
                 reason = (content.get('reasoning') or "")[:50]
                 # Check for learning context
                 learning_suffix = " | 𓂀" if module_intel else ""
@@ -262,7 +337,8 @@ class TradingSystem:
         }
 
     async def initialize(self):
-        print("\n⚘⟁⌖ Lotus Trencher System Initializing...")
+        print("\n⚘⟁ Welcome to Lotus⚘⟁3 𓂀")
+        print("\n⚘⟁ QI Trading System Initializing...⚘⟁⌖")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         try:
@@ -298,25 +374,49 @@ class TradingSystem:
             # Format Twitter handles (remove @ prefix if present, then add one)
             twitter_handles = []
             for c in twitter_curators:
-                handle = c.get('platform_data', {}).get('handle', c.get('name', 'unknown'))
+                handle = c.get('platform_data', {}).get('handle') or c.get('name') or 'unknown'
                 # Remove @ if already present, then add one
-                handle = handle.lstrip('@')
+                if handle:
+                    handle = str(handle).lstrip('@')
                 twitter_handles.append(f"@{handle}")
             
             # Format Telegram handles
             telegram_handles = []
             for c in telegram_curators:
-                handle = c.get('platform_data', {}).get('handle', c.get('name', 'unknown'))
-                handle = handle.lstrip('@')
+                handle = c.get('platform_data', {}).get('handle') or c.get('name') or 'unknown'
+                if handle:
+                    handle = str(handle).lstrip('@')
                 telegram_handles.append(f"@{handle}")
             
             print("   ⟡ Social Ingest... Listening")
             if twitter_curators:
-                twitter_list = ', '.join(twitter_handles)  # Show ALL curators
-                print(f"      Twitter: {len(twitter_curators)} curators ({twitter_list})")
+                # Format Twitter handles with better spacing (wrap at ~70 chars)
+                twitter_list = ', '.join(twitter_handles)
+                if len(twitter_list) > 70:
+                    # Split into multiple lines, ~3-4 handles per line
+                    handles_per_line = 4
+                    lines = []
+                    for i in range(0, len(twitter_handles), handles_per_line):
+                        chunk = twitter_handles[i:i+handles_per_line]
+                        lines.append(', '.join(chunk))
+                    twitter_display = '\n' + '\n'.join(f"      {line}" for line in lines)
+                else:
+                    twitter_display = f" ({twitter_list})"
+                print(f"      Twitter: {len(twitter_curators)} curators{twitter_display}")
             if telegram_curators:
-                telegram_list = ', '.join(telegram_handles)  # Show ALL curators
-                print(f"      Telegram: {len(telegram_curators)} curators ({telegram_list})")
+                # Format Telegram handles with better spacing (wrap at ~70 chars)
+                telegram_list = ', '.join(telegram_handles)
+                if len(telegram_list) > 70:
+                    # Split into multiple lines, ~3-4 handles per line
+                    handles_per_line = 4
+                    lines = []
+                    for i in range(0, len(telegram_handles), handles_per_line):
+                        chunk = telegram_handles[i:i+handles_per_line]
+                        lines.append(', '.join(chunk))
+                    telegram_display = '\n' + '\n'.join(f"      {line}" for line in lines)
+                else:
+                    telegram_display = f" ({telegram_list})"
+                print(f"      Telegram: {len(telegram_curators)} curators{telegram_display}")
             elif not twitter_curators and not telegram_curators:
                 print("      No curators configured")
 
@@ -496,45 +596,91 @@ class TradingSystem:
         print("⧖ Starting Schedulers...")
         scheduler_logger.info("Starting scheduler system")
         
+        # 0. Bootstrap System (verify all data collection systems)
+        scheduler_logger.info("Starting bootstrap phase")
+        
+        bootstrap = None
+        try:
+            bootstrap = BootstrapSystem()
+            # Bootstrap prints its own progress messages, no wrapper needed
+            bootstrap_results = bootstrap.bootstrap_all()
+            scheduler_logger.info(f"Bootstrap status: {bootstrap_results.get('status', 'unknown')}")
+        except Exception as e:
+            scheduler_logger.error(f"Bootstrap error: {e}", exc_info=True)
+            print("   ❦ Bootstrap Failed (see logs/system.log)")
+            # Continue anyway - bootstrap failures are non-fatal
+        
+        # 0.5. Start Hyperliquid WS early so we can verify it's working
+        hl_ingester = None
+        hl_task = None
+        if os.getenv("HL_INGEST_ENABLED", "0") == "1":
+            try:
+                from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import HyperliquidWSIngester
+                
+                hl_ingester = HyperliquidWSIngester()
+                hl_task = asyncio.create_task(hl_ingester.run())
+                scheduler_logger.info("Hyperliquid WS ingester started (early)")
+                
+                # Wait a few seconds for it to connect and receive first data (with glyph loading)
+                async def wait_for_hl():
+                    await asyncio.sleep(5)
+                
+                await show_glyph_loading_async("⨳ Starting Hyperliquid WS...", wait_for_hl())
+                
+                # Check if it's working
+                if bootstrap:
+                    hl_status = bootstrap._check_hyperliquid_ws()
+                    status = hl_status.get("status", "unknown")
+                    if status == "ok":
+                        tokens = hl_status.get("tokens", 0)
+                        age = hl_status.get("age_minutes", 0)
+                        print(f"✓ ({tokens} tokens, {age:.1f}m old)")
+                    elif status == "stale":
+                        age = hl_status.get("age_minutes", 0)
+                        print(f"⚠ ({age:.1f}m old)")
+                    elif status == "no_data":
+                        warning = hl_status.get("warning", "No data")
+                        print(f"⚠ ({warning[:30]})")
+                        logger.warning(f"Hyperliquid WS: {warning}")
+                    else:
+                        error = hl_status.get("error", hl_status.get("warning", "Unknown"))
+                        print(f"⚠ ({str(error)[:30]})")
+                        logger.warning(f"Hyperliquid WS status: {status}, {error}")
+                else:
+                    print("⌖")
+            except Exception as e:
+                scheduler_logger.error(f"HL WS early start error: {e}", exc_info=True)
+                print("✗")
+        
         # 1. Seed Jobs (Individual error handling per job)
-        print("   ⨳ Running Seed Jobs (Dominance -> Features -> Bands -> PM Core)...")
+        print("   ⨳ Running Seed Jobs...")
         scheduler_logger.info("Starting seed phase")
         
         try:
-            scheduler_logger.info("Seed job: dom_main starting")
-            await asyncio.to_thread(dom_main)
-            scheduler_logger.info("Seed job: dom_main completed")
-            print("   ☼ Dominance ingest complete")
-        except Exception as e:
-            scheduler_logger.error(f"PM seed (dominance) error: {e}", exc_info=True)
-            print(f"   ❦ Seed (Dominance) Failed: {e}")
-        
-        try:
             scheduler_logger.info("Seed job: feat_main starting")
-            await asyncio.to_thread(feat_main)
+            await asyncio.to_thread(
+                show_glyph_loading,
+                "      ⟡ Features tracker...",
+                feat_main
+            )
             scheduler_logger.info("Seed job: feat_main completed")
-            print("   ☼ Features tracker complete")
+            print("      ⟡ Features tracker... ✓")
         except Exception as e:
             scheduler_logger.error(f"PM seed (features/phase) error: {e}", exc_info=True)
-            print(f"   ❦ Seed (Features) Failed: {e}")
-        
-        try:
-            scheduler_logger.info("Seed job: bands_main starting")
-            await asyncio.to_thread(bands_main)
-            scheduler_logger.info("Seed job: bands_main completed")
-            print("   ☼ Bands calculation complete")
-        except Exception as e:
-            scheduler_logger.error(f"PM seed (bands) error: {e}", exc_info=True)
-            print(f"   ❦ Seed (Bands) Failed: {e}")
+            print(f"      ⟡ Features tracker... ✗ ({str(e)[:30]})")
         
         try:
             scheduler_logger.info("Seed job: pm_core_main starting")
-            await asyncio.to_thread(lambda: pm_core_main(timeframe="1h", learning_system=self.learning_system))
+            await asyncio.to_thread(
+                show_glyph_loading,
+                "      ⟡ PM Core tick (1h)...",
+                lambda: pm_core_main(timeframe="1h", learning_system=self.learning_system)
+            )
             scheduler_logger.info("Seed job: pm_core_main completed")
-            print("   ☼ PM Core tick complete")
+            print("      ⟡ PM Core tick (1h)... ✓")
         except Exception as e:
             scheduler_logger.error(f"PM seed (core) error: {e}", exc_info=True)
-            print(f"   ❦ Seed (PM Core) Failed: {e}")
+            print(f"      ⟡ PM Core tick (1h)... ✗ ({str(e)[:30]})")
         
         print("   ⨵ Seed Jobs Complete")
         print("   ↻ Starting recurring schedulers...")
@@ -542,6 +688,10 @@ class TradingSystem:
 
         # 2. Recurring Schedule
         tasks = []
+        
+        # Add Hyperliquid WS task if it was started early
+        if hl_task:
+            tasks.append(hl_task)
         
         # 1 Minute Jobs
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_ta_tracker("1m"), "TA 1m")))
@@ -554,6 +704,7 @@ class TradingSystem:
                 logger.error(f"Majors 1m rollup error: {e}", exc_info=True)
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, majors_1m_rollup_job, "Majors Rollup")))
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_uptrend("1m"), "Uptrend 1m")))
+        tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: run_regime_pipeline(timeframe="1m"), "Regime 1m")))
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_pm_core("1m"), "PM 1m")))
 
         # 5 Minute Jobs (Aligned)
@@ -569,10 +720,9 @@ class TradingSystem:
 
         # Hourly Jobs
         tasks.append(asyncio.create_task(self._schedule_hourly(1, lambda: self._wrap_uptrend("1h"), "Uptrend 1h")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(1, lambda: run_regime_pipeline(timeframe="1h"), "Regime 1h")))
         tasks.append(asyncio.create_task(self._schedule_hourly(2, nav_main, "NAV")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(3, dom_main, "Dominance")))
         tasks.append(asyncio.create_task(self._schedule_hourly(4, lambda: self._wrap_rollup(Timeframe.H1, "Rollup 1h"), "Rollup 1h")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(5, bands_main, "Bands")))
         tasks.append(asyncio.create_task(self._schedule_hourly(6, lambda: self._wrap_ta_tracker("1h"), "TA 1h")))
         tasks.append(asyncio.create_task(self._schedule_hourly(6, lambda: self._wrap_pm_core("1h"), "PM 1h")))
         
@@ -592,17 +742,29 @@ class TradingSystem:
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_rollup(Timeframe.H4, "Rollup 4h"), "Rollup 4h")))
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_uptrend("4h"), "Uptrend 4h")))
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_pm_core("4h"), "PM 4h")))
+        
+        # Daily Jobs (1d regime - macro)
+        async def schedule_daily(offset_hour: int, func, name: str):
+            """Schedule to run daily at specific hour."""
+            scheduler_logger = logging.getLogger('schedulers')
+            while self.running:
+                now = datetime.now(timezone.utc)
+                next_run = now.replace(hour=offset_hour, minute=0, second=0, microsecond=0)
+                if next_run <= now:
+                    next_run += timedelta(days=1)
+                wait_s = (next_run - now).total_seconds()
+                scheduler_logger.info(f"{name} scheduled for {next_run.isoformat()}")
+                await asyncio.sleep(wait_s)
+                try:
+                    scheduler_logger.info(f"Starting {name}")
+                    await asyncio.to_thread(func)
+                    scheduler_logger.info(f"{name} completed")
+                except Exception as e:
+                    scheduler_logger.error(f"{name} failed: {e}", exc_info=True)
+        
+        tasks.append(asyncio.create_task(schedule_daily(0, lambda: run_regime_pipeline(timeframe="1d"), "Regime 1d")))
 
-        # Start Hyperliquid WS ingester if enabled
-        if os.getenv("HL_INGEST_ENABLED", "0") == "1":
-            try:
-                from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import HyperliquidWSIngester
-                ing = HyperliquidWSIngester()
-                hl_task = asyncio.create_task(ing.run())
-                tasks.append(hl_task)
-                scheduler_logger.info("Hyperliquid WS ingester started")
-            except Exception as e:
-                scheduler_logger.error(f"HL WS ingester not started: {e}", exc_info=True)
+        # Hyperliquid WS task already added to tasks list above if it was started early
         
         print("   ↻ Schedulers... Active")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

@@ -88,7 +88,16 @@ class HyperliquidWSIngester:
             except Exception as exc:  # noqa: BLE001
                 retries += 1
                 wait_ms = min(self.backoff_base_ms * (2 ** (retries - 1)), 30_000)
-                logger.exception("HL WS ingest error: %s; retry %d in %d ms", exc, retries, wait_ms)
+                
+                # Tidy up error messages for expected connection issues
+                exc_str = str(exc)
+                if "keepalive ping timeout" in exc_str or "ConnectionClosedError" in exc_str:
+                    # Expected WebSocket timeout - log concisely
+                    logger.warning("HL WS: Connection timeout, reconnecting in %d ms (retry %d/%d)", wait_ms, retries, self.max_retries)
+                else:
+                    # Unexpected error - log with full context
+                    logger.exception("HL WS ingest error: %s; retry %d in %d ms", exc, retries, wait_ms)
+                
                 if retries > self.max_retries:
                     logger.error("Max retries exceeded; exiting ingest loop")
                     raise

@@ -94,9 +94,9 @@ class PerClusterLearningSystem:
         """Calculate resonance scores for a strand"""
         try:
             # Import module-specific scoring
-            from module_specific_scoring import ModuleSpecificScoring
+            from ..module_specific_scoring import ModuleSpecificScoring
             
-            module_scoring = ModuleSpecificScoring(self.supabase_manager)
+            module_scoring = ModuleSpecificScoring()
             
             # Calculate module-specific scores
             persistence, novelty, surprise = await module_scoring.calculate_module_scores(strand)
