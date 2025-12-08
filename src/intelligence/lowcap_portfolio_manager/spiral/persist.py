@@ -40,23 +40,7 @@ class SpiralPersist:
         except Exception:
             prior_phase = None
         self.sb.table("phase_state").upsert([row], on_conflict="token,ts,horizon").execute()
-        # Emit phase_transition on change
-        try:
-            if prior_phase is not None and str(prior_phase) != str(payload.get("phase")):
-                from intelligence.lowcap_portfolio_manager.events.bus import emit
-                emit(
-                    "phase_transition",
-                    {
-                        "token": token,
-                        "horizon": horizon,
-                        "prev": prior_phase,
-                        "next": payload.get("phase"),
-                        "score": payload.get("score"),
-                        "ts": row["ts"],
-                    },
-                )
-        except Exception:
-            pass
+        # Event emission removed - no subscribers, scheduled runs handle phase changes
 
     def write_phase_state_bucket(self, bucket: str, horizon: str, ts: datetime, payload: Dict[str, Any]) -> None:
         row = {

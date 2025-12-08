@@ -136,7 +136,7 @@ class UptrendEngineV4:
         
         res = (
             self.sb.table("lowcap_positions")
-            .select("id,token_contract,token_chain,features,status")
+            .select("id,token_contract,token_chain,features,status,total_quantity")
             .eq("timeframe", self.timeframe)
             .in_("status", statuses)
             .limit(2000)
@@ -302,17 +302,33 @@ class UptrendEngineV4:
             del features["uptrend_engine_v4_meta"]["s3_start_ts"]
             self._write_features(pid, features)
 
-    def _calculate_window_boundaries(self, s3_start_ts: str, current_ts: str) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    def _calculate_window_boundaries(self, s3_start_ts: str, current_ts: str, timeframe: Optional[str] = None) -> Tuple[Optional[int], Optional[int], Optional[int]]:
         """Calculate window boundaries for 3-window EDX approach.
+        
+        Args:
+            s3_start_ts: S3 start timestamp
+            current_ts: Current timestamp
+            timeframe: Timeframe for bar calculation (defaults to self.timeframe)
         
         Returns:
             (window1_bars, window2_bars, window3_bars) - number of bars for each window
             None if window is too small (< 10 bars minimum)
         """
         try:
+            # Use provided timeframe or fall back to self.timeframe
+            tf = timeframe or self.timeframe
+            
+            # Calculate seconds per bar based on timeframe
+            seconds_per_bar = {
+                "1m": 60,
+                "15m": 15 * 60,
+                "1h": 3600,
+                "4h": 4 * 3600,
+            }.get(tf, 3600)  # Default to 1h if unknown
+            
             start_dt = datetime.fromisoformat(s3_start_ts.replace("Z", "+00:00"))
             current_dt = datetime.fromisoformat(current_ts.replace("Z", "+00:00"))
-            total_bars = int((current_dt - start_dt).total_seconds() / 3600)  # 1 hour per bar
+            total_bars = int((current_dt - start_dt).total_seconds() / seconds_per_bar)
             
             if total_bars < 10:
                 # Not enough bars for meaningful windows
@@ -335,18 +351,35 @@ class UptrendEngineV4:
         except Exception:
             return (None, None, None)
 
-    def _calculate_bars_since_s3_entry(self, s3_start_ts: Optional[str], current_ts: str) -> Optional[int]:
+    def _calculate_bars_since_s3_entry(self, s3_start_ts: Optional[str], current_ts: str, timeframe: Optional[str] = None) -> Optional[int]:
         """Calculate number of bars since S3 entry.
         
+        Args:
+            s3_start_ts: S3 start timestamp
+            current_ts: Current timestamp
+            timeframe: Timeframe for bar calculation (defaults to self.timeframe)
+        
         Returns:
-            Number of bars (1 hour per bar) or None if S3 start timestamp not available
+            Number of bars based on timeframe or None if S3 start timestamp not available
         """
         if not s3_start_ts:
             return None
+        
+        # Use provided timeframe or fall back to self.timeframe
+        tf = timeframe or self.timeframe
+        
+        # Calculate seconds per bar based on timeframe
+        seconds_per_bar = {
+            "1m": 60,
+            "15m": 15 * 60,
+            "1h": 3600,
+            "4h": 4 * 3600,
+        }.get(tf, 3600)  # Default to 1h if unknown
+        
         try:
             start_dt = datetime.fromisoformat(s3_start_ts.replace("Z", "+00:00"))
             current_dt = datetime.fromisoformat(current_ts.replace("Z", "+00:00"))
-            bars = int((current_dt - start_dt).total_seconds() / 3600)  # 1 hour per bar
+            bars = int((current_dt - start_dt).total_seconds() / seconds_per_bar)
             return max(0, bars)
         except Exception:
             return None
@@ -379,9 +412,12 @@ class UptrendEngineV4:
         Returns:
             Dict with first_dip_buy_flag and diagnostics
         """
+        logger.debug("First dip buy check: %s/%s (timeframe=%s, price=%.8f)", contract, chain, self.timeframe, price)
+        
         # Check if first dip buy already taken
         meta = features.get("uptrend_engine_v4_meta") or {}
         if meta.get("first_dip_buy_taken", False):
+            logger.debug("First dip buy already taken for %s/%s", contract, chain)
             return {
                 "first_dip_buy_flag": False,
                 "diagnostics": {"reason": "already_taken"},
@@ -390,17 +426,20 @@ class UptrendEngineV4:
         # Get S3 start timestamp
         s3_start_ts = self._get_s3_start_ts(features)
         if not s3_start_ts:
+            logger.debug("First dip buy check: No S3 start timestamp for %s/%s", contract, chain)
             return {
                 "first_dip_buy_flag": False,
                 "diagnostics": {"reason": "no_s3_start_ts"},
             }
         
-        # Calculate bars since S3 entry
-        bars_since_entry = self._calculate_bars_since_s3_entry(s3_start_ts, current_ts)
+        # Calculate bars since S3 entry (use self.timeframe for bar calculation)
+        bars_since_entry = self._calculate_bars_since_s3_entry(s3_start_ts, current_ts, self.timeframe)
         if bars_since_entry is None:
+            logger.debug("First dip buy check: Cannot calculate bars for %s/%s (s3_start=%s, current=%s)", 
+                        contract, chain, s3_start_ts, current_ts)
             return {
                 "first_dip_buy_flag": False,
-                "diagnostics": {"reason": "cannot_calculate_bars"},
+                "diagnostics": {"reason": "cannot_calculate_bars", "s3_start_ts": s3_start_ts, "current_ts": current_ts},
             }
         
         # Get EMAs
@@ -410,9 +449,17 @@ class UptrendEngineV4:
         ema333 = ema_vals.get("ema333", 0.0)
         
         if ema20 <= 0 or ema30 <= 0 or ema60 <= 0 or ema333 <= 0:
+            logger.debug("First dip buy check: Invalid EMAs for %s/%s (20=%.8f, 30=%.8f, 60=%.8f, 333=%.8f)", 
+                        contract, chain, ema20, ema30, ema60, ema333)
             return {
                 "first_dip_buy_flag": False,
-                "diagnostics": {"reason": "invalid_emas"},
+                "diagnostics": {
+                    "reason": "invalid_emas",
+                    "ema20": ema20,
+                    "ema30": ema30,
+                    "ema60": ema60,
+                    "ema333": ema333,
+                },
             }
         
         # Emergency exit check: Block first dip buy if price < EMA333
@@ -420,17 +467,30 @@ class UptrendEngineV4:
         # Once EMA333 is reclaimed (price >= EMA333), first dip buys can resume if still within time window
         emergency_exit = price < ema333
         if emergency_exit:
+            logger.debug("First dip buy check: Price below EMA333 for %s/%s (price=%.8f, ema333=%.8f, bars=%d)", 
+                        contract, chain, price, ema333, bars_since_entry)
             return {
                 "first_dip_buy_flag": False,
-                "diagnostics": {"reason": "emergency_exit_below_333"},
+                "diagnostics": {
+                    "reason": "emergency_exit_below_333",
+                    "price": price,
+                    "ema333": ema333,
+                    "bars_since_entry": bars_since_entry,
+                },
             }
         
         # Get ATR
         atr_val = self._get_atr(ta)
         if atr_val <= 0:
+            logger.debug("First dip buy check: Invalid ATR for %s/%s (atr=%.8f, bars=%d)", 
+                        contract, chain, atr_val, bars_since_entry)
             return {
                 "first_dip_buy_flag": False,
-                "diagnostics": {"reason": "invalid_atr"},
+                "diagnostics": {
+                    "reason": "invalid_atr",
+                    "atr_val": atr_val,
+                    "bars_since_entry": bars_since_entry,
+                },
             }
         
         # Check slope: EMA144/250 (not 250/333)
@@ -482,6 +542,14 @@ class UptrendEngineV4:
             "emergency_exit": False,  # Already checked above, but include for diagnostics
             "first_dip_buy_flag": first_dip_buy_flag,
         }
+        
+        # Log the result
+        if first_dip_buy_flag:
+            logger.info("First dip buy TRIGGERED: %s/%s (timeframe=%s, bars=%d, option1=%s, option2=%s, slope_ok=%s, ts_ok=%s)", 
+                       contract, chain, self.timeframe, bars_since_entry, option1_ok, option2_ok, slope_ok, ts_ok)
+        else:
+            logger.debug("First dip buy BLOCKED: %s/%s (timeframe=%s, bars=%d, option1=%s, option2=%s, slope_ok=%s, ts_ok=%s, ts_with_boost=%.4f)", 
+                        contract, chain, self.timeframe, bars_since_entry, option1_ok, option2_ok, slope_ok, ts_ok, ts_with_boost)
         
         return {
             "first_dip_buy_flag": first_dip_buy_flag,
@@ -538,21 +606,6 @@ class UptrendEngineV4:
         ema30 = ema_vals.get("ema30", 0.0)
         ema60 = ema_vals.get("ema60", 0.0)
         return (ema20 > ema60) and (ema30 > ema60)
-
-    def _check_fast_band_at_bottom(self, ema_vals: Dict[str, float]) -> bool:
-        """Check if fast band (20/30) is at the bottom (below all other EMAs).
-        
-        Global exit precedence: exits position immediately.
-        """
-        ema20 = ema_vals.get("ema20", 0.0)
-        ema30 = ema_vals.get("ema30", 0.0)
-        ema60 = ema_vals.get("ema60", 0.0)
-        ema144 = ema_vals.get("ema144", 0.0)
-        ema250 = ema_vals.get("ema250", 0.0)
-        ema333 = ema_vals.get("ema333", 0.0)
-        
-        bottom_ema = min(ema60, ema144, ema250, ema333)
-        return (ema20 < bottom_ema) and (ema30 < bottom_ema)
 
     # --------------- TS Calculation (from v2/v3) ---------------
 
@@ -628,6 +681,10 @@ class UptrendEngineV4:
         Returns:
             Dict with condition checks and diagnostics
         """
+        signal_type = "S2 retest" if anchor_is_333 else "S1 buy"
+        logger.debug("%s check: price=%.8f, ema_anchor=%.8f (timeframe=%s)", 
+                    signal_type, price, ema_anchor, self.timeframe)
+        
         atr = self._get_atr(ta)
         # Use different halo per regime: S1 (EMA60) uses 1.0 * ATR, S2 retest (EMA333) uses tunable multiplier
         halo = (Constants.S2_RETEST_HALO_ATR_MULTIPLIER * atr) if anchor_is_333 else (Constants.ENTRY_HALO_ATR_MULTIPLIER * atr)
@@ -671,13 +728,25 @@ class UptrendEngineV4:
         }
         
         if anchor_is_333:
-            diagnostics["ema250_slope"] = ema_slopes.get("ema250_slope", 0.0)
-            diagnostics["ema333_slope"] = ema_slopes.get("ema333_slope", 0.0)
+            ema250_slope = ema_slopes.get("ema250_slope", 0.0)
+            ema333_slope = ema_slopes.get("ema333_slope", 0.0)
+            diagnostics["ema250_slope"] = ema250_slope
+            diagnostics["ema333_slope"] = ema333_slope
         else:
-            diagnostics["ema60_slope"] = ema_slopes.get("ema60_slope", 0.0)
-            diagnostics["ema144_slope"] = ema_slopes.get("ema144_slope", 0.0)
+            ema60_slope = ema_slopes.get("ema60_slope", 0.0)
+            ema144_slope = ema_slopes.get("ema144_slope", 0.0)
+            diagnostics["ema60_slope"] = ema60_slope
+            diagnostics["ema144_slope"] = ema144_slope
         
         buy_signal = entry_zone_ok and slope_ok and ts_ok
+        
+        # Log the result
+        if buy_signal:
+            logger.info("%s TRIGGERED: price=%.8f, ema_anchor=%.8f, entry_zone=%s, slope_ok=%s, ts_ok=%s, ts_with_boost=%.4f (timeframe=%s)", 
+                       signal_type, price, ema_anchor, entry_zone_ok, slope_ok, ts_ok, ts_with_boost, self.timeframe)
+        else:
+            logger.debug("%s BLOCKED: price=%.8f, ema_anchor=%.8f, entry_zone=%s, slope_ok=%s, ts_ok=%s, ts_with_boost=%.4f (timeframe=%s)", 
+                        signal_type, price, ema_anchor, entry_zone_ok, slope_ok, ts_ok, ts_with_boost, self.timeframe)
         
         return {
             "buy_signal": buy_signal,
@@ -710,8 +779,8 @@ class UptrendEngineV4:
         def sigmoid(x: float, k: float = 1.0) -> float:
             return 1.0 / (1.0 + math.exp(-x / max(k, 1e-9)))
         
-        # Calculate window boundaries
-        w1_bars, w2_bars, w3_bars = self._calculate_window_boundaries(s3_start_ts, current_ts)
+        # Calculate window boundaries (use self.timeframe for bar calculation)
+        w1_bars, w2_bars, w3_bars = self._calculate_window_boundaries(s3_start_ts, current_ts, self.timeframe)
         
         if w1_bars is None:
             # Not enough bars, return neutral EDX
@@ -1271,6 +1340,7 @@ class UptrendEngineV4:
         now = datetime.now(timezone.utc)
         updated = 0
         positions = self._active_positions(include_regime_drivers=include_regime_drivers)
+        logger.debug("Uptrend Engine (%s) processing %d positions", self.timeframe, len(positions))
         
         for p in positions:
             try:
@@ -1278,12 +1348,17 @@ class UptrendEngineV4:
                 contract = p.get("token_contract")
                 chain = p.get("token_chain")
                 position_status = p.get("status", "active")  # Get position status
+                total_quantity = float(p.get("total_quantity", 0.0))  # For emergency exit checks
                 features = p.get("features") or {}
                 prev_payload = dict(features.get("uptrend_engine_v4") or {})
                 prev_state = str(prev_payload.get("state") or "")
                 
+                logger.debug("Processing position: %s/%s (timeframe=%s, status=%s, prev_state=%s)", 
+                            contract, chain, self.timeframe, position_status, prev_state or "(none)")
+                
                 ta = self._read_ta(features)
                 if not ta:
+                    logger.debug("Skipping %s/%s: No TA data (timeframe=%s)", contract, chain, self.timeframe)
                     continue
                 
                 ema_vals = self._get_ema_values(ta)
@@ -1297,6 +1372,7 @@ class UptrendEngineV4:
                     price = float(ta.get("latest_price") or 0.0)
                 
                 if price <= 0:
+                    logger.debug("Skipping %s/%s: No valid price (timeframe=%s)", contract, chain, self.timeframe)
                     continue
                 
                 sr_levels = self._read_sr_levels(features)
@@ -1305,9 +1381,14 @@ class UptrendEngineV4:
                 # Dormant positions are skipped entirely (not enough data)
                 is_watchlist = (position_status == "watchlist")
                 
+                current_ts = last.get("ts") or _now_iso()
+                
                 # Bootstrap logic: only S0 or S3, otherwise no state
                 if not prev_state or prev_state == "":
+                    logger.debug("Bootstrap check for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
                     if self._check_s3_order(ema_vals):
+                        logger.info("Bootstrap→S3: %s/%s (timeframe=%s, full bullish alignment)", 
+                                   contract, chain, self.timeframe)
                         # Bootstrap to S3: Record S3 start timestamp
                         current_ts = last.get("ts") or _now_iso()
                         self._set_s3_start_ts(pid, features, current_ts)
@@ -1373,33 +1454,15 @@ class UptrendEngineV4:
                         updated += 1
                         continue
                 
-                # Global exit precedence: fast band at bottom (overrides all states)
-                if self._check_fast_band_at_bottom(ema_vals):
-                    payload = self._build_payload(
-                        "S0",
-                        contract,
-                        chain,
-                        price,
-                        ema_vals,
-                        features,
-                        {
-                            "exit_position": True,
-                            "exit_reason": "fast_band_at_bottom",
-                        },
-                        prev_state=prev_state,
-                    )
-                    features["uptrend_engine_v4"] = payload
-                    self._write_features(pid, features)
-                    self._emit_event("uptrend_state_change", payload)
-                    updated += 1
-                    continue
-                
                 # --------------- State Machine Logic ---------------
                 
                 # S0: Pure Downtrend
                 if prev_state == "S0":
+                    logger.debug("Position in S0: %s/%s (timeframe=%s, no buy checks)", contract, chain, self.timeframe)
                     # S0 → S1: Fast band above EMA60 AND Price > EMA60 (must come from S0)
                     if self._check_fast_band_above_60(ema_vals) and price > ema_vals.get("ema60", 0.0):
+                        logger.info("S0→S1 TRANSITION: %s/%s (timeframe=%s, fast band above EMA60, price > EMA60)", 
+                                   contract, chain, self.timeframe)
                         # Check buy signal conditions
                         buy_check = self._check_buy_signal_conditions(
                             price, ema_vals.get("ema60", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=False
@@ -1446,8 +1509,50 @@ class UptrendEngineV4:
                         price, ema_vals.get("ema60", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=False
                     )
                     
+                    # S1 → S0: Full bearish EMA order (emergency exit)
+                    # Always set flags for learning system, even if no tokens held
+                    if self._check_s0_order(ema_vals):
+                        # Emergency exit: full bearish order
+                        # Flags set regardless of tokens (learning system needs to see all exits)
+                        # Executor will skip execution if no tokens
+                        logger.info("S1→S0 EMERGENCY EXIT: %s/%s (timeframe=%s, full bearish EMA order)", 
+                                   contract, chain, self.timeframe)
+                        # Persist last S1 buy diagnostics for audit
+                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        meta["last_s1_buy_check"] = {
+                            "ts": current_ts,
+                            **(buy_check.get("diagnostics") or {})
+                        }
+                        features["uptrend_engine_v4_meta"] = meta
+                        payload = self._build_payload(
+                            "S0",
+                            contract,
+                            chain,
+                            price,
+                            ema_vals,
+                            features,
+                            {
+                                "exit_position": True,
+                                "exit_reason": "s1_to_s0_bearish_order",
+                                "emergency_exit": True,
+                            },
+                            prev_state=prev_state,
+                        )
+                        features["uptrend_engine_v4"] = payload
+                        self._write_features(pid, features)
+                        self._emit_event("uptrend_state_change", payload)
+                        updated += 1
                     # S1 → S2: Price > EMA333 (flip-flop, not an exit)
-                    if price > ema_vals.get("ema333", 0.0):
+                    elif price > ema_vals.get("ema333", 0.0):
+                        logger.info("S1→S2 TRANSITION: %s/%s (timeframe=%s, price > EMA333, S1 buy checks stopped)", 
+                                   contract, chain, self.timeframe)
+                        # Persist last S1 buy diagnostics for audit
+                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        meta["last_s1_buy_check"] = {
+                            "ts": current_ts,
+                            **(buy_check.get("diagnostics") or {})
+                        }
+                        features["uptrend_engine_v4_meta"] = meta
                         payload = self._build_payload(
                             "S2",
                             contract,
@@ -1486,8 +1591,19 @@ class UptrendEngineV4:
                 
                 # S2: Defensive Regime (price > EMA333, not full alignment)
                 elif prev_state == "S2":
+                    logger.debug("Position in S2: %s/%s (timeframe=%s, checking retest buys and trims)", 
+                                contract, chain, self.timeframe)
                     # S2 → S1: Price < EMA333 (flip-flop back, not an exit)
                     if price < ema_vals.get("ema333", 0.0):
+                        logger.info("S2→S1 TRANSITION: %s/%s (timeframe=%s, price < EMA333, S2 retest/trim checks stopped)", 
+                                   contract, chain, self.timeframe)
+                        # Persist last S2 retest diagnostics for audit
+                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        meta["last_s2_retest_check"] = {
+                            "ts": current_ts,
+                            **(retest_check.get("diagnostics") or {})
+                        }
+                        features["uptrend_engine_v4_meta"] = meta
                         payload = self._build_payload(
                             "S1",
                             contract,
@@ -1506,6 +1622,15 @@ class UptrendEngineV4:
                         updated += 1
                     # S2 → S3: Full bullish alignment (band-based)
                     elif self._check_s3_order(ema_vals):
+                        logger.info("S2→S3 TRANSITION: %s/%s (timeframe=%s, full bullish alignment, S2 retest/trim checks stopped)", 
+                                   contract, chain, self.timeframe)
+                        # Persist last S2 retest diagnostics for audit
+                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        meta["last_s2_retest_check"] = {
+                            "ts": current_ts,
+                            **(retest_check.get("diagnostics") or {})
+                        }
+                        features["uptrend_engine_v4_meta"] = meta
                         # Record S3 start timestamp
                         current_ts = last.get("ts") or _now_iso()
                         self._set_s3_start_ts(pid, features, current_ts)
@@ -1535,13 +1660,27 @@ class UptrendEngineV4:
                         atr_val = self._get_atr(ta)
                         sr_halo = 1.0 * atr_val
                         near_sr = False
+                        closest_sr_level = None
+                        closest_sr_distance = float('inf')
                         if sr_levels and atr_val > 0:
                             for level in sr_levels:
                                 level_price = float(level.get("price") or 0.0)
-                                if level_price > 0 and abs(price - level_price) <= sr_halo:
-                                    near_sr = True
-                                    break
+                                if level_price > 0:
+                                    distance = abs(price - level_price)
+                                    if distance <= sr_halo:
+                                        near_sr = True
+                                    if distance < closest_sr_distance:
+                                        closest_sr_distance = distance
+                                        closest_sr_level = level_price
                         trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                        
+                        # Log trim check
+                        if trim_flag:
+                            logger.info("S2 TRIM TRIGGERED: %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
+                                       contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
+                        else:
+                            logger.debug("S2 trim check: %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
+                                        contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
                         
                         # Retest buy at EMA333
                         retest_check = self._check_buy_signal_conditions(
@@ -1600,6 +1739,8 @@ class UptrendEngineV4:
                         self._emit_event("uptrend_state_change", payload)
                         updated += 1
                     elif self._check_s0_order(ema_vals):
+                        logger.info("Bootstrap→S0: %s/%s (timeframe=%s, full bearish alignment)", 
+                                   contract, chain, self.timeframe)
                         payload = self._build_payload(
                             "S0",
                             contract,
@@ -1631,6 +1772,7 @@ class UptrendEngineV4:
                 
                 # S3: Trending (full bullish alignment)
                 elif prev_state == "S3":
+                    logger.debug("Processing S3 state for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
                     # S3 → S0: All EMAs break below EMA333
                     all_below_333 = (
                         ema_vals.get("ema20", 0.0) < ema_vals.get("ema333", 0.0) and
@@ -1641,12 +1783,18 @@ class UptrendEngineV4:
                     )
                     
                     if all_below_333:
+                        logger.info("S3→S0 TRANSITION: %s/%s (timeframe=%s, all EMAs below EMA333, S3 buy/trim checks stopped)", 
+                                   contract, chain, self.timeframe)
                         # Clear S3 start timestamp and first dip buy flag on exit
                         self._clear_s3_start_ts(pid, features)
                         if "uptrend_engine_v4_meta" in features and "first_dip_buy_taken" in features["uptrend_engine_v4_meta"]:
                             del features["uptrend_engine_v4_meta"]["first_dip_buy_taken"]
                             self._write_features(pid, features)
                         
+                        # Always set exit_position flag for learning system, even if no tokens held
+                        # Executor will skip execution if no tokens
+                        logger.info("S3→S0 EMERGENCY EXIT: %s/%s (timeframe=%s, all EMAs below EMA333)", 
+                                   contract, chain, self.timeframe)
                         payload = self._build_payload(
                             "S0",
                             contract,
@@ -1671,6 +1819,8 @@ class UptrendEngineV4:
                         current_ts = last.get("ts") or _now_iso()
                         
                         # Check first dip buy (only if not already taken)
+                        logger.debug("Checking first dip buy for %s/%s (timeframe=%s, prev_state=S3)", 
+                                    contract, chain, self.timeframe)
                         first_dip_check = self._check_first_dip_buy(
                             contract, chain, price, ema_vals, ta, features, current_ts
                         )
@@ -1683,7 +1833,16 @@ class UptrendEngineV4:
                             features["uptrend_engine_v4_meta"]["first_dip_buy_taken"] = True
                         
                         # Emergency exit: price < EMA333 (flag only, no state change)
+                        # Always set flag for learning system, even if no tokens held
+                        # Executor will skip execution if no tokens
+                        prev_emergency_exit = bool(prev_payload.get("emergency_exit", False))
                         emergency_exit = price < ema333_val
+                        if emergency_exit:
+                            logger.info("S3 EMERGENCY EXIT: %s/%s (timeframe=%s, price=%.8f < ema333=%.8f)", 
+                                       contract, chain, self.timeframe, price, ema333_val)
+                        elif prev_emergency_exit and not emergency_exit:
+                            logger.info("S3 EMA333 RECLAIMED: %s/%s (timeframe=%s, price=%.8f >= ema333=%.8f)", 
+                                       contract, chain, self.timeframe, price, ema333_val)
                         
                         # Reclaimed EMA333: price transitions from < EMA333 to >= EMA333 (in S3)
                         # Check if previous bar had emergency_exit flag
@@ -1755,19 +1914,41 @@ class UptrendEngineV4:
                         dx_ok = dx >= dx_threshold_final
                         dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok and not emergency_exit
                         
+                        # Log S3 DX buy check
+                        if dx_buy_ok:
+                            logger.info("S3 DX buy TRIGGERED: %s/%s (timeframe=%s, dx=%.4f, threshold=%.4f, price_in_discount=%s, slope_ok=%s, ts_ok=%s, emergency_exit=%s)", 
+                                       contract, chain, self.timeframe, dx, dx_threshold_final, price_in_discount_zone, slope_ok, ts_ok, emergency_exit)
+                        else:
+                            logger.debug("S3 DX buy BLOCKED: %s/%s (timeframe=%s, dx=%.4f, threshold=%.4f, price_in_discount=%s, slope_ok=%s, ts_ok=%s, emergency_exit=%s)", 
+                                        contract, chain, self.timeframe, dx, dx_threshold_final, price_in_discount_zone, slope_ok, ts_ok, emergency_exit)
+                        
                         # Note: ts_score, sr_boost, ts_with_boost already computed above for buy check
                         
                         # Trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
                         atr_val = self._get_atr(ta)
                         sr_halo = 1.0 * atr_val
                         near_sr = False
+                        closest_sr_level = None
+                        closest_sr_distance = float('inf')
                         if sr_levels and atr_val > 0:
                             for level in sr_levels:
                                 level_price = float(level.get("price") or 0.0)
-                                if level_price > 0 and abs(price - level_price) <= sr_halo:
-                                    near_sr = True
-                                    break
+                                if level_price > 0:
+                                    distance = abs(price - level_price)
+                                    if distance <= sr_halo:
+                                        near_sr = True
+                                    if distance < closest_sr_distance:
+                                        closest_sr_distance = distance
+                                        closest_sr_level = level_price
                         trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                        
+                        # Log trim check
+                        if trim_flag:
+                            logger.info("S3 TRIM TRIGGERED: %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
+                                       contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
+                        else:
+                            logger.debug("S3 trim check: %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
+                                        contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
                         
                         extra_data = {
                             "trim_flag": trim_flag,

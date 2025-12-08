@@ -24,6 +24,7 @@ from src.intelligence.lowcap_portfolio_manager.pm.bucketing_helpers import (
     bucket_a_e, bucket_score, bucket_ema_slopes, bucket_size, bucket_bars_since_entry,
     classify_outcome, classify_hold_time
 )
+from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import BUCKET_DRIVERS
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class PMCoreTick:
         # Initialize PM Executor (trader=None since we use Li.Fi SDK)
         self.executor = PMExecutor(trader=None, sb_client=self.sb)
         self._exposure_lookup: Optional["ExposureLookup"] = None
+        self._regime_state_cache: Dict[str, Dict[str, str]] = {}
         
         # Initialize Telegram Signal Notifier (if enabled)
         self.telegram_notifier = None
@@ -86,58 +88,78 @@ class PMCoreTick:
             except Exception as e:
                 logger.warning(f"Failed to initialize Telegram notifier: {e}")
 
-    def _get_bucket_regime_state(self, bucket: str | None) -> Dict[str, str]:
+    def _get_regime_driver_states(self, driver: str | None) -> Dict[str, str]:
         """
-        Get regime states (S0, S1, S2, S3) for a bucket driver across all timeframes.
+        Get regime states (S0-S4) for a regime driver across macro/meso/micro (1d/1h/1m).
         
         Args:
-            bucket: Token's cap bucket (e.g., "nano", "small", "mid", "big")
+            driver: Regime driver ticker (e.g., BTC, ALT, nano, BTC.d)
         
         Returns:
-            Dict with keys: "macro", "meso", "micro" mapping to regime state strings (S0, S1, S2, S3)
-            Defaults to "S4" if not found
+            Dict with keys: macro, meso, micro
         """
         default_state = {"macro": "S4", "meso": "S4", "micro": "S4"}
-        
-        if not bucket:
+        if not driver:
             return default_state
+        if driver in self._regime_state_cache:
+            return self._regime_state_cache[driver]
         
+        tf_mapping = {"macro": "1d", "meso": "1h", "micro": "1m"}
         try:
-            # Regime drivers are stored in lowcap_positions with status='regime_driver'
-            # Now that schema allows '1d', we use regime timeframes directly
-            tf_mapping = {
-                "macro": "1d",  # 1d regime timeframe (now stored directly as 1d)
-                "meso": "1h",   # 1h regime timeframe
-                "micro": "1m",  # 1m regime timeframe
-            }
-            
-            states = {}
+            states: Dict[str, str] = {}
             for horizon, pos_tf in tf_mapping.items():
                 result = (
                     self.sb.table("lowcap_positions")
                     .select("state, features")
                     .eq("status", "regime_driver")
-                    .eq("token_ticker", bucket)
+                    .eq("token_ticker", driver)
                     .eq("timeframe", pos_tf)
                     .order("updated_at", desc=True)
                     .limit(1)
                     .execute()
                 )
-                
                 if result.data:
                     row = result.data[0]
-                    # Try to get state from features.uptrend_engine_v4.state first, fallback to state column
                     features = row.get("features") or {}
                     uptrend = features.get("uptrend_engine_v4") or {}
                     state = uptrend.get("state") or row.get("state", "S4")
                     states[horizon] = str(state)
                 else:
                     states[horizon] = "S4"
-            
+            self._regime_state_cache[driver] = states
             return states
         except Exception as e:
-            logger.warning(f"Error fetching regime states for bucket {bucket}: {e}")
+            logger.warning(f"Error fetching regime states for driver {driver}: {e}")
             return default_state
+
+    def _get_bucket_regime_state(self, bucket: str | None) -> Dict[str, str]:
+        """Backward-compatible helper for bucket driver only."""
+        return self._get_regime_driver_states(bucket)
+
+    def _get_regime_states_bundle(self, token_bucket: Optional[str]) -> Dict[str, str]:
+        """
+        Build a flat dict of regime states (S0-S4) for BTC, ALT, BUCKET, BTC.d, USDT.d
+        across macro/meso/micro horizons.
+        """
+        drivers = {
+            "btc": "BTC",
+            "alt": "ALT",
+            "btcd": "BTC.d",
+            "usdtd": "USDT.d",
+        }
+        # Bucket driver from token bucket mapping (fallback None)
+        bucket_driver = None
+        if token_bucket:
+            bucket_driver = BUCKET_DRIVERS.get(token_bucket, token_bucket)
+        drivers["bucket"] = bucket_driver
+        
+        bundle: Dict[str, str] = {}
+        for prefix, driver in drivers.items():
+            states = self._get_regime_driver_states(driver)
+            bundle[f"{prefix}_macro"] = states.get("macro", "S4")
+            bundle[f"{prefix}_meso"] = states.get("meso", "S4")
+            bundle[f"{prefix}_micro"] = states.get("micro", "S4")
+        return bundle
     
     def _get_regime_context(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -390,13 +412,8 @@ class PMCoreTick:
         except Exception as exc:
             logger.warning(f"Exposure config failed: {exc}")
             return None
-        defaults = {
-            "macro_phase": (regime_context.get("macro") or {}).get("phase"),
-            "meso_phase": (regime_context.get("meso") or {}).get("phase"),
-            "micro_phase": (regime_context.get("micro") or {}).get("phase"),
-        }
         try:
-            return ExposureLookup.build(positions, exposure_cfg, defaults)
+            return ExposureLookup.build(positions, exposure_cfg, {})
         except Exception as exc:
             logger.warning(f"Exposure lookup build failed: {exc}")
             return None
@@ -410,7 +427,7 @@ class PMCoreTick:
         """
         res = (
             self.sb.table("lowcap_positions")
-            .select("id,token_contract,token_chain,token_ticker,timeframe,status,features,avg_entry_price,avg_exit_price,total_allocation_usd,total_extracted_usd,total_quantity,total_tokens_bought,total_tokens_sold,total_allocation_pct,entry_context,current_trade_id")
+            .select("id,token_contract,token_chain,token_ticker,timeframe,status,features,avg_entry_price,avg_exit_price,total_allocation_usd,total_extracted_usd,total_quantity,total_tokens_bought,total_tokens_sold,total_allocation_pct,entry_context,current_trade_id,book_id")
             .eq("timeframe", self.timeframe)
             .in_("status", ["watchlist", "active"])  # Skip dormant positions
             .limit(2000)
@@ -841,7 +858,10 @@ class PMCoreTick:
         token_bucket: Optional[str],
         state: str,
         levers: Optional[Dict[str, Any]] = None,
+        regime_states: Optional[Dict[str, str]] = None,
     ) -> Tuple[Optional[str], Optional[str], Dict[str, Any]]:
+        if regime_states is None:
+            regime_states = self._get_regime_states_bundle(token_bucket)
         a_val = 0.5
         e_val = 0.5
         if levers:
@@ -875,6 +895,9 @@ class PMCoreTick:
                 regime_context=regime_context or {},
                 position_bucket=token_bucket,
                 bucket_rank=bucket_rank,
+                regime_states=regime_states,
+                chain=position.get("token_chain"),
+                book_id=position.get("book_id") or (position.get("entry_context") or {}).get("book_id"),
             )
         except Exception:
             scope = {}
@@ -2170,7 +2193,7 @@ class PMCoreTick:
         Simple rule: If state is S0 AND current_trade_id exists → close the trade.
         
         This handles:
-        - S1 → S0 (fast_band_at_bottom)
+        - S1 → S0 (full bearish EMA order)
         - S3 → S0 (all EMAs below EMA333)
         
         Args:
@@ -2288,7 +2311,8 @@ class PMCoreTick:
             # Get decision_type from exit_reason (if available) or default to "emergency_exit"
             decision_type = uptrend.get("exit_reason", "emergency_exit")
             # Normalize exit_reason to decision_type format
-            if decision_type == "fast_band_at_bottom" or decision_type == "all_emas_below_333":
+            # All emergency exits should be normalized to "emergency_exit" for learning system
+            if decision_type in ["all_emas_below_333", "s1_to_s0_bearish_order"]:
                 decision_type = "emergency_exit"
             
             # Calculate time_to_s3: time from entry to S3 state transition
@@ -2774,6 +2798,8 @@ class PMCoreTick:
 
     def run(self) -> int:
         now = datetime.now(timezone.utc)
+        # Reset regime cache for this run
+        self._regime_state_cache = {}
         
         # Get regime context (bucket summaries) for all PM strands
         regime_context = self._get_regime_context()
@@ -2796,9 +2822,11 @@ class PMCoreTick:
             token_bucket = bucket_map.get((token_contract, token_chain)) or bucket_map.get((token_contract, None))
             
             # Get regime states for this token's bucket across all timeframes (for logging)
-            regime_states = self._get_bucket_regime_state(token_bucket)
+            bucket_states = self._get_bucket_regime_state(token_bucket)
             # Format as string for backward compatibility with plan_actions_v4
-            regime_state_str = f"Macro {regime_states['macro']}, Meso {regime_states['meso']}, Micro {regime_states['micro']}"
+            regime_state_str = f"Macro {bucket_states['macro']}, Meso {bucket_states['meso']}, Micro {bucket_states['micro']}"
+            # Full regime bundle across drivers/horizons for scope/learning
+            regime_state_bundle = self._get_regime_states_bundle(token_bucket)
 
             # Compute levers first so we can log A/E values in episode events
             le = compute_levers(
@@ -2873,7 +2901,8 @@ class PMCoreTick:
                     regime_context=regime_context,
                     token_bucket=token_bucket,
                     feature_flags=feature_flags,
-                    exposure_lookup=exposure_lookup
+                    exposure_lookup=exposure_lookup,
+                    regime_states=regime_state_bundle,
                 )
             else:
                 actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
@@ -2888,7 +2917,8 @@ class PMCoreTick:
                             "a_final": a_final,
                             "e_final": e_final,
                             "position_size_frac": position_size_frac,
-                            "regime_state": regime_states,  # Dict: {"macro": "S0", "meso": "S1", "micro": "S3"}
+                        "regime_state": bucket_states,  # Dict: {"macro": "S0", "meso": "S1", "micro": "S3"}
+                        "regime_state_bundle": regime_state_bundle,
                             "regime_state_str": regime_state_str,  # Formatted string for logging
                             "token_bucket": token_bucket or "unknown",
                             "active_positions": len(positions)
@@ -2950,46 +2980,6 @@ class PMCoreTick:
         return written
 
 
-# Event-subscribe path for immediate recompute on structure/trail changes
-def _subscribe_events() -> None:
-    try:
-        from intelligence.lowcap_portfolio_manager.events.bus import subscribe
-
-        def on_structure_change(_payload: dict) -> None:
-            try:
-                PMCoreTick().run()
-            except Exception:
-                pass
-
-        subscribe('structure_change', on_structure_change)
-
-        def on_phase_transition(_payload: dict) -> None:
-            try:
-                # Recompute on phase flips (affects A/E globally)
-                PMCoreTick().run()
-            except Exception:
-                pass
-
-        subscribe('phase_transition', on_phase_transition)
-
-        def on_sr_break(_payload: dict) -> None:
-            try:
-                PMCoreTick().run()
-            except Exception:
-                pass
-
-        def on_trail_breach(_payload: dict) -> None:
-            try:
-                PMCoreTick().run()
-            except Exception:
-                pass
-
-        subscribe('sr_break_detected', on_sr_break)
-        subscribe('ema_trail_breach', on_trail_breach)
-    except Exception:
-        pass
-
-
 def main(timeframe: str = "1h", learning_system=None) -> None:
     """
     Main entry point for PM Core Tick.
@@ -2999,7 +2989,6 @@ def main(timeframe: str = "1h", learning_system=None) -> None:
         learning_system: Optional learning system instance for processing position_closed strands
     """
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    _subscribe_events()
     PMCoreTick(timeframe=timeframe, learning_system=learning_system).run()
 
 

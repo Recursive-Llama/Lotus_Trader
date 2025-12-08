@@ -21,17 +21,35 @@ def build_regime_signature(scope: Dict[str, Any]) -> str:
     Build regime signature from scope.
     
     Args:
-        scope: Scope dict with macro/meso/micro phases and bucket_rank
+        scope: Scope dict with regime driver states and bucket_rank
     
     Returns:
         Regime signature string
     """
-    macro = scope.get('macro_phase', 'Unknown')
-    meso = scope.get('meso_phase', 'Unknown')
-    micro = scope.get('micro_phase', 'Unknown')
+    # Use full regime bundle to allow richer weighting
+    def get(name: str) -> str:
+        return scope.get(name, 'S4')
+
+    parts = [
+        f"btc_macro={get('btc_macro')}",
+        f"btc_meso={get('btc_meso')}",
+        f"btc_micro={get('btc_micro')}",
+        f"alt_macro={get('alt_macro')}",
+        f"alt_meso={get('alt_meso')}",
+        f"alt_micro={get('alt_micro')}",
+        f"bucket_macro={get('bucket_macro')}",
+        f"bucket_meso={get('bucket_meso')}",
+        f"bucket_micro={get('bucket_micro')}",
+        f"btcd_macro={get('btcd_macro')}",
+        f"btcd_meso={get('btcd_meso')}",
+        f"btcd_micro={get('btcd_micro')}",
+        f"usdtd_macro={get('usdtd_macro')}",
+        f"usdtd_meso={get('usdtd_meso')}",
+        f"usdtd_micro={get('usdtd_micro')}",
+    ]
     bucket_rank = scope.get('bucket_rank_position')
     
-    sig = f"macro={macro}|meso={meso}|micro={micro}"
+    sig = "|".join(parts)
     if bucket_rank:
         sig += f"|bucket_rank={bucket_rank}"
     

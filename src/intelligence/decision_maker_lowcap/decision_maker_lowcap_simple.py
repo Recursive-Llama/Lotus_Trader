@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from intelligence.universal_learning.coefficient_reader import CoefficientReader
 from intelligence.universal_learning.bucket_vocabulary import BucketVocabulary
 from src.intelligence.lowcap_portfolio_manager.regime.bucket_context import fetch_bucket_phase_snapshot
+from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import BUCKET_DRIVERS
 
 logger = logging.getLogger(__name__)
 
@@ -69,79 +70,73 @@ class DecisionMakerLowcapSimple:
     
     def _get_regime_context(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get macro/meso/micro phases plus bucket snapshots for regime_context.
+        Get bucket snapshots for regime_context (used for bucket rank/leader).
         """
         regime_context = {}
         
-        # Note: Old phase_state table (Dip, Recover, etc.) is no longer used.
-        # Regime states (S0, S1, S2, S3) are now computed by RegimeAECalculator from lowcap_positions.
-        # Phase fields are kept empty for backward compatibility but not used for decisions.
         bucket_snapshot = fetch_bucket_phase_snapshot(self.supabase_manager.client)
         regime_context["bucket_phases"] = bucket_snapshot.get("bucket_phases", {})
         regime_context["bucket_population"] = bucket_snapshot.get("bucket_population", {})
         regime_context["bucket_rank"] = bucket_snapshot.get("bucket_rank", [])
 
         return regime_context
-    
-    def _get_bucket_regime_state(self, bucket: Optional[str]) -> Dict[str, str]:
-        """
-        Get regime states (S0, S1, S2, S3) for a bucket driver across all timeframes.
-        
-        Args:
-            bucket: Token's cap bucket (e.g., "nano", "small", "mid", "big")
-        
-        Returns:
-            Dict with keys: "macro", "meso", "micro" mapping to regime state strings (S0, S1, S2, S3)
-            Defaults to "S4" if not found
-        """
+
+    def _get_regime_driver_states(self, driver: Optional[str]) -> Dict[str, str]:
+        """Fetch S-states (S0-S4) for a regime driver across macro/meso/micro."""
         default_state = {"macro": "S4", "meso": "S4", "micro": "S4"}
-        
-        if not bucket:
+        if not driver:
             return default_state
-        
+        tf_mapping = {"macro": "1d", "meso": "1h", "micro": "1m"}
         try:
-            # Regime drivers are stored in lowcap_positions with status='regime_driver'
-            tf_mapping = {
-                "macro": "1d",  # 1d regime timeframe
-                "meso": "1h",   # 1h regime timeframe
-                "micro": "1m",  # 1m regime timeframe
-            }
-            
-            states = {}
+            states: Dict[str, str] = {}
             for horizon, pos_tf in tf_mapping.items():
                 result = (
                     self.supabase_manager.client.table("lowcap_positions")
                     .select("state, features")
                     .eq("status", "regime_driver")
-                    .eq("token_ticker", bucket)
+                    .eq("token_ticker", driver)
                     .eq("timeframe", pos_tf)
                     .order("updated_at", desc=True)
                     .limit(1)
                     .execute()
                 )
-                
                 if result.data:
                     row = result.data[0]
-                    # Try to get state from features.uptrend_engine_v4.state first, fallback to state column
                     features = row.get("features") or {}
                     uptrend = features.get("uptrend_engine_v4") or {}
                     state = uptrend.get("state") or row.get("state", "S4")
                     states[horizon] = str(state)
                 else:
                     states[horizon] = "S4"
-            
             return states
         except Exception as e:
-            self.logger.warning(f"Error fetching regime states for bucket {bucket}: {e}")
+            self.logger.warning(f"Error fetching regime states for driver {driver}: {e}")
             return default_state
+
+    def _get_regime_states_bundle(self, token_bucket: Optional[str]) -> Dict[str, str]:
+        """Build full regime bundle (btc/alt/bucket/btcd/usdtd × macro/meso/micro)."""
+        drivers = {
+            "btc": "BTC",
+            "alt": "ALT",
+            "btcd": "BTC.d",
+            "usdtd": "USDT.d",
+        }
+        bucket_driver = None
+        if token_bucket:
+            bucket_driver = BUCKET_DRIVERS.get(token_bucket, token_bucket)
+        drivers["bucket"] = bucket_driver
+
+        bundle: Dict[str, str] = {}
+        for prefix, driver in drivers.items():
+            states = self._get_regime_driver_states(driver)
+            bundle[f"{prefix}_macro"] = states.get("macro", "S4")
+            bundle[f"{prefix}_meso"] = states.get("meso", "S4")
+            bundle[f"{prefix}_micro"] = states.get("micro", "S4")
+        return bundle
     
     def _augment_dm_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         regime_context = self._get_regime_context()
-        # Note: Old phase labels (Dip, Recover, etc.) are no longer used.
-        # Regime states (S0, S1, S2, S3) are computed by RegimeAECalculator.
-        context['macro_phase'] = "N/A"  # Legacy field, not used
-        context['meso_phase'] = "N/A"  # Legacy field, not used
-        context['micro_phase'] = "N/A"  # Legacy field, not used
+        # Legacy phase fields removed; regime states handled elsewhere
         
         if not context.get('bucket') and context.get('mcap_bucket'):
             context['bucket'] = context['mcap_bucket']
@@ -696,13 +691,10 @@ class DecisionMakerLowcapSimple:
             entry_context['allocation_pct'] = allocation_pct
             entry_context['timeframe_splits'] = timeframe_splits  # Store splits per timeframe
             entry_context['created_at'] = datetime.now(timezone.utc).isoformat()
-            
-            # Add regime state at entry time (macro/meso/micro)
+            # Add regime state bundle at entry time
             token_bucket = entry_context.get('mcap_bucket')
-            regime_state = self._get_bucket_regime_state(token_bucket)
-            entry_context['regime_state_macro'] = regime_state.get('macro', 'S4')
-            entry_context['regime_state_meso'] = regime_state.get('meso', 'S4')
-            entry_context['regime_state_micro'] = regime_state.get('micro', 'S4')
+            regime_bundle = self._get_regime_states_bundle(token_bucket)
+            entry_context['regime_states_entry'] = regime_bundle
             
             # Create alloc_policy JSONB (only percentages, no fixed USD)
             alloc_policy = {

@@ -39,6 +39,8 @@ from intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import main as
 from intelligence.lowcap_portfolio_manager.jobs.update_bars_count import main as update_bars_count_main
 from intelligence.lowcap_portfolio_manager.jobs.bootstrap_system import BootstrapSystem
 from intelligence.lowcap_portfolio_manager.jobs.regime_runner import run_regime_pipeline
+from intelligence.lowcap_portfolio_manager.ingest.cap_bucket_tagging import main as cap_bucket_tagging_main
+from intelligence.lowcap_portfolio_manager.jobs.tracker import main as bucket_tracker_main
 from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import run_aggregator as pattern_scope_aggregator_job
 from intelligence.lowcap_portfolio_manager.jobs.lesson_builder_v5 import build_lessons_from_pattern_scope_stats
 from intelligence.lowcap_portfolio_manager.jobs.override_materializer import run_override_materializer
@@ -251,10 +253,12 @@ class StrandMonitor:
                 action = content.get('action', 'WAIT')
                 # Decision Maker writes 'allocation_pct', not 'allocation_percentage'
                 alloc = content.get('allocation_pct', content.get('allocation_percentage', 0))
-                reason = (content.get('reasoning') or "")[:50]
+                reason = (content.get('reasoning') or "")[:150]
                 # Check for learning context
                 learning_suffix = " | 𓂀" if module_intel else ""
                 output = f"∆φ DECISION | {action} {symbol} | Alloc: {alloc}%{learning_suffix}"
+                if reason:
+                    output += f" | {reason}"
                 
             elif kind == 'pm_action':
                 d_type = content.get('decision_type', 'HOLD')
@@ -280,7 +284,13 @@ class StrandMonitor:
                 ep_type = content.get('episode_type', '?')
                 outcome = content.get('outcome', '?')
                 entered = content.get('entered', False)
-                output = f"ᛟ  EPISODE  | {symbol} {ep_type} → {outcome} | Entered: {entered}"
+                tf = record.get('timeframe', '')
+                windows = content.get('windows') or []
+                sample_count = 0
+                for w in windows:
+                    summary = w.get('summary') or {}
+                    sample_count += int(summary.get('sample_count') or 0)
+                output = f"ᛟ  EPISODE  | {symbol} ({tf}) {ep_type} → {outcome} | Entered: {entered} | samples:{sample_count}"
             
             else:
                 # Fallback
@@ -590,6 +600,23 @@ class TradingSystem:
             uptrend_engine_main(timeframe=timeframe)
         except Exception as e:
             logger.error(f"Uptrend ({timeframe}) error: {e}", exc_info=True)
+    
+    def _wrap_ta_then_uptrend(self, timeframe):
+        """Run TA Tracker, then Uptrend Engine sequentially to ensure TA runs first."""
+        try:
+            self._wrap_ta_tracker(timeframe)
+            self._wrap_uptrend(timeframe)
+        except Exception as e:
+            logger.error(f"TA→Uptrend ({timeframe}) error: {e}", exc_info=True)
+    
+    def _wrap_ta_then_uptrend_then_pm(self, timeframe):
+        """Run TA Tracker → Uptrend Engine → PM Core Tick sequentially."""
+        try:
+            self._wrap_ta_tracker(timeframe)
+            self._wrap_uptrend(timeframe)
+            self._wrap_pm_core(timeframe)
+        except Exception as e:
+            logger.error(f"TA→Uptrend→PM ({timeframe}) error: {e}", exc_info=True)
 
     async def start_schedulers(self):
         scheduler_logger = logging.getLogger('schedulers')
@@ -694,7 +721,6 @@ class TradingSystem:
             tasks.append(hl_task)
         
         # 1 Minute Jobs
-        tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_ta_tracker("1m"), "TA 1m")))
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: GenericOHLCRollup().rollup_timeframe(DataSource.LOWCAPS, Timeframe.M1), "OHLC 1m")))
         def majors_1m_rollup_job():
             try:
@@ -703,9 +729,9 @@ class TradingSystem:
             except Exception as e:
                 logger.error(f"Majors 1m rollup error: {e}", exc_info=True)
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, majors_1m_rollup_job, "Majors Rollup")))
-        tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_uptrend("1m"), "Uptrend 1m")))
+        # Run TA → Uptrend → PM sequentially to ensure correct ordering
+        tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_ta_then_uptrend_then_pm("1m"), "TA→Uptrend→PM 1m")))
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: run_regime_pipeline(timeframe="1m"), "Regime 1m")))
-        tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: self._wrap_pm_core("1m"), "PM 1m")))
 
         # 5 Minute Jobs (Aligned)
         tasks.append(asyncio.create_task(self._schedule_aligned(5, 0, feat_main, "Tracker")))
@@ -713,35 +739,38 @@ class TradingSystem:
         tasks.append(asyncio.create_task(self._schedule_aligned(5, 2, self._wrap_pattern_aggregator, "Pattern Aggregator")))
 
         # 15 Minute Jobs (Aligned)
-        tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, lambda: self._wrap_ta_tracker("15m"), "TA 15m")))
+        tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, feat_main, "Tracker")))
         tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, lambda: self._wrap_rollup(Timeframe.M15, "Rollup 15m"), "Rollup 15m")))
-        tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, lambda: self._wrap_uptrend("15m"), "Uptrend 15m")))
-        tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, lambda: self._wrap_pm_core("15m"), "PM 15m")))
+        # Run TA → Uptrend → PM sequentially to ensure correct ordering
+        tasks.append(asyncio.create_task(self._schedule_aligned(15, 0, lambda: self._wrap_ta_then_uptrend_then_pm("15m"), "TA→Uptrend→PM 15m")))
 
         # Hourly Jobs
-        tasks.append(asyncio.create_task(self._schedule_hourly(1, lambda: self._wrap_uptrend("1h"), "Uptrend 1h")))
         tasks.append(asyncio.create_task(self._schedule_hourly(1, lambda: run_regime_pipeline(timeframe="1h"), "Regime 1h")))
         tasks.append(asyncio.create_task(self._schedule_hourly(2, nav_main, "NAV")))
+        # Dominance ingest removed in current pipeline (handled by regime engine); skip scheduling
         tasks.append(asyncio.create_task(self._schedule_hourly(4, lambda: self._wrap_rollup(Timeframe.H1, "Rollup 1h"), "Rollup 1h")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(6, lambda: self._wrap_ta_tracker("1h"), "TA 1h")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(6, lambda: self._wrap_pm_core("1h"), "PM 1h")))
+        # Geometry at :05 (before TA/PM at :06)
+        tasks.append(asyncio.create_task(self._schedule_hourly(5, lambda: self._wrap_geometry("1m"), "Geom 1m")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(5, lambda: self._wrap_geometry("15m"), "Geom 15m")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(5, lambda: self._wrap_geometry("1h"), "Geom 1h")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(5, lambda: self._wrap_geometry("4h"), "Geom 4h")))
+        # Run TA → Uptrend → PM sequentially to ensure correct ordering
+        tasks.append(asyncio.create_task(self._schedule_hourly(6, lambda: self._wrap_ta_then_uptrend_then_pm("1h"), "TA→Uptrend→PM 1h")))
         
-        # Geometry at :07
-        tasks.append(asyncio.create_task(self._schedule_hourly(7, lambda: self._wrap_geometry("1m"), "Geom 1m")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(7, lambda: self._wrap_geometry("15m"), "Geom 15m")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(7, lambda: self._wrap_geometry("1h"), "Geom 1h")))
-        tasks.append(asyncio.create_task(self._schedule_hourly(7, lambda: self._wrap_geometry("4h"), "Geom 4h")))
         tasks.append(asyncio.create_task(self._schedule_hourly(7, update_bars_count_main, "Bars Count")))
         
         tasks.append(asyncio.create_task(self._schedule_hourly(8, lambda: self._wrap_lesson_builder('pm'), "Lesson PM")))
         tasks.append(asyncio.create_task(self._schedule_hourly(9, lambda: self._wrap_lesson_builder('dm'), "Lesson DM")))
         tasks.append(asyncio.create_task(self._schedule_hourly(10, self._wrap_override_materializer, "Override Mat")))
+        # Bucket tagging (cap buckets) hourly to keep token_cap_bucket fresh
+        tasks.append(asyncio.create_task(self._schedule_hourly(11, cap_bucket_tagging_main, "Cap Bucket Tagging")))
+        # Bucket tracker (phase_state_bucket -> bucket_rank) hourly
+        tasks.append(asyncio.create_task(self._schedule_hourly(12, bucket_tracker_main, "Bucket Tracker")))
 
         # 4 Hour Jobs
-        tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_ta_tracker("4h"), "TA 4h")))
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_rollup(Timeframe.H4, "Rollup 4h"), "Rollup 4h")))
-        tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_uptrend("4h"), "Uptrend 4h")))
-        tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_pm_core("4h"), "PM 4h")))
+        # Run TA → Uptrend → PM sequentially to ensure correct ordering
+        tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_ta_then_uptrend_then_pm("4h"), "TA→Uptrend→PM 4h")))
         
         # Daily Jobs (1d regime - macro)
         async def schedule_daily(offset_hour: int, func, name: str):

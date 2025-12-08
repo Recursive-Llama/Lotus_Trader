@@ -194,9 +194,6 @@ class ExposureLookup:
         set_value("A_mode", entry.get("A_mode"))
         set_value("E_mode", entry.get("E_mode"))
 
-        set_value("macro_phase", regime_defaults.get("macro_phase"))
-        set_value("meso_phase", regime_defaults.get("meso_phase"))
-        set_value("micro_phase", regime_defaults.get("micro_phase"))
         set_value("bucket_leader", entry.get("bucket_leader"))
         set_value("bucket_rank_position", entry.get("bucket_rank_position"))
 

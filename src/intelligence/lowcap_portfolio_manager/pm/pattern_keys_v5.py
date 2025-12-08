@@ -64,7 +64,7 @@ def determine_motif(action_type: str, action_context: Dict[str, Any], uptrend_si
     uptrend_signals = uptrend_signals or {}
     
     # Entry motifs
-    if action_type_lower in ["entry_immediate", "e1", "e2"]:
+    if action_type_lower in ["entry_immediate", "e1", "e2", "entry", "buy", "rebuy"]:
         # Check for buy flags
         if action_context.get("buy_flag") or uptrend_signals.get("buy_flag"):
             return "buy_flag"
@@ -92,7 +92,7 @@ def determine_motif(action_type: str, action_context: Dict[str, Any], uptrend_si
         return "trim"
     
     # Exit motifs
-    if action_type_lower in ["cut", "emergency_exit", "panic_exit"]:
+    if action_type_lower in ["cut", "emergency_exit", "panic_exit", "exit", "sell"]:
         if action_type_lower == "panic_exit":
             return "panic_exit"
         if uptrend_signals.get("exhaustion"):
@@ -170,7 +170,10 @@ def extract_scope_from_context(
     action_context: Dict[str, Any],
     regime_context: Dict[str, Any],
     position_bucket: Optional[str] = None,
-    bucket_rank: Optional[list] = None
+    bucket_rank: Optional[list] = None,
+    regime_states: Optional[Dict[str, str]] = None,
+    chain: Optional[str] = None,
+    book_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Extract scope dimensions from action context and regime context.
@@ -184,11 +187,6 @@ def extract_scope_from_context(
     Returns:
         Scope dict with all 10 dimensions
     """
-    # Regime phases
-    macro_phase = (regime_context.get("macro") or {}).get("phase") or "Unknown"
-    meso_phase = (regime_context.get("meso") or {}).get("phase") or "Unknown"
-    micro_phase = (regime_context.get("micro") or {}).get("phase") or "Unknown"
-    
     # Bucket context
     bucket_leader = None
     bucket_rank_position = None
@@ -225,19 +223,26 @@ def extract_scope_from_context(
         else:
             E_mode = "aggressive"
     
-    # Build scope dict
+    # Build scope dict (no legacy phase fields; regime states provided separately)
     scope = {
-        "macro_phase": macro_phase,
-        "meso_phase": meso_phase,
-        "micro_phase": micro_phase,
         "bucket_leader": bucket_leader,
         "bucket_rank_position": bucket_rank_position,
         "market_family": market_family,
         "bucket": bucket,
         "timeframe": timeframe,
         "A_mode": A_mode or "unknown",
-        "E_mode": E_mode or "unknown"
+        "E_mode": E_mode or "unknown",
     }
+
+    # Add chain/book if provided
+    if chain:
+        scope["chain"] = chain
+    if book_id:
+        scope["book_id"] = book_id
+
+    # Add regime driver S-states (btc/alt/bucket/btcd/usdt.d per macro/meso/micro)
+    if regime_states:
+        scope.update({k: v for k, v in regime_states.items() if v is not None})
     
     # Remove None values
     scope = {k: v for k, v in scope.items() if v is not None}

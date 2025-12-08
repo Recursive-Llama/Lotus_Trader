@@ -257,7 +257,8 @@ class ScheduledPriceCollector:
             else:
                 # Fallback to highest liquidity
                 fallback_pair = max(pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                logger.warning(f"No stable pairs found for native token {chain}, using fallback: {fallback_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}")
+                # Informational only; downgrade to info to avoid noisy terminal warnings
+                logger.info(f"No stable pairs found for native token {chain}, using fallback: {fallback_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}")
                 return fallback_pair
         else:
             # For position tokens, prioritize native token pairs (WETH, SOL, BNB)
@@ -286,7 +287,8 @@ class ScheduledPriceCollector:
             else:
                 # Fallback to any pair with highest liquidity
                 fallback_pair = max(pairs, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                logger.warning(f"No native token pairs found for {chain}, using fallback: {fallback_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}")
+                # Informational only; downgrade to info to avoid noisy terminal warnings
+                logger.info(f"No native token pairs found for {chain}, using fallback: {fallback_pair.get('quoteToken', {}).get('symbol', 'UNKNOWN')}")
                 return fallback_pair
     
     def _get_native_usd_rate(self, chain: str) -> float:

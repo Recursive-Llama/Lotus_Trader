@@ -258,12 +258,9 @@ def main() -> None:
             "s_port_btc": ls.S_port_btc,
             "s_port_alt": ls.S_port_alt,
         }
-        sp.write_phase_state("PORTFOLIO", horizon, now, payload)
-        if prev_label and label_to_write != prev_label and dwell_prev <= 0:
-            logging.getLogger(__name__).info(
-                "phase_transition %s: %s -> %s (score=%.3f)", horizon, prev_label, label_to_write, score
-            )
-            bus.emit("phase_transition", {"token": "PORTFOLIO", "horizon": horizon, "prev": prev_label, "next": label_to_write, "score": score, "ts": now.isoformat()})
+        # Removed: sp.write_phase_state("PORTFOLIO", horizon, now, payload)
+        # PORTFOLIO phase_state not used - replaced by regime engine states
+        # Keep bucket phase_state writes below (used for bucket ordering)
 
     bucket_snapshot_for_context: dict = {}
     # Bucket phase computation (no dwell/hysteresis yet)
@@ -384,7 +381,8 @@ def main() -> None:
         },
         "updated_at": now.isoformat(),
     }
-    sp.write_features_portfolio_context(context_features)
+    # Removed: sp.write_features_portfolio_context(context_features)
+    # portfolio_context not used - no code reads it
 
     # Light geometry tracker: compare latest price to stored levels/diagonals and update sr_*/diag_* flags
     if os.getenv("GEOMETRY_TRACKER_ENABLED", "0") == "1":

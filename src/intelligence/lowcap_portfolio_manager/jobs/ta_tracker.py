@@ -190,7 +190,7 @@ class TATracker:
                     .eq("timeframe", self.timeframe)
                     .lte("timestamp", now.isoformat())
                     .order("timestamp", desc=False)
-                    .limit(400)
+                    .limit(9999)
                     .execute()
                     .data
                     or []

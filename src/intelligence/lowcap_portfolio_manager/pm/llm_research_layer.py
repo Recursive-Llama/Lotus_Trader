@@ -366,11 +366,18 @@ class LLMResearchLayer:
                     
                     # Extract scope dims from mask
                     scope_dims = []
-                    if scope_mask & (1 << 0): scope_dims.append("macro_phase")
-                    if scope_mask & (1 << 1): scope_dims.append("meso_phase")
-                    if scope_mask & (1 << 2): scope_dims.append("micro_phase")
-                    if scope_mask & (1 << 3): scope_dims.append("bucket_leader")
-                    if scope_mask & (1 << 4): scope_dims.append("bucket_rank_position")
+                    # Regime states mapped to bit positions (up to 32 bits available)
+                    bit_map = [
+                        (0, "btc_macro"), (1, "btc_meso"), (2, "btc_micro"),
+                        (3, "alt_macro"), (4, "alt_meso"), (5, "alt_micro"),
+                        (6, "bucket_macro"), (7, "bucket_meso"), (8, "bucket_micro"),
+                        (9, "btcd_macro"), (10, "btcd_meso"), (11, "btcd_micro"),
+                        (12, "usdtd_macro"), (13, "usdtd_meso"), (14, "usdtd_micro"),
+                        (15, "bucket_leader"), (16, "bucket_rank_position"),
+                    ]
+                    for bit, name in bit_map:
+                        if scope_mask & (1 << bit):
+                            scope_dims.append(name)
                     if scope_mask & (1 << 5): scope_dims.append("market_family")
                     if scope_mask & (1 << 6): scope_dims.append("bucket")
                     if scope_mask & (1 << 7): scope_dims.append("timeframe")

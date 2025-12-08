@@ -24,6 +24,7 @@ def _apply_v5_overrides_to_action(
     sb_client: Optional[Client],
     feature_flags: Optional[Dict[str, Any]],
     exposure_lookup: Optional[ExposureLookup] = None,
+    regime_states: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Apply v5 pattern-based overrides plus exposure skew to an action.
@@ -71,7 +72,10 @@ def _apply_v5_overrides_to_action(
             action_context=action_context,
             regime_context=regime_context or {},
             position_bucket=token_bucket,
-            bucket_rank=bucket_rank
+            bucket_rank=bucket_rank,
+            regime_states=regime_states,
+            chain=position.get("token_chain"),
+            book_id=position.get("book_id") or (position.get("entry_context") or {}).get("book_id"),
         )
         
         entry_context = position.get("entry_context") or {}
@@ -275,6 +279,7 @@ def plan_actions_v4(
     token_bucket: Optional[str] = None,
     feature_flags: Optional[Dict[str, Any]] = None,
     exposure_lookup: Optional[ExposureLookup] = None,
+    regime_states: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     New PM action planning using Uptrend Engine v4 signals + A/E scores.
@@ -360,7 +365,8 @@ def plan_actions_v4(
         action = _apply_v5_overrides_to_action(
             action, position, a_final, e_final, position_size_frac,
             regime_context, token_bucket, sb_client, feature_flags,
-            exposure_lookup=exposure_lookup
+            exposure_lookup=exposure_lookup,
+            regime_states=regime_states,
         )
         return [action]
     
@@ -382,7 +388,8 @@ def plan_actions_v4(
         action = _apply_v5_overrides_to_action(
             action, position, a_final, e_final, position_size_frac,
             regime_context, token_bucket, sb_client, feature_flags,
-            exposure_lookup=exposure_lookup
+            exposure_lookup=exposure_lookup,
+            regime_states=regime_states,
         )
         return [action]
     
@@ -461,7 +468,8 @@ def plan_actions_v4(
             action = _apply_v5_overrides_to_action(
                 action, position, a_final, e_final, position_size_frac,
                 regime_context, token_bucket, sb_client, feature_flags,
-                exposure_lookup=exposure_lookup
+                exposure_lookup=exposure_lookup,
+                regime_states=regime_states,
             )
             return [action]
     
@@ -573,7 +581,8 @@ def plan_actions_v4(
                 action = _apply_v5_overrides_to_action(
                     action, position, a_final, e_final, position_size_frac,
                     regime_context, token_bucket, sb_client, feature_flags,
-                    exposure_lookup=exposure_lookup
+                    exposure_lookup=exposure_lookup,
+                    regime_states=regime_states,
                 )
                 return [action]
     
@@ -710,7 +719,8 @@ def plan_actions_v4(
                 action = _apply_v5_overrides_to_action(
                     action, position, a_final, e_final, position_size_frac,
                     regime_context, token_bucket, sb_client, feature_flags,
-                    exposure_lookup=exposure_lookup
+                    exposure_lookup=exposure_lookup,
+                    regime_states=regime_states,
                 )
                 return [action]
     

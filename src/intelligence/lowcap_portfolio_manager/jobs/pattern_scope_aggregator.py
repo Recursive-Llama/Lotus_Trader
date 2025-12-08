@@ -27,14 +27,25 @@ logger = logging.getLogger(__name__)
 SCOPE_DIMS = [
     "curator", "chain", "mcap_bucket", "vol_bucket", "age_bucket", "intent",
     "mcap_vol_ratio_bucket", "market_family", "timeframe",
-    "A_mode", "E_mode", "macro_phase", "meso_phase", "micro_phase",
-    "bucket_leader", "bucket_rank_position"
+    "A_mode", "E_mode",
+    "bucket_leader", "bucket_rank_position",
+    # Regime states (drivers × horizons)
+    "btc_macro", "btc_meso", "btc_micro",
+    "alt_macro", "alt_meso", "alt_micro",
+    "bucket_macro", "bucket_meso", "bucket_micro",
+    "btcd_macro", "btcd_meso", "btcd_micro",
+    "usdtd_macro", "usdtd_meso", "usdtd_micro",
 ]
 
 ENTRY_SCOPE_KEYS = [
     "curator", "chain", "mcap_bucket", "vol_bucket", "age_bucket", "intent",
     "mcap_vol_ratio_bucket", "market_family", "timeframe", "A_mode", "E_mode",
-    "macro_phase", "meso_phase", "micro_phase", "bucket_leader", "bucket_rank_position"
+    "bucket_leader", "bucket_rank_position",
+    "btc_macro", "btc_meso", "btc_micro",
+    "alt_macro", "alt_meso", "alt_micro",
+    "bucket_macro", "bucket_meso", "bucket_micro",
+    "btcd_macro", "btcd_meso", "btcd_micro",
+    "usdtd_macro", "usdtd_meso", "usdtd_micro",
 ]
 
 
