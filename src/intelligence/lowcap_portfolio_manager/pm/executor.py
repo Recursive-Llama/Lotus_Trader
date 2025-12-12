@@ -17,6 +17,14 @@ from src.intelligence.lowcap_portfolio_manager.events.bus import subscribe
 
 logger = logging.getLogger(__name__)
 
+# Try to import web3 for EVM contract calls
+try:
+    from web3 import Web3
+    WEB3_AVAILABLE = True
+except ImportError:
+    WEB3_AVAILABLE = False
+    logger.warning("web3 not available - cannot fetch token decimals from contract directly")
+
 
 _idem_cache: Dict[str, float] = {}
 
@@ -305,11 +313,11 @@ class PMExecutor:
     
     def _get_token_decimals(self, token_contract: str, chain: str) -> int:
         """
-        Get token decimals with caching.
+        Get token decimals by calling the contract directly.
         
         Args:
             token_contract: Token contract address
-            chain: Chain name
+            chain: Chain name (ethereum, base, bsc)
         
         Returns:
             Token decimals (defaults to 18 if not found)
@@ -320,32 +328,71 @@ class PMExecutor:
         if cache_key in self._decimals_cache:
             return self._decimals_cache[cache_key]
         
-        # Try to get from Li.Fi SDK token resolution (via dry-run swap)
-        try:
-            # Use a tiny amount to get token info
-            test_amount = "1"  # 1 smallest unit
-            result = self._call_lifi_executor(
-                action="swap",
-                chain=chain,
-                from_token="USDC",  # Use USDC as from token
-                to_token=token_contract,
-                amount=test_amount,
-                slippage=0.5
-            )
+        # For EVM chains, fetch decimals directly from contract
+        if chain.lower() in ['ethereum', 'eth', 'base', 'bsc']:
+            if not WEB3_AVAILABLE:
+                logger.warning(f"web3 not available, cannot fetch decimals for {token_contract} on {chain}")
+                decimals = 18
+                self._decimals_cache[cache_key] = decimals
+                return decimals
             
-            # If successful, Li.Fi SDK should have resolved token decimals
-            # For now, we'll use a default and cache it
-            # TODO: Extract decimals from Li.Fi SDK response or token metadata
-            decimals = 18  # Default
-            self._decimals_cache[cache_key] = decimals
-            return decimals
-            
-        except Exception as e:
-            logger.warning(f"Could not fetch decimals for {token_contract} on {chain}: {e}")
-            # Default to 18 decimals (most common)
-            decimals = 18
-            self._decimals_cache[cache_key] = decimals
-            return decimals
+            try:
+                # Get RPC URL from environment
+                rpc_env_map = {
+                    'ethereum': ['ETH_RPC_URL', 'ETHEREUM_RPC_URL'],
+                    'eth': ['ETH_RPC_URL', 'ETHEREUM_RPC_URL'],
+                    'base': ['BASE_RPC_URL'],
+                    'bsc': ['BSC_RPC_URL'],
+                }
+                
+                rpc_url = None
+                for env_var in rpc_env_map.get(chain.lower(), []):
+                    rpc_url = os.getenv(env_var)
+                    if rpc_url:
+                        break
+                
+                if not rpc_url:
+                    logger.warning(f"No RPC URL found for {chain}, cannot fetch decimals")
+                    decimals = 18
+                    self._decimals_cache[cache_key] = decimals
+                    return decimals
+                
+                # Connect to chain and call decimals()
+                w3 = Web3(Web3.HTTPProvider(rpc_url))
+                
+                # ERC20 decimals() function ABI
+                decimals_abi = [{
+                    "constant": True,
+                    "inputs": [],
+                    "name": "decimals",
+                    "outputs": [{"name": "", "type": "uint8"}],
+                    "payable": False,
+                    "stateMutability": "view",
+                    "type": "function"
+                }]
+                
+                contract = w3.eth.contract(
+                    address=Web3.to_checksum_address(token_contract),
+                    abi=decimals_abi
+                )
+                
+                decimals = int(contract.functions.decimals().call())
+                logger.info(f"Fetched decimals for {token_contract} on {chain}: {decimals}")
+                self._decimals_cache[cache_key] = decimals
+                return decimals
+                
+            except Exception as e:
+                logger.warning(f"Could not fetch decimals from contract for {token_contract} on {chain}: {e}")
+                # Default to 18 decimals (most common)
+                decimals = 18
+                self._decimals_cache[cache_key] = decimals
+                return decimals
+        
+        # For Solana, we'd need different logic (not implemented here)
+        # Default to 18 for unknown chains
+        decimals = 18
+        self._decimals_cache[cache_key] = decimals
+        return decimals
     
     def _get_balance(self, chain: str, token: str = "USDC") -> float:
         """
@@ -632,6 +679,12 @@ class PMExecutor:
                     
                     # Harden logging: surface executor-level errors even when JSON parses
                     if not output.get("success", False):
+                        # For "No transaction hash captured" errors, capture more stderr (contains diagnostics)
+                        error_msg = output.get("error", "")
+                        is_tx_hash_error = "No transaction hash captured" in error_msg
+                        stderr_limit = 2000 if is_tx_hash_error else 500
+                        stdout_limit = 1000 if is_tx_hash_error else 500
+                        
                         logger.warning(
                             "Li.Fi executor returned error output (action=%s, chain=%s, from=%s, to=%s, amount=%s): %s | stdout=%s | stderr=%s",
                             action,
@@ -639,10 +692,16 @@ class PMExecutor:
                             from_token,
                             to_token,
                             amount,
-                            output.get("error"),
-                            (result.stdout or "")[:500],
-                            (result.stderr or "")[:500],
+                            error_msg,
+                            (result.stdout or "")[:stdout_limit],
+                            (result.stderr or "")[:stderr_limit],
                         )
+                        
+                        # For tx hash errors, also extract and log diagnostic JSON from stderr
+                        if is_tx_hash_error:
+                            for line in result.stderr.split('\n'):
+                                if '[LiFi]' in line and ('Diagnostics:' in line or 'Route structure:' in line):
+                                    logger.warning(f"Li.Fi executor diagnostic: {line}")
                     
                     return output
                 except json.JSONDecodeError as e:
@@ -856,23 +915,46 @@ class PMExecutor:
                 f"notional_usd={notional_usd}, price_from_lifi={result.get('price')}"
             )
             
-            # CRITICAL: Check if tokens_received seems wrong (too small) - likely a decimal conversion issue
-            # If tokens_received is suspiciously small (< 0.0001) but we have raw value and decimals, recalculate
-            if tokens_received > 0 and tokens_received < 0.0001 and tokens_received_raw and to_token_decimals:
+            # CRITICAL: If we have tokens_received_raw, always prefer it over tokens_received
+            # Li.Fi's tokens_received may use wrong decimals, but raw value is always correct
+            # Fetch correct decimals from the contract and recalculate
+            if tokens_received_raw:
                 try:
-                    # tokens_received_raw is in smallest units (e.g., "713647634932" for 713.647634932 tokens with 9 decimals)
-                    # Convert to human-readable: raw / (10 ** decimals)
-                    recalculated = float(tokens_received_raw) / (10 ** int(to_token_decimals))
-                    if recalculated > tokens_received * 100:  # Significant difference indicates wrong value
+                    raw_value = float(tokens_received_raw)
+                    
+                    # Fetch correct decimals from the contract
+                    correct_decimals = self._get_token_decimals(token_contract, chain)
+                    
+                    # Recalculate using correct decimals
+                    recalculated = raw_value / (10 ** correct_decimals)
+                    
+                    # Check if there's a discrepancy
+                    if tokens_received > 0:
+                        diff_pct = abs(recalculated - tokens_received) / max(recalculated, tokens_received) * 100
+                        if diff_pct > 1.0:  # More than 1% difference
+                            logger.warning(
+                                f"Decimal mismatch for {token_contract} on {chain}: "
+                                f"Li.Fi reported={tokens_received} (using decimals={to_token_decimals}), "
+                                f"correct={recalculated} (using decimals={correct_decimals} from contract), "
+                                f"raw={tokens_received_raw}"
+                            )
+                    else:
+                        # tokens_received is suspiciously small or zero
                         logger.warning(
-                            f"Decimal conversion issue detected for {token_contract} on {chain}: "
-                            f"tokens_received={tokens_received} seems incorrect, "
-                            f"recalculated from raw={recalculated} (raw={tokens_received_raw}, decimals={to_token_decimals})"
+                            f"Li.Fi reported suspicious tokens_received={tokens_received} for {token_contract} on {chain}. "
+                            f"Recalculating from raw={tokens_received_raw} using correct decimals={correct_decimals} from contract"
                         )
-                        # Use recalculated value
-                        tokens_received = recalculated
+                    
+                    # Always use the recalculated value with correct decimals
+                    tokens_received = recalculated
+                    # Update token_decimals for consistency
+                    if token_decimals is None or token_decimals != correct_decimals:
+                        token_decimals = correct_decimals
+                        cache_key = (token_contract.lower(), chain.lower())
+                        self._decimals_cache[cache_key] = correct_decimals
+                            
                 except (ValueError, TypeError, ZeroDivisionError) as e:
-                    logger.warning(f"Failed to recalculate tokens from raw for {token_contract}: {e}")
+                    logger.warning(f"Failed to recalculate tokens from raw for {token_contract} on {chain}: {e}")
             
             # Calculate price: USD spent / tokens received
             # Since this is a full execution (not partial), use notional_usd

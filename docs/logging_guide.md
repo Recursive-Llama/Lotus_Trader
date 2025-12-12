@@ -207,7 +207,37 @@ grep -i "error" logs/system.log
 
 ---
 
-### 6. `logs/price_collector.log`
+### 6. `logs/pm_executor.log`
+**Purpose**: PM Executor (Li.Fi integration) execution events and errors.
+
+**Contains**:
+- Li.Fi executor calls (swap/bridge actions)
+- Execution errors and failures
+- Transaction hash capture issues
+- Subprocess stdout/stderr from Node.js executor
+- Execution retry attempts
+- Diagnostic information from Node.js executor
+
+**When to check**:
+- "No transaction hash captured" errors
+- Li.Fi swap/bridge failures
+- Execution timeouts
+- Subprocess errors
+- Transaction submission issues
+
+**Example entries**:
+```
+2025-12-12 07:15:04,123 - intelligence.lowcap_portfolio_manager.pm.executor - WARNING - Li.Fi executor returned error output (action=swap, chain=solana, from=TOKEN, to=USDC, amount=58944751): No transaction hash captured | stdout=... | stderr=...
+2025-12-12 07:15:04,456 - intelligence.lowcap_portfolio_manager.pm.executor - ERROR - EXEC FAIL: sell TOKEN/solana tf=1m err=No transaction hash captured
+```
+
+**Key log levels**:
+- `WARNING`: Executor returned error output, retry attempts
+- `ERROR`: Execution failures, subprocess errors, parsing failures
+
+---
+
+### 7. `logs/price_collector.log`
 **Purpose**: Price data collection from external sources.
 
 **Contains**:

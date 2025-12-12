@@ -55,6 +55,7 @@ def setup_logging():
         'social_ingest': 'logs/social_ingest.log',
         'decision_maker': 'logs/decision_maker.log',
         'pm_core': 'logs/pm_core.log',
+        'intelligence.lowcap_portfolio_manager.pm.executor': 'logs/pm_executor.log',
         'trader': 'logs/trader.log',
         'learning_system': 'logs/learning_system.log',
         'price_collector': 'logs/price_collector.log',

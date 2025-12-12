@@ -783,7 +783,9 @@ const executeSwap = async (input) => {
       
     } else {
       // Single-chain swap: original logic
+      let hookCallCount = 0
       const captureTxHash = (updatedRoute) => {
+        hookCallCount++
         for (const step of updatedRoute.steps || []) {
           const processes = step.execution?.process || []
           for (const process of processes) {
@@ -802,6 +804,7 @@ const executeSwap = async (input) => {
       })
       
       let finalRoute = null
+      let executionError = null
       try {
         await Promise.race([
           executionPromise.then(route => { finalRoute = route; return route }),
@@ -820,6 +823,12 @@ const executeSwap = async (input) => {
         ])
       } catch (e) {
         // Execution may have failed, but check if we got txHash
+        executionError = e
+        // Log to stderr so Python can capture it
+        console.error(`[LiFi] executeRoute error: ${e.message}`)
+        if (e.stack) {
+          console.error(`[LiFi] executeRoute stack: ${e.stack.split('\n').slice(0, 5).join('\n')}`)
+        }
       }
       
       // If no txHash captured yet, try to extract from final route
@@ -837,7 +846,38 @@ const executeSwap = async (input) => {
       }
       
       if (!capturedTxHash) {
-        throw new Error('No transaction hash captured')
+        // Log diagnostic information to stderr so Python can capture it
+        const diagnostics = {
+          hookCallCount: hookCallCount,
+          hasFinalRoute: !!finalRoute,
+          finalRouteSteps: finalRoute?.steps?.length || 0,
+          executionError: executionError?.message || null,
+          fromChain: fromChainId,
+          toChain: toChainId,
+          fromToken: fromToken.address,
+          toToken: toToken.address,
+        }
+        console.error(`[LiFi] No transaction hash captured. Diagnostics: ${JSON.stringify(diagnostics)}`)
+        
+        // Log route structure summary if available
+        if (finalRoute) {
+          const routeSummary = {
+            steps: finalRoute.steps?.map(step => ({
+              tool: step.toolDetails?.name || step.tool,
+              executionStatus: step.execution?.status,
+              processCount: step.execution?.process?.length || 0,
+              processes: step.execution?.process?.map(p => ({
+                type: p.type,
+                status: p.status,
+                hasTxHash: !!p.txHash,
+                error: p.error?.message || null,
+              })) || [],
+            })) || [],
+          }
+          console.error(`[LiFi] Route structure: ${JSON.stringify(routeSummary)}`)
+        }
+        
+        throw new Error(`No transaction hash captured. ${executionError ? `Execution error: ${executionError.message}` : 'No execution error caught.'}`)
       }
       
       // Verify confirmation
