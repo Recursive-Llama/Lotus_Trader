@@ -36,7 +36,7 @@ from src.intelligence.lowcap_portfolio_manager.jobs.ta_utils import (
 )
 from src.intelligence.lowcap_portfolio_manager.utils.zigzag import detect_swings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uptrend_engine")
 
 
 def _now_iso() -> str:
@@ -783,7 +783,7 @@ class UptrendEngineV4:
         w1_bars, w2_bars, w3_bars = self._calculate_window_boundaries(s3_start_ts, current_ts, self.timeframe)
         
         if w1_bars is None:
-            # Not enough bars, return neutral EDX
+            # Not enough bars, return neutral EDX as tuple (edx_score, diagnostics_dict)
             return (0.5, {"error": "insufficient_s3_bars", "s3_bars": 0})
         
         # Fetch all bars since S3 start
@@ -1210,16 +1210,31 @@ class UptrendEngineV4:
         
         # Compute EDX using 3-window approach if we have S3 start timestamp
         if s3_start_ts:
-            edx, edx_diagnostics = self._compute_edx_3window(
+            edx_result = self._compute_edx_3window(
                 contract, chain, s3_start_ts, current_ts, price, ema_vals, ta
             )
+            # Handle tuple return (edx_score, diagnostics_dict)
+            if isinstance(edx_result, tuple) and len(edx_result) == 2:
+                edx, edx_diagnostics = edx_result
+            else:
+                logger.error("_compute_edx_3window returned unexpected type: %s", type(edx_result))
+                edx, edx_diagnostics = 0.5, {"error": "unexpected_return_type"}
         else:
             # Fallback: use old method if no S3 start timestamp (shouldn't happen in S3, but safety)
-            edx, edx_diagnostics = self._compute_edx_fallback(ta, ema_vals, contract, chain)
+            edx_result = self._compute_edx_fallback(ta, ema_vals, contract, chain)
+            # Handle tuple return (edx_score, diagnostics_dict)
+            if isinstance(edx_result, tuple) and len(edx_result) == 2:
+                edx, edx_diagnostics = edx_result
+            else:
+                logger.error("_compute_edx_fallback returned unexpected type: %s", type(edx_result))
+                edx, edx_diagnostics = 0.5, {"error": "unexpected_return_type"}
         
         edx_raw = edx  # For now, EDX is raw (can add smoothing later if needed)
         
-        # Merge EDX diagnostics into main diagnostics
+        # Merge EDX diagnostics into main diagnostics (ensure edx_diagnostics is a dict)
+        if not isinstance(edx_diagnostics, dict):
+            logger.error("edx_diagnostics is not a dict: %s (type: %s)", edx_diagnostics, type(edx_diagnostics))
+            edx_diagnostics = {"error": "diagnostics_not_dict", "original": str(edx_diagnostics)}
         diagnostics_dict = {**edx_diagnostics}
         
         # OX: rails distance + expansion + ATR surge + fragility (unchanged from v2)
@@ -1351,20 +1366,67 @@ class UptrendEngineV4:
                 total_quantity = float(p.get("total_quantity", 0.0))  # For emergency exit checks
                 features = p.get("features") or {}
                 prev_payload = dict(features.get("uptrend_engine_v4") or {})
+                # Read CURRENT state from payload's "state" field (not "prev_state" which tracks transition-from state)
                 prev_state = str(prev_payload.get("state") or "")
                 
-                logger.debug("Processing position: %s/%s (timeframe=%s, status=%s, prev_state=%s)", 
+                # CRITICAL: Detect state loss - if we have S3 metadata but no state, this is a bug
+                if not prev_state or prev_state == "":
+                    s3_meta = features.get("uptrend_engine_v4_meta") or {}
+                    episode_meta = features.get("uptrend_episode_meta") or {}
+                    episode_prev_state = episode_meta.get("prev_state")
+                    
+                    # Check if PM Core Tick has stale prev_state (indicates DB reset or state loss)
+                    # This happens when DB is reset: uptrend_engine_v4 is cleared but uptrend_episode_meta persists
+                    # We clear PM Core Tick's prev_state to match reality (no previous state exists)
+                    # This prevents false transition detection (e.g., S3→S4 when engine bootstraps to S4)
+                    if episode_prev_state and episode_prev_state != "":
+                        logger.warning(
+                            "STATE MISMATCH DETECTED: %s/%s (timeframe=%s) has PM Core Tick prev_state=%s "
+                            "but uptrend_engine_v4 state is empty. This suggests DB reset or state loss. "
+                            "Clearing PM Core Tick prev_state to prevent false transition detection. "
+                            "Note: Uptrend engine will still bootstrap correctly (may assign S4 if no clear order).",
+                            contract, chain, self.timeframe, episode_prev_state
+                        )
+                        # Clear PM Core Tick's stale prev_state - this does NOT affect uptrend engine's bootstrap logic
+                        # The engine will still correctly assign S4 if there's no clear EMA order
+                        episode_meta["prev_state"] = None
+                        features["uptrend_episode_meta"] = episode_meta
+                        self._write_features(pid, features)
+                    
+                    if s3_meta.get("s3_start_ts"):
+                        logger.error(
+                            "STATE LOSS DETECTED: %s/%s (timeframe=%s) has S3 metadata (s3_start_ts=%s) but no state! "
+                            "This should not happen. Previous payload: %s",
+                            contract, chain, self.timeframe, s3_meta.get("s3_start_ts"), prev_payload
+                        )
+                        # Try to recover: if we have S3 metadata, we were likely in S3
+                        # Check if S3 order still holds - if so, restore to S3 instead of bootstrap
+                        if self._check_s3_order(ema_vals):
+                            logger.warning(
+                                "RECOVERY: %s/%s (timeframe=%s) restoring to S3 based on S3 metadata and current EMA order",
+                                contract, chain, self.timeframe
+                            )
+                            prev_state = "S3"  # Set prev_state to S3 to skip bootstrap
+                        else:
+                            logger.warning(
+                                "CANNOT RECOVER: %s/%s (timeframe=%s) has S3 metadata but EMA order no longer S3. "
+                                "Will bootstrap (may assign S4 if no clear order).",
+                                contract, chain, self.timeframe
+                            )
+                
+                logger.info("Processing position: %s/%s (timeframe=%s, status=%s, prev_state=%s)", 
                             contract, chain, self.timeframe, position_status, prev_state or "(none)")
                 
                 ta = self._read_ta(features)
                 if not ta:
-                    logger.debug("Skipping %s/%s: No TA data (timeframe=%s)", contract, chain, self.timeframe)
+                    logger.info("Skipping %s/%s: No TA data (timeframe=%s)", contract, chain, self.timeframe)
                     continue
                 
                 ema_vals = self._get_ema_values(ta)
                 ema_slopes = self._get_ema_slopes(ta)
                 last = self._latest_close_1h(contract, chain)
                 price = last["close"]
+                current_ts = last.get("ts")
                 
                 # Fallback to TA latest_price for regime drivers 
                 # (they use regime_price_data_ohlc, not lowcap_price_data_ohlc)
@@ -1372,8 +1434,12 @@ class UptrendEngineV4:
                     price = float(ta.get("latest_price") or 0.0)
                 
                 if price <= 0:
-                    logger.debug("Skipping %s/%s: No valid price (timeframe=%s)", contract, chain, self.timeframe)
+                    logger.info("Skipping %s/%s: No valid price (timeframe=%s, last_ts=%s)", 
+                              contract, chain, self.timeframe, current_ts)
                     continue
+                
+                logger.debug("Position %s/%s: price=%.8f, current_ts=%s, prev_state=%s", 
+                           contract, chain, price, current_ts, prev_state or "(none)")
                 
                 sr_levels = self._read_sr_levels(features)
                 
@@ -1386,6 +1452,11 @@ class UptrendEngineV4:
                 # Bootstrap logic: only S0 or S3, otherwise no state
                 if not prev_state or prev_state == "":
                     logger.debug("Bootstrap check for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
+                    
+                    # SAFEGUARD: Check for state loss indicators before assigning S4
+                    s3_meta = features.get("uptrend_engine_v4_meta") or {}
+                    has_s3_history = bool(s3_meta.get("s3_start_ts"))
+                    
                     if self._check_s3_order(ema_vals):
                         logger.info("Bootstrap→S3: %s/%s (timeframe=%s, full bullish alignment)", 
                                    contract, chain, self.timeframe)
@@ -1439,6 +1510,16 @@ class UptrendEngineV4:
                         continue
                     else:
                         # No clear order - wait until clear trend emerges (S4)
+                        # BUT: If we have S3 history, this is suspicious - log warning
+                        if has_s3_history:
+                            logger.error(
+                                "SUSPICIOUS S4 ASSIGNMENT: %s/%s (timeframe=%s) has S3 history (s3_start_ts=%s) "
+                                "but no clear EMA order. This may indicate state loss bug. "
+                                "EMA values: %s",
+                                contract, chain, self.timeframe, s3_meta.get("s3_start_ts"),
+                                {k: v for k, v in ema_vals.items() if k.startswith("ema")}
+                            )
+                        
                         payload = self._build_payload(
                             "S4",  # or "no_state"
                             contract,
@@ -1819,6 +1900,10 @@ class UptrendEngineV4:
                         current_ts = last.get("ts") or _now_iso()
                         
                         # Check first dip buy (only if not already taken)
+                        s3_start_ts = self._get_s3_start_ts(features)
+                        bars_since = self._calculate_bars_since_s3_entry(s3_start_ts, current_ts, self.timeframe) if s3_start_ts else None
+                        logger.info("S3 processing: %s/%s (timeframe=%s, bars_since_s3=%s, s3_start=%s, current_ts=%s)", 
+                                   contract, chain, self.timeframe, bars_since, s3_start_ts, current_ts)
                         logger.debug("Checking first dip buy for %s/%s (timeframe=%s, prev_state=S3)", 
                                     contract, chain, self.timeframe)
                         first_dip_check = self._check_first_dip_buy(
@@ -1852,6 +1937,10 @@ class UptrendEngineV4:
                             # Price was below EMA333 (emergency exit active), now reclaimed
                             reclaimed_ema333 = True
                         
+                        # Ensure s3_scores is a dict (defensive check)
+                        if not isinstance(s3_scores, dict):
+                            logger.error("s3_scores is not a dict: %s (type: %s) for %s/%s", s3_scores, type(s3_scores), contract, chain)
+                            s3_scores = {"ox": 0.5, "dx": 0.5, "edx": 0.5, "diagnostics": {}}
                         ox = s3_scores.get("ox", 0.0)
                         dx = s3_scores.get("dx", 0.0)
                         edx = s3_scores.get("edx", 0.0)
@@ -1950,6 +2039,9 @@ class UptrendEngineV4:
                             logger.debug("S3 trim check: %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
                                         contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
                         
+                        # DEBUG: Log before assignment
+                        logger.debug("DEBUG: About to create extra_data for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
+                        
                         extra_data = {
                             "trim_flag": trim_flag,
                             "buy_flag": dx_buy_ok,
@@ -1965,7 +2057,7 @@ class UptrendEngineV4:
                                 "sr_boost": sr_boost,
                             },
                             "diagnostics": {
-                                **s3_scores.get("diagnostics", {}),
+                                **(s3_scores.get("diagnostics", {}) if isinstance(s3_scores.get("diagnostics", {}), dict) else {}),
                                 "s3_buy_check": {
                                     "price": price,
                                     "ema144": ema144_val,
@@ -1991,6 +2083,22 @@ class UptrendEngineV4:
                                     "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
                                 },
                             },
+                        
+                        # DEBUG: Log immediately after assignment
+                        logger.debug("DEBUG: extra_data created for %s/%s - type=%s, is_dict=%s, is_tuple=%s", 
+                                   contract, chain, type(extra_data).__name__, isinstance(extra_data, dict), isinstance(extra_data, tuple))
+                        if isinstance(extra_data, tuple):
+                            logger.warning("DEBUG: extra_data is ALREADY a tuple right after assignment for %s/%s! Tuple length=%d, first element type=%s", 
+                                         contract, chain, len(extra_data), type(extra_data[0]).__name__ if len(extra_data) > 0 else "N/A")
+                        
+                        # Defensive check: ensure extra_data is a dict
+                        # Handle case where extra_data might be a tuple (single-element tuple containing dict)
+                        if isinstance(extra_data, tuple) and len(extra_data) == 1 and isinstance(extra_data[0], dict):
+                            logger.warning("extra_data was a tuple, unwrapping for %s/%s", contract, chain)
+                            extra_data = extra_data[0]
+                        elif not isinstance(extra_data, dict):
+                            logger.error("extra_data is not a dict for %s/%s: type=%s, value=%s", contract, chain, type(extra_data), extra_data)
+                            extra_data = {"error": "extra_data_not_dict", "original_type": str(type(extra_data))}
                         payload = self._build_payload(
                             "S3",
                             contract,
@@ -2011,7 +2119,11 @@ class UptrendEngineV4:
                     continue
                 
             except Exception as e:
-                logger.debug("uptrend_engine_v4 error on position %s: %s", p.get("id"), e)
+                pid = p.get("id")
+                contract = p.get("token_contract", "?")
+                chain = p.get("token_chain", "?")
+                logger.exception("uptrend_engine_v4 error on position %s (%s/%s, timeframe=%s): %s", 
+                                pid, contract, chain, self.timeframe, e)
                 continue
         
         return updated

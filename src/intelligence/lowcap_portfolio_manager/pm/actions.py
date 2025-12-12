@@ -4,13 +4,18 @@ import os
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from supabase import create_client, Client  # type: ignore
 from .config import load_pm_config
 from .bucketing_helpers import bucket_a_e, bucket_score
 from .overrides import apply_pattern_strength_overrides, apply_pattern_execution_overrides
 from .pattern_keys_v5 import generate_canonical_pattern_key, extract_scope_from_context
 from .exposure import ExposureLookup
+
+
+def _now_iso() -> str:
+    """UTC timestamp helper."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _apply_v5_overrides_to_action(
@@ -94,7 +99,7 @@ def _apply_v5_overrides_to_action(
             # Primary scope dimensions (required for exact matching)
             "chain": entry_context.get("chain") or position.get("token_chain"),
             "timeframe": position.get("timeframe", "1h"),
-            "book_id": position.get("book_id") or "social",  # Default to "social" if not set
+            "book_id": position.get("book_id") or "onchain_crypto",  # Default to onchain crypto book
             "state": position_state or "S4",  # Default to "S4" if not set
             # Secondary scope dimensions
             "curator": entry_context.get("curator"),
@@ -224,13 +229,13 @@ def _e_to_trim_size(e_final: float) -> float:
     
     Base Trim Sizes:
     - E >= 0.7 (Aggressive): 10% trim
-    - E >= 0.3 (Normal): 50% trim
+    - E >= 0.3 (Normal): 5% trim
     - E < 0.3 (Patient): 3% trim
     """
     if e_final >= 0.7:
         return 0.10
     elif e_final >= 0.3:
-        return 0.50
+        return 0.05
     else:
         return 0.03
 
@@ -374,6 +379,32 @@ def plan_actions_v4(
     # emergency_exit = full exit (sell all tokens)
     # Trade closure happens when state transitions to S0
     if uptrend.get("emergency_exit"):
+        # Gating to avoid repeated actions within the same episode
+        last_em_exit_ts = exec_history.get("last_emergency_exit_ts")
+        total_quantity = float(position.get("total_quantity") or 0.0)
+
+        # Allow new emergency exit only if none recorded in this episode
+        # Episode ends when flag clears (price >= EMA333) or state leaves S3 and re-enters
+        already_executed_this_episode = bool(last_em_exit_ts)
+
+        if already_executed_this_episode:
+            logging.getLogger("pm_core").info(
+                "PM BLOCKED emergency_exit for %s (%s): already executed in current episode (last_emergency_exit_ts=%s)",
+                position.get("token_ticker") or position.get("token_contract") or "?", position.get("timeframe", "?"),
+                last_em_exit_ts,
+            )
+            return []
+
+        if total_quantity <= 0:
+            logging.getLogger("pm_core").info(
+                "PM BLOCKED emergency_exit for %s (%s): no tokens to sell (total_quantity=0)",
+                position.get("token_ticker") or position.get("token_contract") or "?", position.get("timeframe", "?"),
+            )
+            # Record the attempt to prevent immediate re-spam; still allow next episode after flag clears
+            exec_history["last_emergency_exit_ts"] = _now_iso()
+            features["pm_execution_history"] = exec_history
+            return []
+
         # No lesson matching for full exits (always 100%)
         action = {
             "decision_type": "emergency_exit",
@@ -391,6 +422,9 @@ def plan_actions_v4(
             exposure_lookup=exposure_lookup,
             regime_states=regime_states,
         )
+        # Stamp execution history to gate further exits in this episode
+        exec_history["last_emergency_exit_ts"] = _now_iso()
+        features["pm_execution_history"] = exec_history
         return [action]
     
     # Trim Flags (S2/S3) - Check cooldown and S/R level
@@ -399,6 +433,8 @@ def plan_actions_v4(
         last_trim = exec_history.get("last_trim", {})
         last_trim_ts = last_trim.get("timestamp")
         last_trim_sr_level = last_trim.get("sr_level_price")
+        last_trim_signal = exec_history.get("last_trim_signal", {})
+        last_trim_signal_sr_level = last_trim_signal.get("sr_level_price")
         
         # Get current S/R level (closest to price)
         geometry = features.get("geometry", {})
@@ -410,6 +446,17 @@ def plan_actions_v4(
                 current_sr_level = float(closest_sr.get("price", 0))
             except Exception:
                 pass
+
+        # Enforce one trim signal per SR level (for both learning and execution)
+        sr_level_changed_signal = False
+        if current_sr_level:
+            if last_trim_signal_sr_level:
+                sr_level_changed_signal = abs(current_sr_level - last_trim_signal_sr_level) > (current_price * 0.01)  # 1% threshold
+            else:
+                sr_level_changed_signal = True
+        else:
+            # If we cannot identify an SR level, skip actionable trim to avoid duplicate noise without level context
+            return []
         
         can_trim = False
         cooldown_expired = False
@@ -435,9 +482,12 @@ def plan_actions_v4(
             
             can_trim = cooldown_expired or sr_level_changed
         
-        if can_trim:
+        # Emit actionable trim only when SR level changed vs last signal and we hold tokens
+        if can_trim and sr_level_changed_signal and total_quantity > 0:
             trim_size = _e_to_trim_size(e_final) * trim_multiplier
-            trim_size = min(trim_size, 1.0)  # Cap at 100%
+            # Hard cap trims to avoid full exits masquerading as trims
+            max_trim_frac = float(os.getenv("PM_MAX_TRIM_FRAC", "0.5"))
+            trim_size = min(trim_size, max_trim_frac)
             
             # Build context for lesson matching
             scores = uptrend.get("scores") or {}
@@ -462,6 +512,7 @@ def plan_actions_v4(
                     "trim_multiplier": trim_multiplier,
                     "cooldown_expired": cooldown_expired,
                     "sr_level_changed": sr_level_changed,
+                    "sr_level_price": current_sr_level,
                 }
             }
             # Apply v5 overrides
@@ -478,6 +529,12 @@ def plan_actions_v4(
     buy_flag = uptrend.get("buy_flag", False)  # S2 retest or S3 DX
     first_dip_buy_flag = uptrend.get("first_dip_buy_flag", False)  # S3 first dip
     is_new_trade = not position.get("current_trade_id")
+    
+    # Log first-dip flag detection
+    if first_dip_buy_flag:
+        ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
+        logging.getLogger("pm_core").info("PM detected first_dip_buy_flag=True for %s (%s, state=%s, is_new_trade=%s)", 
+                                        ticker, position.get("timeframe", "?"), state, is_new_trade)
     
     # ------------------------------------------------------------------------
     # S1 Tuning Logic: Re-evaluate Signal with Overrides
@@ -684,9 +741,22 @@ def plan_actions_v4(
                 except Exception:
                     pass
         
+        # Log why first-dip buy is blocked
+        if first_dip_buy_flag and not can_buy:
+            ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
+            logging.getLogger("pm_core").info("PM BLOCKED first_dip_buy for %s (%s): has_last_buy=%s, state_transitioned=%s, last_trim_ts=%s", 
+                                            ticker, position.get("timeframe", "?"), bool(last_buy), state_transitioned, last_trim_ts)
+        
         if can_buy:
             entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=effective_buy_flag, first_dip_buy_flag=first_dip_buy_flag)
             entry_size = entry_size * entry_multiplier  # Apply profit/allocation multiplier
+            
+            # Log entry_size calculation
+            if first_dip_buy_flag:
+                ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
+                logging.getLogger("pm_core").info("PM first_dip_buy entry_size calculation for %s (%s): a_final=%.4f, entry_size=%.6f, entry_multiplier=%.4f", 
+                                                  ticker, position.get("timeframe", "?"), a_final, entry_size, entry_multiplier)
+            
             if entry_size > 0:
                 # Build context for lesson matching
                 scores = uptrend.get("scores") or {}

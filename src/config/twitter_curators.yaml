@@ -267,6 +267,249 @@ curators:
     tags: ["alpha", "calls", "multi_platform"]
     notes: "Multi-platform curator; Twitter @giba_machado and Telegram @GibaTrades"
 
+  - id: "contra"
+    name: "Contra"
+    platforms:
+      twitter:
+        handle: "@supercontraa"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "game"
+    name: "Game"
+    platforms:
+      twitter:
+        handle: "@game_for_one"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "franz"
+    name: "Franz"
+    platforms:
+      twitter:
+        handle: "@DefiFranz"
+        active: true
+        priority: "medium"
+    tags: ["defi", "alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "johnny_fap"
+    name: "Johnny Fap"
+    platforms:
+      twitter:
+        handle: "@cryptojohnnyfap"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: null
+        channel_id: -1002075888419
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @cryptojohnnyfap and Telegram channel 'Road to Financial Freedom' (channel ID: -1002075888419)"
+
+  - id: "the_professor"
+    name: "The Professor"
+    platforms:
+      twitter:
+        handle: "@AzeroPapi"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "degen_ape"
+    name: "degen ape"
+    platforms:
+      twitter:
+        handle: "@degenApe22"
+        active: true
+        priority: "medium"
+    tags: ["degen", "alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "fitzy"
+    name: "Fitzy"
+    platforms:
+      twitter:
+        handle: "@Fitzybrypto"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "erics_calls"
+    name: "Eric Cryptomans Journal"
+    platforms:
+      telegram:
+        handle: "@erics_calls"
+        channel_id: -1001381024355
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Telegram-only curator; channel title 'Eric Cryptomans Journal'"
+
+  - id: "aeon"
+    name: "Aeon"
+    platforms:
+      twitter:
+        handle: "@Cryptoaeon"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "silver_ape"
+    name: "Silver Ape"
+    platforms:
+      twitter:
+        handle: "@platacrypto"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "acemooon"
+    name: "AceMooon"
+    platforms:
+      twitter:
+        handle: "@AceMoonCrypto"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "gideon"
+    name: "Gideon"
+    platforms:
+      twitter:
+        handle: "@CryptoGideon_"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "nikyous"
+    name: "Nikyous"
+    platforms:
+      twitter:
+        handle: "@CryptoNikyous"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "whalex"
+    name: "WhaleX"
+    platforms:
+      twitter:
+        handle: "@Crypt0WhaleX"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@cryptowhalecalls7"
+        channel_id: -1001850979374
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @Crypt0WhaleX and Telegram channel 'Whale Calls' (channel ID: -1001850979374)"
+
+  - id: "wb_degens"
+    name: "WB DEGENS"
+    platforms:
+      telegram:
+        handle: "@wbdegens"
+        channel_id: -1002662701406
+        active: true
+        priority: "medium"
+    tags: ["degen", "calls"]
+    notes: "Telegram-only curator; channel title 'WB DEGENS'; requested as second TG for WhaleX"
+
+  - id: "money_man"
+    name: "Money Man"
+    platforms:
+      twitter:
+        handle: "@moneymancalls"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@moneymancalls1104"
+        channel_id: -1001582491639
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @moneymancalls and Telegram channel 'Moneymancalls' (channel ID: -1001582491639)"
+
+  - id: "andrew"
+    name: "Andrew"
+    platforms:
+      twitter:
+        handle: "@Crypt0_Andrew"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@Crypt0_Andrew_corner"
+        channel_id: -1002115384521
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @Crypt0_Andrew and Telegram channel 'Crypt0_Andrew's Corner' (channel ID: -1002115384521)"
+
+  - id: "crayola"
+    name: "Crayola"
+    platforms:
+      twitter:
+        handle: "@Crayola_Capital"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "lexapro"
+    name: "Lexapro"
+    platforms:
+      twitter:
+        handle: "@LexaproTrader"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@lexaprosfeed"
+        channel_id: -1001866082086
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @LexaproTrader and Telegram channel 'Lexapro’s Feed' (channel ID: -1001866082086)"
+
+  - id: "cheater"
+    name: "Cheater"
+    platforms:
+      twitter:
+        handle: "@cheatcoiner"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@cheatcoinerplayground"
+        channel_id: -1001770267830
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @cheatcoiner and Telegram channel 'Cheatcoiner’s Playground' (channel ID: -1001770267830)"
+
+  - id: "iced"
+    name: "Iced"
+    platforms:
+      telegram:
+        handle: "@houseofdegeneracy"
+        channel_id: -1001819368322
+        active: true
+        priority: "medium"
+    tags: ["degen", "calls"]
+    notes: "Telegram-only curator; channel 'Iced's House of Degeneracy' (channel ID: -1001819368322)"
+
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
 #   name: "Example Curator"

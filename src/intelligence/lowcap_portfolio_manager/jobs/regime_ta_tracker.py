@@ -173,7 +173,7 @@ class RegimeTATracker:
                 "token_ticker": driver,
                 "timeframe": position_tf,
                 "status": "regime_driver",
-                "state": "S0",
+                "state": "S4",  # neutral until EMAs establish a trend
                 "book_id": self.book_id,
                 "features": {},
             }

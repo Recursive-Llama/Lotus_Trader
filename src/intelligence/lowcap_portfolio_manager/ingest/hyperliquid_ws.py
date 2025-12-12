@@ -18,7 +18,8 @@ Env/config (provide via os.environ or a small config loader):
 - SUPABASE_URL, SUPABASE_KEY: for DB writes
 - TICK_BUFFER_SEC: int, default 75  (accept late trades up to 75s)
 - BACKOFF_BASE_MS: int, default 500
-- MAX_RETRIES: int, default 10
+- MAX_RETRIES: int, default 0 (= infinite retries)
+- HL_STALE_WARN_MINUTES: minutes without ticks before warning (default 2)
 
 This implementation follows the repo's HL patterns; adjust `_subscribe`/`_parse_tick`
 if Hyperliquid changes payload shapes.
@@ -32,6 +33,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,7 +61,8 @@ class HyperliquidWSIngester:
 
         self.symbols: List[str] = [s.strip().upper() for s in os.getenv("HL_SYMBOLS", "BTC,ETH,BNB,SOL,HYPE").split(",") if s.strip()]
         self.backoff_base_ms: int = int(os.getenv("BACKOFF_BASE_MS", "500"))
-        self.max_retries: int = int(os.getenv("MAX_RETRIES", "10"))
+        # If MAX_RETRIES <= 0, treat as infinite retries
+        self.max_retries: int = int(os.getenv("MAX_RETRIES", "0"))
 
         supabase_url = os.getenv("SUPABASE_URL", "")
         supabase_key = os.getenv("SUPABASE_KEY", "")
@@ -71,10 +74,17 @@ class HyperliquidWSIngester:
         self._debug_limit: int = int(os.getenv("HL_DEBUG_LIMIT", "5"))
         self._debug_seen: int = 0
         self._token_counts: Dict[str, int] = {sym: 0 for sym in self.symbols}
+        # Allow tuning WS timeouts via env (fall back to previous defaults)
+        self.ping_interval: int = int(os.getenv("HL_PING_INTERVAL", "20"))
+        self.ping_timeout: int = int(os.getenv("HL_PING_TIMEOUT", "10"))
+        self.open_timeout: int = int(os.getenv("HL_OPEN_TIMEOUT", "30"))
+        self.close_timeout: int = int(os.getenv("HL_CLOSE_TIMEOUT", "10"))
         
         # Batch ticks for efficient writes (small buffer, flush frequently)
         self._tick_buffer: List[Tick] = []
         self._buffer_size: int = 10  # Flush every 10 ticks for more frequent writes
+        self._last_tick_ts: Optional[float] = None
+        self._stale_warn_minutes: float = float(os.getenv("HL_STALE_WARN_MINUTES", "2"))
 
     async def run(self) -> None:
         """Main loop: connect → subscribe → read → write ticks to DB."""
@@ -87,24 +97,49 @@ class HyperliquidWSIngester:
                 raise
             except Exception as exc:  # noqa: BLE001
                 retries += 1
+                # Exponential backoff capped at 30s with jitter to avoid thundering herd
                 wait_ms = min(self.backoff_base_ms * (2 ** (retries - 1)), 30_000)
+                wait_ms = int(wait_ms * random.uniform(0.8, 1.2))
                 
                 # Tidy up error messages for expected connection issues
                 exc_str = str(exc)
-                if "keepalive ping timeout" in exc_str or "ConnectionClosedError" in exc_str:
-                    # Expected WebSocket timeout - log concisely
-                    logger.warning("HL WS: Connection timeout, reconnecting in %d ms (retry %d/%d)", wait_ms, retries, self.max_retries)
+                exc_type = type(exc).__name__
+                if (
+                    isinstance(exc, TimeoutError)
+                    or "keepalive ping timeout" in exc_str
+                    or "ConnectionClosedError" in exc_str
+                    or "TimeoutError" in exc_type
+                    or "timeout" in exc_str.lower()
+                ):
+                    # Expected WebSocket timeout/connection issue - log concisely
+                    retry_cap = "∞" if self.max_retries <= 0 else str(self.max_retries)
+                    logger.warning("HL WS: Connection timeout/handshake failed, reconnecting in %d ms (retry %d/%s)", wait_ms, retries, retry_cap)
                 else:
                     # Unexpected error - log with full context
                     logger.exception("HL WS ingest error: %s; retry %d in %d ms", exc, retries, wait_ms)
                 
-                if retries > self.max_retries:
+                # Emit a stale-data warning if we've been dark for a while
+                if self._last_tick_ts:
+                    minutes_dark = (time.time() - self._last_tick_ts) / 60.0
+                    if minutes_dark >= self._stale_warn_minutes:
+                        logger.warning("HL WS: No ticks for %.1f minutes (last tick at %s)", minutes_dark, datetime.fromtimestamp(self._last_tick_ts, tz=timezone.utc).isoformat())
+                
+                if self.max_retries > 0 and retries > self.max_retries:
                     logger.error("Max retries exceeded; exiting ingest loop")
                     raise
                 await asyncio.sleep(wait_ms / 1000)
 
     async def _ingest_loop(self) -> None:
-        async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=10) as ws:  # type: ignore[arg-type]
+        # Add open_timeout to allow more time for initial handshake (default is often too short)
+        # close_timeout ensures graceful shutdown
+        async with websockets.connect(
+            self.ws_url,
+            ping_interval=self.ping_interval,
+            ping_timeout=self.ping_timeout,
+            open_timeout=self.open_timeout,  # 30 seconds for initial connection handshake
+            close_timeout=self.close_timeout,  # 10 seconds for graceful close
+        ) as ws:  # type: ignore[arg-type]
+            logger.info("HL WS: Connected to %s", self.ws_url)
             await self._subscribe(ws, self.symbols)
             async for raw in ws:
                 await self._handle_message(raw)
@@ -133,6 +168,8 @@ class HyperliquidWSIngester:
 
     async def _handle_message(self, raw: str | bytes) -> None:
         data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+        # Mark heartbeat for stale detection
+        self._last_tick_ts = time.time()
         if self._debug and self._debug_seen < self._debug_limit:
             logger.info("WS msg keys: %s", list(data.keys()) if isinstance(data, dict) else type(data))
         # Envelope handling: {"channel":"trades","data":[...]}

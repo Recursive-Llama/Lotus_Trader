@@ -173,7 +173,7 @@ class ExposureLookup:
         # Primary scope dimensions (required for exact matching)
         set_value("chain", entry.get("chain") or position.get("token_chain"))
         set_value("timeframe", position.get("timeframe"))
-        set_value("book_id", position.get("book_id") or "social")  # Default to "social" if not set
+        set_value("book_id", position.get("book_id") or "onchain_crypto")  # Default to onchain crypto book
         # State from features.uptrend_engine_v4.state or position.state column
         state = None
         if isinstance(features, dict):

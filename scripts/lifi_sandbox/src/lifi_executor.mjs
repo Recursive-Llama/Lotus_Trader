@@ -455,10 +455,22 @@ const resolveActualOutput = async ({ chainId, txHash, tokenAddress, walletAddres
       return null
     } else {
       // EVM chains (ETH, Base, BSC)
+      // CRITICAL: For cross-chain swaps, ensure we're using the destination chain's transaction hash
+      // Li.Fi's expectedOutput might be from the first swap (e.g., USDC→ETH), not the final amount
       const delta = await deriveEvmTokenDelta(chainId, txHash, tokenAddress, walletAddress)
       if (delta) {
+        if (process.env.LOTUS_DEBUG_LIFI === '1') {
+          console.log('[LiFi] EVM delta found', { chainId, txHash, tokenAddress, delta })
+        }
         return delta
       }
+      // If delta is null, expectedOutput might be wrong (could be from first swap, not final)
+      // Log warning so we can investigate
+      console.warn(
+        `[LiFi] deriveEvmTokenDelta returned null for chainId=${chainId}, txHash=${txHash}, ` +
+        `tokenAddress=${tokenAddress}, walletAddress=${walletAddress}. ` +
+        `Falling back to expectedOutput=${expectedOutput} which may be incorrect for cross-chain swaps.`
+      )
       if (typeof expectedOutput === 'number') {
         return {
           amount: expectedOutput,

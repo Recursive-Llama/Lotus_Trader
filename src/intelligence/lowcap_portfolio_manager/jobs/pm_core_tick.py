@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 import uuid
 import statistics
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from supabase import create_client, Client  # type: ignore
 from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions_v4
@@ -27,7 +28,7 @@ from src.intelligence.lowcap_portfolio_manager.pm.bucketing_helpers import (
 from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import BUCKET_DRIVERS
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("pm_core")
 
 
 def bucket_cf_improvement(missed_rr: Optional[float]) -> str:
@@ -87,6 +88,33 @@ class PMCoreTick:
                     logger.warning("TELEGRAM_NOTIFICATIONS_ENABLED=1 but TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID not set")
             except Exception as e:
                 logger.warning(f"Failed to initialize Telegram notifier: {e}")
+
+    def _fire_and_forget(self, coro, description: str = "notification") -> bool:
+        """Run async notification without blocking the trading path."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop: execute synchronously
+            try:
+                return asyncio.run(coro)
+            except Exception as e:
+                logger.warning("Failed to run %s: %s", description, e)
+                return False
+
+        try:
+            task = loop.create_task(coro)
+        except Exception as e:
+            logger.warning("Failed to schedule %s: %s", description, e)
+            return False
+
+        def _log_result(task: asyncio.Task) -> None:
+            if task.cancelled():
+                logger.warning("%s task was cancelled", description)
+            elif task.exception():
+                logger.warning("%s task failed: %s", description, task.exception())
+
+        task.add_done_callback(_log_result)
+        return True
 
     def _get_regime_driver_states(self, driver: str | None) -> Dict[str, str]:
         """
@@ -1650,7 +1678,8 @@ class PMCoreTick:
                     "timestamp": now_iso,
                     "price": price,
                     "size_frac": size_frac,
-                    "signal": signal
+                    "signal": signal,
+                    "sr_level_price": (action.get("reasons") or {}).get("sr_level_price"),
                 }
             
             # Update prev_state if we have state info
@@ -1826,45 +1855,51 @@ class PMCoreTick:
                 
                 if is_entry:
                     # Entry notification
-                    asyncio.run(self.telegram_notifier.send_entry_notification(
-                        token_ticker=token_ticker,
-                        token_contract=token_contract,
-                        chain=chain,
-                        timeframe=timeframe,
-                        amount_usd=amount_usd,
-                        entry_price_usd=entry_price_usd,
-                        tx_hash=tx_hash,
-                        state=state,
-                        signal=signal,
-                        a_score=a_final,
-                        e_score=e_final,
-                        allocation_pct=None,
-                        source_tweet_url=source_tweet_url
-                    ))
+                    self._fire_and_forget(
+                        self.telegram_notifier.send_entry_notification(
+                            token_ticker=token_ticker,
+                            token_contract=token_contract,
+                            chain=chain,
+                            timeframe=timeframe,
+                            amount_usd=amount_usd,
+                            entry_price_usd=entry_price_usd,
+                            tx_hash=tx_hash,
+                            state=state,
+                            signal=signal,
+                            a_score=a_final,
+                            e_score=e_final,
+                            allocation_pct=None,
+                            source_tweet_url=source_tweet_url
+                        ),
+                        description="telegram entry notification"
+                    )
                 else:
                     # Add notification
-                    asyncio.run(self.telegram_notifier.send_add_notification(
-                        token_ticker=token_ticker,
-                        token_contract=token_contract,
-                        chain=chain,
-                        timeframe=timeframe,
-                        amount_usd=amount_usd,
-                        entry_price_usd=entry_price_usd,
-                        tx_hash=tx_hash,
-                        state=state,
-                        signal=signal,
-                        a_score=a_final,
-                        e_score=e_final,
-                        size_frac=size_frac,
-                        position_size=total_quantity,
-                        position_value_usd=position_value_usd,
-                        avg_entry_price_usd=avg_entry_price_usd,
-                        total_pnl_usd=total_pnl_usd,
-                        total_pnl_pct=total_pnl_pct,
-                        rpnl_usd=rpnl_usd,
-                        rpnl_pct=rpnl_pct,
-                        source_tweet_url=source_tweet_url
-                    ))
+                    self._fire_and_forget(
+                        self.telegram_notifier.send_add_notification(
+                            token_ticker=token_ticker,
+                            token_contract=token_contract,
+                            chain=chain,
+                            timeframe=timeframe,
+                            amount_usd=amount_usd,
+                            entry_price_usd=entry_price_usd,
+                            tx_hash=tx_hash,
+                            state=state,
+                            signal=signal,
+                            a_score=a_final,
+                            e_score=e_final,
+                            size_frac=size_frac,
+                            position_size=total_quantity,
+                            position_value_usd=position_value_usd,
+                            avg_entry_price_usd=avg_entry_price_usd,
+                            total_pnl_usd=total_pnl_usd,
+                            total_pnl_pct=total_pnl_pct,
+                            rpnl_usd=rpnl_usd,
+                            rpnl_pct=rpnl_pct,
+                            source_tweet_url=source_tweet_url
+                        ),
+                        description="telegram add notification"
+                    )
             elif decision_type == "trim":
                 # Trim notification
                 tokens_sold = float(exec_result.get("tokens_sold", 0.0))
@@ -1872,27 +1907,30 @@ class PMCoreTick:
                 value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
                 remaining_tokens = total_quantity
                 
-                asyncio.run(self.telegram_notifier.send_trim_notification(
-                    token_ticker=token_ticker,
-                    token_contract=token_contract,
-                    chain=chain,
-                    timeframe=timeframe,
-                    tokens_sold=tokens_sold,
-                    sell_price_usd=sell_price_usd,
-                    value_extracted_usd=value_extracted_usd,
-                    size_frac=size_frac,
-                    tx_hash=tx_hash,
-                    state=state,
-                    signal=signal,
-                    e_score=e_final,
-                    remaining_tokens=remaining_tokens,
-                    position_value_usd=position_value_usd,
-                    total_pnl_usd=total_pnl_usd,
-                    total_pnl_pct=total_pnl_pct,
-                    rpnl_usd=rpnl_usd,
-                    rpnl_pct=rpnl_pct,
-                    source_tweet_url=source_tweet_url
-                ))
+                self._fire_and_forget(
+                    self.telegram_notifier.send_trim_notification(
+                        token_ticker=token_ticker,
+                        token_contract=token_contract,
+                        chain=chain,
+                        timeframe=timeframe,
+                        tokens_sold=tokens_sold,
+                        sell_price_usd=sell_price_usd,
+                        value_extracted_usd=value_extracted_usd,
+                        size_frac=size_frac,
+                        tx_hash=tx_hash,
+                        state=state,
+                        signal=signal,
+                        e_score=e_final,
+                        remaining_tokens=remaining_tokens,
+                        position_value_usd=position_value_usd,
+                        total_pnl_usd=total_pnl_usd,
+                        total_pnl_pct=total_pnl_pct,
+                        rpnl_usd=rpnl_usd,
+                        rpnl_pct=rpnl_pct,
+                        source_tweet_url=source_tweet_url
+                    ),
+                    description="telegram trim notification"
+                )
             elif decision_type == "emergency_exit":
                 # Emergency exit notification
                 tokens_sold = float(exec_result.get("tokens_sold", 0.0))
@@ -1900,24 +1938,27 @@ class PMCoreTick:
                 value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
                 exit_reason = reasons.get("exit_reason", "emergency_exit")
                 
-                asyncio.run(self.telegram_notifier.send_emergency_exit_notification(
-                    token_ticker=token_ticker,
-                    token_contract=token_contract,
-                    chain=chain,
-                    timeframe=timeframe,
-                    tokens_sold=tokens_sold,
-                    sell_price_usd=sell_price_usd,
-                    value_extracted_usd=value_extracted_usd,
-                    tx_hash=tx_hash,
-                    state=state,
-                    reason=exit_reason,
-                    e_score=e_final,
-                    total_pnl_usd=total_pnl_usd,
-                    total_pnl_pct=total_pnl_pct,
-                    rpnl_usd=rpnl_usd,
-                    rpnl_pct=rpnl_pct,
-                    source_tweet_url=source_tweet_url
-                ))
+                self._fire_and_forget(
+                    self.telegram_notifier.send_emergency_exit_notification(
+                        token_ticker=token_ticker,
+                        token_contract=token_contract,
+                        chain=chain,
+                        timeframe=timeframe,
+                        tokens_sold=tokens_sold,
+                        sell_price_usd=sell_price_usd,
+                        value_extracted_usd=value_extracted_usd,
+                        tx_hash=tx_hash,
+                        state=state,
+                        reason=exit_reason,
+                        e_score=e_final,
+                        total_pnl_usd=total_pnl_usd,
+                        total_pnl_pct=total_pnl_pct,
+                        rpnl_usd=rpnl_usd,
+                        rpnl_pct=rpnl_pct,
+                        source_tweet_url=source_tweet_url
+                    ),
+                    description="telegram emergency exit notification"
+                )
         except Exception as e:
             logger.warning(f"Error sending execution notification: {e}")
             # Don't block execution if notification fails
@@ -2004,29 +2045,32 @@ class PMCoreTick:
                     "error": buyback_result.get("error", "Unknown error")
                 }
             
-            asyncio.run(self.telegram_notifier.send_position_summary_notification(
-                token_ticker=token_ticker,
-                token_contract=token_contract,
-                chain=chain,
-                timeframe=timeframe,
-                final_exit_type=final_exit_type,
-                exit_reason=exit_reason,
-                total_allocation_usd=total_allocation_usd,
-                total_extracted_usd=total_extracted_usd,
-                rpnl_usd=rpnl_usd,
-                rpnl_pct=rpnl_pct,
-                total_pnl_usd=total_pnl_usd,
-                total_pnl_pct=total_pnl_pct,
-                hold_time_days=hold_time_days,
-                rr=None,
-                return_mult=None,
-                max_drawdown_pct=None,
-                max_gain_mult=None,
-                completed_trades=completed_trades_count,
-                entry_context=entry_context,
-                lotus_buyback=lotus_buyback,
-                source_tweet_url=source_tweet_url
-            ))
+            self._fire_and_forget(
+                self.telegram_notifier.send_position_summary_notification(
+                    token_ticker=token_ticker,
+                    token_contract=token_contract,
+                    chain=chain,
+                    timeframe=timeframe,
+                    final_exit_type=final_exit_type,
+                    exit_reason=exit_reason,
+                    total_allocation_usd=total_allocation_usd,
+                    total_extracted_usd=total_extracted_usd,
+                    rpnl_usd=rpnl_usd,
+                    rpnl_pct=rpnl_pct,
+                    total_pnl_usd=total_pnl_usd,
+                    total_pnl_pct=total_pnl_pct,
+                    hold_time_days=hold_time_days,
+                    rr=None,
+                    return_mult=None,
+                    max_drawdown_pct=None,
+                    max_gain_mult=None,
+                    completed_trades=completed_trades_count,
+                    entry_context=entry_context,
+                    lotus_buyback=lotus_buyback,
+                    source_tweet_url=source_tweet_url
+                ),
+                description="telegram position summary notification"
+            )
         except Exception as e:
             logger.warning(f"Error sending position summary notification: {e}")
             # Don't block closure if notification fails
@@ -2606,6 +2650,12 @@ class PMCoreTick:
         timeframe = position.get("timeframe", self.timeframe)
         chain = position.get("token_chain", "").lower()
         token_ticker = position.get("token_ticker") or token
+        total_quantity = float(position.get("total_quantity") or 0.0)
+        features = position.get("features") or {}
+        logging_meta = features.get("pm_logging_meta") or {}
+        logging_meta_updated = False
+        exec_history = features.get("pm_execution_history") or {}
+        exec_history_updated = False
         
         trade_id = position.get("current_trade_id")
         
@@ -2614,6 +2664,19 @@ class PMCoreTick:
             decision_type = act.get("decision_type", "").lower()
             if decision_type == "hold" or not decision_type:
                 continue
+            
+            # Throttle noisy trim strands when we have no position
+            if decision_type == "trim" and total_quantity <= 0:
+                last_no_pos_trim_ts = logging_meta.get("last_no_position_trim_ts")
+                if last_no_pos_trim_ts:
+                    try:
+                        last_dt = datetime.fromisoformat(last_no_pos_trim_ts)
+                        if now - last_dt < timedelta(minutes=9):
+                            continue
+                    except Exception:
+                        pass
+                logging_meta["last_no_position_trim_ts"] = now.isoformat()
+                logging_meta_updated = True
             
             # Merge lever diagnostics into reasons for audit
             lever_diag = {}
@@ -2755,6 +2818,16 @@ class PMCoreTick:
                         "price": exec_result.get("price"),
                     }
             
+            # Record last trim signal SR level for gating (even if no execution or no position)
+            if decision_type == "trim":
+                sr_level_price = reasons.get("sr_level_price")
+                if sr_level_price is not None:
+                    exec_history["last_trim_signal"] = {
+                        "timestamp": now.isoformat(),
+                        "sr_level_price": sr_level_price,
+                    }
+                    exec_history_updated = True
+            
             # Build strand with proper ad_strands schema structure
             strand = {
                 "id": f"pm_action_{position_id}_{decision_type}_{int(now.timestamp() * 1000)}",
@@ -2773,6 +2846,16 @@ class PMCoreTick:
             }
             
             rows.append(strand)
+        # Persist logging throttle metadata and trim signal history even if no strands were written this tick
+        if logging_meta_updated or exec_history_updated:
+            try:
+                if logging_meta_updated:
+                    features["pm_logging_meta"] = logging_meta
+                if exec_history_updated:
+                    features["pm_execution_history"] = exec_history
+                self.sb.table("lowcap_positions").update({"features": features}).eq("id", position_id).execute()
+            except Exception as e:
+                logger.warning(f"Error updating features for position %s: %s", position_id, e)
         if not rows:
             return
         try:
@@ -2904,6 +2987,15 @@ class PMCoreTick:
                     exposure_lookup=exposure_lookup,
                     regime_states=regime_state_bundle,
                 )
+                
+                # Log when first-dip buy flag is set but no action returned
+                features_check = p.get("features") or {}
+                uptrend_check = features_check.get("uptrend_engine_v4") or {}
+                first_dip_flag = uptrend_check.get("first_dip_buy_flag", False)
+                if first_dip_flag and (not actions or all(a.get("decision_type", "").lower() == "hold" for a in actions)):
+                    ticker = p.get("token_ticker", p.get("token_contract", "?")[:20])
+                    logger.info("PM: first_dip_buy_flag=True but no action for %s (%s) - actions=%s", 
+                               ticker, p.get("timeframe", "?"), [a.get("decision_type") for a in actions] if actions else "[]")
             else:
                 actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
             
@@ -2936,6 +3028,19 @@ class PMCoreTick:
                 # Skip hold actions
                 if decision_type == "hold" or not decision_type:
                     continue
+                
+                # Skip execution when no position for trims; still log strand elsewhere
+                if decision_type == "trim":
+                    try:
+                        if float(p.get("total_quantity") or 0.0) <= 0.0:
+                            exec_key = f"{p.get('id')}:{decision_type}"
+                            execution_results[exec_key] = {
+                                "status": "skipped",
+                                "error": "no_position_for_trim"
+                            }
+                            continue
+                    except Exception:
+                        pass
                 
                 # Execute via executor
                 try:

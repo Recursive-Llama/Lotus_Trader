@@ -30,13 +30,13 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 from enum import Enum
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("rollup")
 
 
 class DataSource(Enum):
@@ -89,6 +89,10 @@ class OHLCBar:
     
     # Metadata
     source: str = "rollup"
+    partial: bool = False
+    coverage_pct: float = 100.0
+    bars_used: int = 0
+    expected_bars: int = 0
 
 
 class GenericOHLCRollup:
@@ -108,7 +112,58 @@ class GenericOHLCRollup:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are required")
         
         self.sb: Client = create_client(supabase_url, supabase_key)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger("rollup")
+        # GeckoTerminal fallback budget
+        self.gt_budget_per_minute = int(os.getenv("GT_CALL_BUDGET", "20"))
+        self.gt_calls_remaining = self.gt_budget_per_minute
+        self.last_gt_budget_reset: Optional[datetime] = None
+
+    def _reset_gt_budget_if_needed(self):
+        now = datetime.now(timezone.utc)
+        if self.last_gt_budget_reset is None or (now - self.last_gt_budget_reset).total_seconds() >= 60:
+            self.gt_calls_remaining = self.gt_budget_per_minute
+            self.last_gt_budget_reset = now
+
+    def _attempt_gt_backfill(self, token_contract: str, chain: str, timeframe: Timeframe, boundary_ts: datetime) -> bool:
+        """
+        Try to backfill a specific boundary via GeckoTerminal.
+        Returns True if attempted and possibly inserted rows, False otherwise.
+        """
+        try:
+            from src.intelligence.lowcap_portfolio_manager.jobs.geckoterminal_backfill import backfill_token_timeframe
+        except Exception as e:
+            self.logger.warning(f"GT backfill module unavailable: {e}")
+            return False
+
+        self._reset_gt_budget_if_needed()
+        if self.gt_calls_remaining <= 0:
+            self.logger.info(f"GT budget exhausted, skipping GT backfill for {token_contract[:8]}.../{chain} {timeframe.value} @ {boundary_ts}")
+            return False
+
+        self.gt_calls_remaining -= 1
+        tf_minutes = self._get_timeframe_minutes(timeframe)
+        lookback_minutes = max(tf_minutes * 2, 30)
+        self.logger.info(
+            f"GT backfill attempt for {token_contract[:8]}.../{chain} {timeframe.value} at {boundary_ts} "
+            f"(lookback {lookback_minutes}m, remaining budget={self.gt_calls_remaining})"
+        )
+        try:
+            result = backfill_token_timeframe(
+                token_contract=token_contract,
+                chain=chain,
+                timeframe=timeframe.value,
+                lookback_minutes=lookback_minutes,
+            )
+            if result.get("inserted_rows", 0) > 0:
+                self.logger.info(
+                    f"GT backfill inserted {result.get('inserted_rows')} rows for {token_contract[:8]}.../{chain} {timeframe.value}"
+                )
+                return True
+        except Exception as e:
+            self.logger.warning(
+                f"GT backfill failed for {token_contract[:8]}.../{chain} {timeframe.value} at {boundary_ts}: {e}"
+            )
+        return False
     
     def rollup_timeframe(
         self, 
@@ -130,66 +185,307 @@ class GenericOHLCRollup:
         if when is None:
             when = datetime.now(tz=timezone.utc)
         
+        # Normalize timeframe value for robustness (some callers may pass str instead of Timeframe)
+        tf_value = timeframe.value if isinstance(timeframe, Timeframe) else str(timeframe)
+        
         # For 1m, just convert price points immediately (no boundary check needed)
-        if timeframe == Timeframe.M1:
+        if tf_value == Timeframe.M1.value:
             if data_source == DataSource.MAJORS:
                 # Majors already have OHLC data, skip 1m conversion
                 self.logger.info("Majors data already in OHLC format, skipping 1m conversion")
                 return 0
             else:
                 # Get unprocessed price points for 1m OHLC conversion
+                self.logger.info(f"Starting 1m OHLC conversion at {when}")
                 bars = self._get_lowcap_1m_data(timeframe, when)
                 if not bars:
                     self.logger.info(f"No unprocessed price points found for 1m OHLC conversion")
                     return 0
-                ohlc_bars = self._convert_1m_to_ohlc(bars)
-                if not ohlc_bars:
-                    return 0
-                written = self._store_ohlc_bars(data_source, ohlc_bars)
-                self.logger.info(f"Converted {written} price points to 1m OHLC bars")
-                return written
+                
+                # Log summary of price points found
+                points_by_token = defaultdict(int)
+                timestamp_range = {"min": None, "max": None}
+                for bar in bars:
+                    key = (bar['token_contract'], bar['chain'])
+                    points_by_token[key] += 1
+                    ts = datetime.fromisoformat(bar['timestamp'].replace('Z', '+00:00'))
+                    if timestamp_range["min"] is None or ts < timestamp_range["min"]:
+                        timestamp_range["min"] = ts
+                    if timestamp_range["max"] is None or ts > timestamp_range["max"]:
+                        timestamp_range["max"] = ts
+                
+            # Alert if freshest data is stale (>5 minutes behind now)
+            age_minutes = (when - timestamp_range["max"]).total_seconds() / 60 if timestamp_range["max"] else 999
+            if age_minutes > 5:
+                self.logger.warning(
+                    f"1m OHLC conversion using stale price points: latest={timestamp_range['max']}, "
+                    f"age={age_minutes:.1f}m, earliest={timestamp_range['min']}, count={len(bars)}"
+                )
+            
+            # Log summary (always, not just when stale)
+            self.logger.info(
+                f"Found {len(bars)} unprocessed price points across {len(points_by_token)} tokens "
+                f"(range: {timestamp_range['min']} to {timestamp_range['max']})"
+            )
+            
+            # Log per-token breakdown (first 20 tokens)
+            token_list = sorted(points_by_token.items())[:20]
+            for (token_contract, chain), count in token_list:
+                self.logger.info(f"  - {token_contract[:8]}.../{chain}: {count} price points")
+            if len(points_by_token) > 20:
+                self.logger.info(f"  ... (+{len(points_by_token) - 20} more tokens)")
+            
+            # Convert price points to 1m OHLC bars
+            ohlc_bars = self._convert_1m_to_ohlc(bars)
+            if not ohlc_bars:
+                self.logger.warning(f"1m OHLC conversion created 0 bars from {len(bars)} price points")
+                return 0
+            
+            # Log conversion summary
+            bars_by_token = defaultdict(int)
+            for bar in ohlc_bars:
+                key = (bar.token_contract, bar.chain)
+                bars_by_token[key] += 1
+            
+            self.logger.info(
+                f"Converted {len(bars)} price points to {len(ohlc_bars)} 1m OHLC bars "
+                f"across {len(bars_by_token)} tokens"
+            )
+            
+            # Store to database
+            written = self._store_ohlc_bars(data_source, ohlc_bars)
+            
+            if written != len(ohlc_bars):
+                self.logger.warning(
+                    f"1m OHLC conversion: created {len(ohlc_bars)} bars but wrote {written} to database"
+                )
+            else:
+                self.logger.info(
+                    f"1m OHLC conversion complete: wrote {written} bars to database "
+                    f"({len(bars_by_token)} tokens)"
+                )
+            
+            # Warn if freshest 1m OHLC is stale (>5 minutes old)
+            try:
+                latest = (
+                    self.sb.table("lowcap_price_data_ohlc")
+                    .select("timestamp")
+                    .eq("timeframe", "1m")
+                    .order("timestamp", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if latest.data:
+                    latest_ts = datetime.fromisoformat(latest.data[0]["timestamp"].replace("Z", "+00:00"))
+                    age_minutes = (when - latest_ts).total_seconds() / 60
+                    if age_minutes > 5:
+                        self.logger.warning(
+                            f"Freshest 1m OHLC is stale: latest={latest_ts}, age={age_minutes:.1f}m"
+                        )
+            except Exception as e:
+                self.logger.warning(f"Failed to check 1m OHLC freshness: {e}")
+            
+            return written
         
-        # For higher timeframes, check if we're at a boundary and have enough data
-        if not self._is_at_timeframe_boundary(when, timeframe):
-            self.logger.debug(f"Not at {timeframe.value} boundary, skipping rollup")
-            return 0
-        
-        # Check if bar already exists
+        # For higher timeframes, check if we're at a boundary (with tolerance for late runs)
         boundary_ts = self._get_timeframe_boundary_ts(when, timeframe)
-        if self._bar_exists(data_source, timeframe, boundary_ts):
-            self.logger.debug(f"{timeframe.value} bar already exists for {boundary_ts}, skipping")
+        is_at_boundary = self._is_at_timeframe_boundary(when, timeframe)
+        
+        # Allow processing if we're within 2 minutes of the boundary (for late runs or catch-up)
+        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        tolerance_minutes = min(2, timeframe_minutes // 2)  # At most 2 minutes, or half the timeframe
+        time_since_boundary = (when - boundary_ts).total_seconds() / 60
+        
+        if not is_at_boundary and time_since_boundary > tolerance_minutes:
+            self.logger.info(f"Not at {timeframe.value} boundary (when={when}, boundary={boundary_ts}, {time_since_boundary:.1f}m since boundary), skipping rollup")
             return 0
+        
+        # If we're past the boundary but within tolerance, log it
+        if not is_at_boundary and time_since_boundary <= tolerance_minutes:
+            self.logger.info(f"Processing {timeframe.value} rollup {time_since_boundary:.1f} minutes after boundary (tolerance: {tolerance_minutes}m)")
         
         self.logger.info(f"Rolling up {data_source.value} data to {timeframe.value} at {when} (boundary: {boundary_ts})")
         
         # Get 1m data for the timeframe window
         # Use boundary_ts as the end point to ensure we get the correct window
+        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        start_time = boundary_ts - timedelta(minutes=timeframe_minutes * 2)
+        
+        self.logger.info(
+            f"Querying 1m data for {timeframe.value} rollup: "
+            f"boundary={boundary_ts}, window={start_time} to {boundary_ts} ({timeframe_minutes * 2} minutes)"
+        )
+        
         if data_source == DataSource.MAJORS:
             bars = self._get_majors_1m_data(timeframe, boundary_ts)
         else:
-            bars = self._get_lowcap_1m_data(timeframe, when)
+            bars = self._get_lowcap_1m_data(timeframe, boundary_ts)  # Use boundary_ts for consistency
         
         if not bars:
-            self.logger.info(f"No 1m data found for {data_source.value} {timeframe.value}")
+            self.logger.warning(
+                f"No 1m data found for {data_source.value} {timeframe.value} rollup at {boundary_ts} "
+                f"(window: {start_time} to {boundary_ts})"
+            )
             return 0
         
-        # Check if we have enough bars
+        # Log data query results
+        bars_by_token = defaultdict(int)
+        timestamp_range = {"min": None, "max": None}
+        for bar in bars:
+            key = (bar['token_contract'], bar['chain'])
+            bars_by_token[key] += 1
+            ts = datetime.fromisoformat(bar['timestamp'].replace('Z', '+00:00'))
+            if timestamp_range["min"] is None or ts < timestamp_range["min"]:
+                timestamp_range["min"] = ts
+            if timestamp_range["max"] is None or ts > timestamp_range["max"]:
+                timestamp_range["max"] = ts
+        
+        self.logger.info(
+            f"Found {len(bars)} 1m bars across {len(bars_by_token)} tokens "
+            f"(range: {timestamp_range['min']} to {timestamp_range['max']})"
+        )
+        
+        # Log per-token breakdown (first 10 tokens)
+        token_list = sorted(bars_by_token.items(), key=lambda x: x[1], reverse=True)[:10]
+        for (token_contract, chain), count in token_list:
+            self.logger.info(f"  - {token_contract[:8]}.../{chain}: {count} 1m bars")
+        if len(bars_by_token) > 10:
+            self.logger.info(f"  ... (+{len(bars_by_token) - 10} more tokens)")
+        
+        # Check if we have enough bars (now 60% tolerance for partial data)
         required_bars = self._get_required_bars_count(timeframe)
-        if len(bars) < required_bars:
-            self.logger.info(f"Not enough 1m bars for {timeframe.value} rollup: have {len(bars)}, need {required_bars}")
-            return 0
+        min_required_bars = max(1, int(required_bars * 0.6))  # Allow 60% of required bars
         
-        # Convert to OHLC bars
+        # Calculate per-token coverage
+        token_coverage = defaultdict(lambda: {"bars": 0, "tokens": set()})
+        for bar in bars:
+            key = (bar['token_contract'], bar['chain'])
+            token_coverage[key]["bars"] += 1
+        
+        # Log tokens with insufficient data
+        insufficient_tokens = []
+        for (token_contract, chain), data in token_coverage.items():
+            if data["bars"] < min_required_bars:
+                insufficient_tokens.append((token_contract, chain, data["bars"], min_required_bars))
+        
+        if insufficient_tokens:
+            self.logger.warning(f"Tokens with insufficient data ({len(insufficient_tokens)}) for {data_source.value} {timeframe.value} @ {boundary_ts}:")
+            for token_contract, chain, count, required in insufficient_tokens[:10]:
+                coverage_pct = (count / required_bars * 100) if required_bars > 0 else 0
+                self.logger.warning(
+                    f"  - {token_contract[:8]}.../{chain}: {count}/{required_bars} bars ({coverage_pct:.1f}%)"
+                )
+                # Per-token GT backfill attempt (no longer gated on total bars)
+                self._attempt_gt_backfill(token_contract, chain, timeframe, boundary_ts)
+            if len(insufficient_tokens) > 10:
+                self.logger.warning(f"  ... (+{len(insufficient_tokens) - 10} more tokens)")
+        
+        if len(bars) < required_bars:
+            self.logger.warning(
+                f"Partial data for {data_source.value} {timeframe.value} rollup at {boundary_ts}: "
+                f"have {len(bars)}/{required_bars} bars ({len(bars)/required_bars*100:.1f}%), proceeding with tolerance"
+            )
+        
+        # Convert to OHLC bars (this already handles per-token processing and 80% tolerance)
         ohlc_bars = self._convert_to_ohlc(bars, timeframe)
         
         if not ohlc_bars:
-            self.logger.info(f"No OHLC bars created for {timeframe.value} rollup")
+            self.logger.warning(
+                f"No OHLC bars created for {data_source.value} {timeframe.value} rollup at {boundary_ts} "
+                f"(had {len(bars)} 1m bars across {len(bars_by_token)} tokens)"
+            )
+            return 0
+        
+        # Log conversion summary
+        ohlc_by_token = defaultdict(int)
+        for bar in ohlc_bars:
+            key = (bar.token_contract, bar.chain)
+            ohlc_by_token[key] += 1
+        
+        self.logger.info(
+            f"Converted {len(bars)} 1m bars to {len(ohlc_bars)} {timeframe.value} bars "
+            f"across {len(ohlc_by_token)} tokens"
+        )
+        
+        # Filter out bars that already exist (per-token check)
+        ohlc_bars_to_write = []
+        skipped_existing = 0
+        skipped_tokens = set()
+        created_tokens = set()
+        
+        for bar in ohlc_bars:
+            if self._bar_exists_for_token(data_source, timeframe, boundary_ts, bar.token_contract, bar.chain):
+                skipped_existing += 1
+                skipped_tokens.add((bar.token_contract, bar.chain))
+                self.logger.debug(f"Bar already exists for {bar.token_contract}/{bar.chain} at {boundary_ts}, skipping")
+            else:
+                ohlc_bars_to_write.append(bar)
+                created_tokens.add((bar.token_contract, bar.chain))
+        
+        if skipped_existing > 0:
+            self.logger.info(
+                f"Skipped {skipped_existing} existing bars ({len(skipped_tokens)} tokens), "
+                f"processing {len(ohlc_bars_to_write)} new bars ({len(created_tokens)} tokens)"
+            )
+            # Log first 5 skipped tokens
+            if skipped_tokens:
+                skipped_list = sorted(skipped_tokens)[:5]
+                for token_contract, chain in skipped_list:
+                    self.logger.info(f"  - Skipped (exists): {token_contract[:8]}.../{chain}")
+                if len(skipped_tokens) > 5:
+                    self.logger.info(f"  ... (+{len(skipped_tokens) - 5} more tokens)")
+        
+        if not ohlc_bars_to_write:
+            self.logger.info(
+                f"All {len(ohlc_bars)} bars already exist for {data_source.value} {timeframe.value} at {boundary_ts} "
+                f"({len(skipped_tokens)} tokens)"
+            )
             return 0
         
         # Store in database
-        written = self._store_ohlc_bars(data_source, ohlc_bars)
+        written = self._store_ohlc_bars(data_source, ohlc_bars_to_write)
         
-        self.logger.info(f"Rolled up {written} {timeframe.value} bars at {boundary_ts}")
+        if written > 0:
+            # Log which tokens were rolled up
+            tokens_rolled = set((bar.token_contract, bar.chain) for bar in ohlc_bars_to_write[:written])
+            
+            # Calculate per-token bar counts
+            bars_by_token_rolled = defaultdict(int)
+            for bar in ohlc_bars_to_write[:written]:
+                key = (bar.token_contract, bar.chain)
+                bars_by_token_rolled[key] += 1
+            
+            # Log summary
+            self.logger.info(
+                f"Rolled up {written} {data_source.value} {timeframe.value} bars at {boundary_ts} "
+                f"(skipped {skipped_existing} existing, {len(tokens_rolled)} tokens created)"
+            )
+            
+            # Log first 10 tokens with bar counts
+            token_list = sorted(tokens_rolled)[:10]
+            for token_contract, chain in token_list:
+                count = bars_by_token_rolled[(token_contract, chain)]
+                self.logger.info(f"  - {token_contract[:8]}.../{chain}: {count} bar(s)")
+            if len(tokens_rolled) > 10:
+                self.logger.info(f"  ... (+{len(tokens_rolled) - 10} more tokens)")
+        else:
+            self.logger.warning(
+                f"Rollup created {len(ohlc_bars_to_write)} bars but wrote 0 to database for "
+                f"{data_source.value} {timeframe.value} at {boundary_ts} ({len(created_tokens)} tokens)"
+            )
+        
+        # Log final summary
+        total_tokens_checked = len(bars_by_token)
+        tokens_created = len(created_tokens) if written > 0 else 0
+        tokens_skipped = len(skipped_tokens)
+        tokens_failed = total_tokens_checked - tokens_created - tokens_skipped
+        
+        self.logger.info(
+            f"{timeframe.value} rollup summary at {boundary_ts}: "
+            f"{tokens_created} tokens created, {tokens_skipped} tokens skipped (exists), "
+            f"{tokens_failed} tokens failed, {total_tokens_checked} total checked"
+        )
+        
         return written
     
     def _get_majors_1m_data(self, timeframe: Timeframe, boundary_ts: datetime) -> List[Dict]:
@@ -233,25 +529,41 @@ class GenericOHLCRollup:
         
         return converted_data
     
-    def _get_lowcap_1m_data(self, timeframe: Timeframe, when: datetime) -> List[Dict]:
+    def _get_lowcap_1m_data(self, timeframe: Timeframe, when: datetime, boundary_ts: Optional[datetime] = None) -> List[Dict]:
         """Get lowcap data for the timeframe window"""
         timeframe_minutes = self._get_timeframe_minutes(timeframe)
         
         # For 1m timeframe, we need raw price points (not OHLC data)
         if timeframe == Timeframe.M1:
             self.logger.info("Getting 1m price points for 1m OHLC conversion")
-            # Get all price points from the last 24 hours to catch up on any missed conversions
-            start_time = when - timedelta(hours=24)
+            # Fetch a recent slice of raw price points (newest-first) to avoid paging old data.
+            # We only need recent minutes to build 1m OHLC; keep it tight (15m window) with a cap.
+            window_minutes = 15
+            start_time = when - timedelta(minutes=window_minutes)
+            row_limit = 1000
             
-            # Get all price points
             result = self.sb.table("lowcap_price_data_1m").select(
                 "token_contract,chain,timestamp,price_usd,price_native,volume_5m,volume_1m,volume_1h,volume_6h,volume_24h,liquidity_usd,liquidity_change_1m,price_change_24h,market_cap,fdv,dex_id,pair_address"
-            ).gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=False).execute()
+            ).gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=True).limit(row_limit).execute()
             
             price_points_data = result.data or []
+            price_points_data.reverse()  # oldest-first for processing
             
             if not price_points_data:
+                self.logger.warning(f"No price points returned for 1m conversion (window {start_time} to {when}); latest raw price is stale.")
                 return []
+            
+            # Staleness / truncation checks
+            ts_min = datetime.fromisoformat(price_points_data[0]['timestamp'].replace('Z', '+00:00'))
+            ts_max = datetime.fromisoformat(price_points_data[-1]['timestamp'].replace('Z', '+00:00'))
+            if ts_max < when - timedelta(minutes=5):
+                self.logger.warning(
+                    f"Stale raw price data for 1m conversion: max_ts={ts_max}, now={when}, age={(when - ts_max).total_seconds()/60:.1f}m"
+                )
+            if len(price_points_data) == row_limit:
+                self.logger.warning(
+                    f"Hit row limit ({row_limit}) when fetching price points for 1m conversion (window {start_time} to {when}); data may be truncated"
+                )
             
             # Get existing OHLC bars to find which price points are already converted
             table_name = "lowcap_price_data_ohlc"
@@ -279,15 +591,45 @@ class GenericOHLCRollup:
                 if key not in existing_timestamps:
                     unprocessed.append(point)
             
-            self.logger.info(f"Found {len(unprocessed)} unprocessed price points out of {len(price_points_data)} total")
+            # Log detailed breakdown
+            points_by_token = defaultdict(int)
+            timestamp_range = {"min": None, "max": None}
+            for point in unprocessed:
+                key = (point['token_contract'], point['chain'])
+                points_by_token[key] += 1
+                ts = datetime.fromisoformat(point['timestamp'].replace('Z', '+00:00'))
+                if timestamp_range["min"] is None or ts < timestamp_range["min"]:
+                    timestamp_range["min"] = ts
+                if timestamp_range["max"] is None or ts > timestamp_range["max"]:
+                    timestamp_range["max"] = ts
+            
+            self.logger.info(
+                f"Found {len(unprocessed)} unprocessed price points out of {len(price_points_data)} total "
+                f"across {len(points_by_token)} tokens (range: {timestamp_range['min']} to {timestamp_range['max']})"
+            )
+            
+            # Log per-token breakdown (first 10 tokens)
+            if points_by_token:
+                token_list = sorted(points_by_token.items())[:10]
+                for (token_contract, chain), count in token_list:
+                    self.logger.info(f"  - {token_contract[:8]}.../{chain}: {count} unprocessed points")
+                if len(points_by_token) > 10:
+                    self.logger.info(f"  ... (+{len(points_by_token) - 10} more tokens)")
+            
             return unprocessed
         
         # For higher timeframes, prioritize existing OHLC data (15m) for rollup
         # because 15m data has proper OHLC format and covers more history
         
+        # Use boundary_ts if provided (for consistency with majors), otherwise use when
+        end_time = boundary_ts if boundary_ts else when
+        
         # First try 1m OHLC data from OHLC table (preferred for rollup)
-        self.logger.info(f"Trying 1m OHLC data first for {timeframe.value} rollup")
-        start_time = when - timedelta(minutes=timeframe_minutes * 2)
+        start_time = end_time - timedelta(minutes=timeframe_minutes * 2)
+        self.logger.info(
+            f"Trying 1m OHLC data first for {timeframe.value} rollup "
+            f"(window: {start_time} to {end_time}, {timeframe_minutes * 2} minutes)"
+        )
         
         # Use pagination to get all records (Supabase has 1000 record limit)
         all_data = []
@@ -297,7 +639,7 @@ class GenericOHLCRollup:
         while True:
             result = self.sb.table("lowcap_price_data_ohlc").select(
                 "token_contract,chain,timestamp,open_usd,high_usd,low_usd,close_usd,open_native,high_native,low_native,close_native,volume,liquidity_usd,liquidity_change_1m,price_change_24h,market_cap,fdv,dex_id,pair_address"
-            ).eq("timeframe", "1m").gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=False).range(offset, offset + page_size - 1).execute()
+            ).eq("timeframe", "1m").gte("timestamp", start_time.isoformat()).lt("timestamp", end_time.isoformat()).order("timestamp", desc=False).range(offset, offset + page_size - 1).execute()
             
             if not result.data:
                 break
@@ -311,6 +653,17 @@ class GenericOHLCRollup:
             offset += page_size
         
         if all_data:
+            # Log what we found
+            data_by_token = defaultdict(int)
+            for bar in all_data:
+                key = (bar['token_contract'], bar['chain'])
+                data_by_token[key] += 1
+            
+            self.logger.info(
+                f"Found {len(all_data)} 1m OHLC bars across {len(data_by_token)} tokens "
+                f"for {timeframe.value} rollup (window: {start_time} to {end_time})"
+            )
+            
             # For timeframes that need volume from price points (5m, 1h, 4h, 1d),
             # we need to also get the price points to access volume_1h, volume_6h, etc.
             if timeframe in [Timeframe.M5, Timeframe.H1, Timeframe.H4, Timeframe.D1]:
@@ -319,7 +672,7 @@ class GenericOHLCRollup:
                     "token_contract,chain,timestamp,volume_5m,volume_1h,volume_6h,volume_24h,liquidity_usd,liquidity_change_1m,price_change_24h,market_cap,fdv,dex_id,pair_address"
                 ).gte(
                     "timestamp", start_time.isoformat()
-                ).lt("timestamp", when.isoformat()).order(
+                ).lt("timestamp", end_time.isoformat()).order(
                     "timestamp", desc=False
                 ).execute()
                 
@@ -344,14 +697,17 @@ class GenericOHLCRollup:
             return all_data
         
         # Fallback to 15m OHLC data if no 1m OHLC data available
-        self.logger.info("No 1m OHLC data found, trying 15m OHLC data")
+        self.logger.warning(
+            f"No 1m OHLC data found for {timeframe.value} rollup (window: {start_time} to {end_time}), "
+            f"trying 15m OHLC data as fallback"
+        )
         all_data = []
         offset = 0
         
         while True:
             result = self.sb.table("lowcap_price_data_ohlc").select(
                 "token_contract,chain,timestamp,open_usd,high_usd,low_usd,close_usd,open_native,high_native,low_native,close_native,volume,liquidity_usd,liquidity_change_1m,price_change_24h,market_cap,fdv,dex_id,pair_address"
-            ).eq("timeframe", "15m").gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=False).range(offset, offset + page_size - 1).execute()
+            ).eq("timeframe", "15m").gte("timestamp", start_time.isoformat()).lt("timestamp", end_time.isoformat()).order("timestamp", desc=False).range(offset, offset + page_size - 1).execute()
             
             if not result.data:
                 break
@@ -364,15 +720,278 @@ class GenericOHLCRollup:
             offset += page_size
         
         if all_data:
+            data_by_token = defaultdict(int)
+            for bar in all_data:
+                key = (bar['token_contract'], bar['chain'])
+                data_by_token[key] += 1
+            
+            self.logger.info(
+                f"Found {len(all_data)} 15m OHLC bars across {len(data_by_token)} tokens "
+                f"for {timeframe.value} rollup (fallback, window: {start_time} to {end_time})"
+            )
             return all_data
         
         # Final fallback to raw 1m price points
-        self.logger.info("No OHLC data found, falling back to raw 1m price points")
+        self.logger.warning(
+            f"No OHLC data found for {timeframe.value} rollup (window: {start_time} to {end_time}), "
+            f"falling back to raw 1m price points"
+        )
         result = self.sb.table("lowcap_price_data_1m").select(
             "token_contract,chain,timestamp,price_usd,price_native,volume_1m,liquidity_usd,liquidity_change_1m,price_change_24h,market_cap,fdv,dex_id,pair_address"
-        ).gte("timestamp", start_time.isoformat()).lt("timestamp", when.isoformat()).order("timestamp", desc=False).execute()
+        ).gte("timestamp", start_time.isoformat()).lt("timestamp", end_time.isoformat()).order("timestamp", desc=False).execute()
         
-        return result.data or []
+        price_points = result.data or []
+        if price_points:
+            points_by_token = defaultdict(int)
+            for point in price_points:
+                key = (point['token_contract'], point['chain'])
+                points_by_token[key] += 1
+            
+            self.logger.info(
+                f"Found {len(price_points)} raw 1m price points across {len(points_by_token)} tokens "
+                f"for {timeframe.value} rollup (fallback, window: {start_time} to {end_time})"
+            )
+        
+        return price_points
+    
+    def _get_tokens_with_1m_data(
+        self, 
+        data_source: DataSource, 
+        start_time: datetime, 
+        end_time: datetime
+    ) -> List[Tuple[str, str]]:
+        """Get list of (token_contract, chain) tuples that have 1m data in the time range"""
+        try:
+            if data_source == DataSource.MAJORS:
+                # For majors, check majors_price_data_ohlc (timeframe='1m')
+                result = self.sb.table("majors_price_data_ohlc").select(
+                    "token_contract,chain"
+                ).eq("timeframe", "1m").gte(
+                    "timestamp", start_time.isoformat()
+                ).lt("timestamp", end_time.isoformat()).execute()
+            else:
+                # For lowcaps, check lowcap_price_data_ohlc (timeframe='1m')
+                result = self.sb.table("lowcap_price_data_ohlc").select(
+                    "token_contract,chain"
+                ).eq("timeframe", "1m").gte(
+                    "timestamp", start_time.isoformat()
+                ).lt("timestamp", end_time.isoformat()).execute()
+            
+            # Get unique (token_contract, chain) pairs
+            tokens = set()
+            for row in (result.data or []):
+                tokens.add((row['token_contract'], row['chain']))
+            
+            return list(tokens)
+        except Exception as e:
+            self.logger.error(f"Error getting tokens with 1m data: {e}", exc_info=True)
+            return []
+    
+    def _get_existing_boundaries(
+        self,
+        data_source: DataSource,
+        timeframe: Timeframe,
+        tokens: List[Tuple[str, str]],
+        start_time: datetime,
+        end_time: datetime
+    ) -> Dict[Tuple[str, str], set]:
+        """Get existing boundaries for tokens in time range
+        
+        Returns:
+            Dict mapping (token_contract, chain) -> set of boundary timestamps (ISO strings)
+        """
+        try:
+            table_name = "majors_price_data_ohlc" if data_source == DataSource.MAJORS else "lowcap_price_data_ohlc"
+            
+            # Build query for all tokens at once (more efficient)
+            query = self.sb.table(table_name).select(
+                "token_contract,chain,timestamp"
+            ).eq("timeframe", timeframe.value).gte(
+                "timestamp", start_time.isoformat()
+            ).lt("timestamp", end_time.isoformat())
+            
+            # Execute query
+            result = query.execute()
+            
+            # Group by (token_contract, chain)
+            existing = defaultdict(set)
+            for row in (result.data or []):
+                key = (row['token_contract'], row['chain'])
+                if key in tokens:  # Only include requested tokens
+                    existing[key].add(row['timestamp'])
+            
+            return dict(existing)
+        except Exception as e:
+            self.logger.error(f"Error getting existing boundaries: {e}", exc_info=True)
+            return {}
+    
+    def _generate_expected_boundaries(
+        self,
+        timeframe: Timeframe,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[datetime]:
+        """Generate list of expected boundary timestamps for a timeframe"""
+        boundaries = []
+        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        
+        # Start from first boundary at or after start_time
+        current = self._get_timeframe_boundary_ts(start_time, timeframe)
+        if current < start_time:
+            # Move to next boundary by adding timeframe_minutes
+            current = current + timedelta(minutes=timeframe_minutes)
+            # Recalculate boundary to ensure correct alignment
+            current = self._get_timeframe_boundary_ts(current, timeframe)
+        
+        # Generate boundaries up to end_time
+        while current < end_time:
+            boundaries.append(current)
+            # Move to next boundary
+            current = current + timedelta(minutes=timeframe_minutes)
+            # For timeframes that need special alignment (4h, 1d), recalculate
+            # For others (5m, 15m, 1h), the simple addition should work
+            if timeframe in [Timeframe.H4, Timeframe.D1]:
+                current = self._get_timeframe_boundary_ts(current, timeframe)
+        
+        return boundaries
+    
+    def catch_up_rollups(
+        self,
+        data_source: DataSource,
+        timeframe: Timeframe,
+        lookback_hours: int = 24,
+        max_boundaries: int = 100,
+        max_tokens: int = 50,
+        tokens: Optional[List[Tuple[str, str]]] = None
+    ) -> Dict[str, Any]:
+        """Catch up on missed rollup boundaries
+        
+        Args:
+            data_source: MAJORS or LOWCAPS
+            timeframe: Target timeframe (5m, 15m, 1h, 4h)
+            lookback_hours: How many hours back to check (default: 24)
+            max_boundaries: Maximum boundaries to process per run (default: 100)
+            max_tokens: Maximum tokens to process per run (default: 50)
+            tokens: Optional list of (token_contract, chain) tuples to process.
+                   If None, processes all tokens with 1m data in lookback period.
+        
+        Returns:
+            Dict with summary of catch-up operation
+        """
+        end_time = datetime.now(tz=timezone.utc)
+        start_time = end_time - timedelta(hours=lookback_hours)
+        
+        self.logger.info(
+            f"Starting catch-up for {data_source.value} {timeframe.value} "
+            f"(lookback: {lookback_hours}h, max_boundaries: {max_boundaries}, max_tokens: {max_tokens})"
+        )
+        
+        # Get tokens to process
+        if tokens is None:
+            tokens = self._get_tokens_with_1m_data(data_source, start_time, end_time)
+            self.logger.info(f"Found {len(tokens)} tokens with 1m data in lookback period")
+        
+        if not tokens:
+            return {
+                "status": "no_tokens",
+                "tokens_processed": 0,
+                "boundaries_filled": 0,
+                "boundaries_skipped": 0,
+                "errors": []
+            }
+        
+        # Limit tokens
+        if len(tokens) > max_tokens:
+            tokens = tokens[:max_tokens]
+            self.logger.info(f"Limited to {max_tokens} tokens (had {len(tokens) + max_tokens - len(tokens)})")
+        
+        # Get existing boundaries for all tokens (batch query)
+        existing_boundaries = self._get_existing_boundaries(
+            data_source, timeframe, tokens, start_time, end_time
+        )
+        
+        # Generate expected boundaries
+        expected_boundaries = self._generate_expected_boundaries(timeframe, start_time, end_time)
+        
+        # Find missing boundaries per token
+        missing_by_token = {}
+        for token_key in tokens:
+            existing = existing_boundaries.get(token_key, set())
+            missing = []
+            for boundary_ts in expected_boundaries:
+                boundary_iso = boundary_ts.isoformat()
+                if boundary_iso not in existing:
+                    missing.append(boundary_ts)
+            if missing:
+                missing_by_token[token_key] = missing
+        
+        total_missing = sum(len(missing) for missing in missing_by_token.values())
+        self.logger.info(f"Found {total_missing} missing boundaries across {len(missing_by_token)} tokens")
+        
+        if not missing_by_token:
+            return {
+                "status": "no_gaps",
+                "tokens_processed": len(tokens),
+                "boundaries_filled": 0,
+                "boundaries_skipped": 0,
+                "errors": []
+            }
+        
+        # Process boundaries in batches
+        boundaries_filled = 0
+        boundaries_skipped = 0
+        errors = []
+        processed_count = 0
+        
+        # Flatten missing boundaries with token info, sort by timestamp (oldest first)
+        all_missing = []
+        for token_key, missing_list in missing_by_token.items():
+            for boundary_ts in missing_list:
+                all_missing.append((token_key, boundary_ts))
+        all_missing.sort(key=lambda x: x[1])  # Sort by timestamp
+        
+        # Limit total boundaries to process
+        if len(all_missing) > max_boundaries:
+            all_missing = all_missing[:max_boundaries]
+            self.logger.info(f"Limited to {max_boundaries} boundaries (had {len(all_missing) + max_boundaries - len(all_missing)})")
+        
+        # Process each missing boundary
+        for token_key, boundary_ts in all_missing:
+            try:
+                token_contract, chain = token_key
+                
+                # Use existing rollup_timeframe method with the boundary timestamp
+                written = self.rollup_timeframe(
+                    data_source=data_source,
+                    timeframe=timeframe,
+                    when=boundary_ts
+                )
+                
+                if written > 0:
+                    boundaries_filled += 1
+                else:
+                    boundaries_skipped += 1
+                
+                processed_count += 1
+                
+            except Exception as e:
+                error_msg = f"{token_key[0][:8]}.../{token_key[1]} at {boundary_ts}: {e}"
+                self.logger.error(f"Catch-up error: {error_msg}", exc_info=True)
+                errors.append(error_msg)
+        
+        self.logger.info(
+            f"Catch-up complete: {boundaries_filled} filled, {boundaries_skipped} skipped, "
+            f"{len(errors)} errors out of {processed_count} processed"
+        )
+        
+        return {
+            "status": "complete",
+            "tokens_processed": len(missing_by_token),
+            "boundaries_filled": boundaries_filled,
+            "boundaries_skipped": boundaries_skipped,
+            "total_missing": total_missing,
+            "errors": errors
+        }
     
     def _get_timeframe_minutes(self, timeframe: Timeframe) -> int:
         """Get number of minutes for a timeframe"""
@@ -443,7 +1062,7 @@ class GenericOHLCRollup:
             return ts.replace(hour=boundary_hour, minute=boundary_minute, second=0, microsecond=0)
     
     def _bar_exists(self, data_source: DataSource, timeframe: Timeframe, boundary_ts: datetime) -> bool:
-        """Check if a rollup bar already exists for this timeframe and boundary"""
+        """Check if ANY rollup bar already exists for this timeframe and boundary (legacy method, use _bar_exists_for_token)"""
         try:
             table_name = "majors_price_data_ohlc" if data_source == DataSource.MAJORS else "lowcap_price_data_ohlc"
             
@@ -454,10 +1073,30 @@ class GenericOHLCRollup:
                 "timestamp", boundary_ts.isoformat()
             ).limit(1).execute()
             
+            exists = len(result.data or []) > 0
+            if exists:
+                self.logger.debug(f"Bar exists check: {table_name} {timeframe.value} {boundary_ts} -> EXISTS")
+            return exists
+        except Exception as e:
+            self.logger.error(f"Error checking if bar exists for {data_source.value} {timeframe.value} at {boundary_ts}: {e}", exc_info=True)
+            return False
+    
+    def _bar_exists_for_token(self, data_source: DataSource, timeframe: Timeframe, boundary_ts: datetime, token_contract: str, chain: str) -> bool:
+        """Check if a rollup bar already exists for a specific token at this timeframe and boundary"""
+        try:
+            table_name = "majors_price_data_ohlc" if data_source == DataSource.MAJORS else "lowcap_price_data_ohlc"
+            
+            # Check if bar exists for this specific token
+            result = self.sb.table(table_name).select(
+                "token_contract"
+            ).eq("timeframe", timeframe.value).eq(
+                "timestamp", boundary_ts.isoformat()
+            ).eq("token_contract", token_contract).eq("chain", chain).limit(1).execute()
+            
             return len(result.data or []) > 0
         except Exception as e:
-            self.logger.error(f"Error checking if bar exists: {e}")
-            return False
+            self.logger.error(f"Error checking if bar exists for {token_contract}/{chain} {timeframe.value} at {boundary_ts}: {e}", exc_info=True)
+            return False  # On error, assume doesn't exist so we try to write it
     
     def _convert_to_ohlc(self, bars: List[Dict], timeframe: Timeframe) -> List[OHLCBar]:
         """Convert 1m data to OHLC bars for the timeframe"""
@@ -529,16 +1168,19 @@ class GenericOHLCRollup:
                 if not period_bars:
                     continue
                 
-                # Validate: we need at least timeframe_minutes worth of 1m bars for a meaningful bar
-                # For example, a 4h bar (240 minutes) should have at least 240 1m bars
-                # Allow some tolerance (e.g., 80% of expected bars) to account for missing data
-                min_required_bars = int(timeframe_minutes * 0.8)
+                # Validate with 60% tolerance; create partial bars when below the threshold
+                min_required_bars = max(1, int(timeframe_minutes * 0.6))
+                partial = False
+                coverage_pct = (len(period_bars) / timeframe_minutes * 100) if timeframe_minutes > 0 else 0
                 if len(period_bars) < min_required_bars:
-                    self.logger.debug(
-                        f"Skipping {timeframe.value} bar at {timeframe_ts} for {token_contract}: "
-                        f"only {len(period_bars)} 1m bars (need at least {min_required_bars} for {timeframe_minutes}min timeframe)"
+                    partial = True
+                    self.logger.info(
+                        f"Creating PARTIAL {timeframe.value} bar at {timeframe_ts} for {token_contract[:8]}.../{chain}: "
+                        f"{len(period_bars)}/{timeframe_minutes} 1m bars ({coverage_pct:.1f}% coverage, "
+                        f"need at least {min_required_bars} for {timeframe_minutes}min timeframe)"
                     )
-                    continue
+                bars_used = len(period_bars)
+                expected_bars = timeframe_minutes
                     
                 # Sort by timestamp to get proper OHLC
                 period_bars.sort(key=lambda x: x['timestamp'])
@@ -647,10 +1289,19 @@ class GenericOHLCRollup:
                     low_usd=low_price_usd,
                     close_usd=close_price_usd,
                     volume=volume,
-                    source="rollup",
+                    source="partial" if partial else "rollup",
+                    partial=partial,
+                    coverage_pct=coverage_pct,
+                    bars_used=bars_used,
+                    expected_bars=expected_bars,
                     **metadata
                 )
                 ohlc_bars.append(ohlc_bar)
+                coverage_pct = (len(period_bars) / timeframe_minutes * 100) if timeframe_minutes > 0 else 0
+                self.logger.debug(
+                    f"Created {timeframe.value} bar for {token_contract[:8]}.../{chain} at {timeframe_ts}: "
+                    f"{len(period_bars)}/{timeframe_minutes} bars ({coverage_pct:.1f}% coverage)"
+                )
         
         return ohlc_bars
     
@@ -763,7 +1414,11 @@ class GenericOHLCRollup:
                     fdv=fdv,
                     dex_id=dex_id,
                     pair_address=pair_address,
-                    source="1m_conversion"
+                    source="1m_conversion",
+                    partial=False,
+                    coverage_pct=100.0,
+                    bars_used=len(minute_bars),
+                    expected_bars=1
                 )
                 ohlc_bars.append(ohlc_bar)
                 
@@ -785,14 +1440,73 @@ class GenericOHLCRollup:
             "pair_address": record.get('pair_address')
         }
     
+    def _validate_ohlc_bar(self, bar: OHLCBar) -> tuple[bool, Optional[str]]:
+        """Validate an OHLC bar for data quality issues
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        # Check prices are positive
+        if bar.open_usd <= 0 or bar.close_usd <= 0 or bar.high_usd <= 0 or bar.low_usd <= 0:
+            return False, f"Non-positive USD prices: O={bar.open_usd}, H={bar.high_usd}, L={bar.low_usd}, C={bar.close_usd}"
+        
+        # Check high >= low
+        if bar.high_usd < bar.low_usd:
+            return False, f"High < Low: H={bar.high_usd}, L={bar.low_usd}"
+        
+        # Check prices are within reasonable range (not NaN, not infinity)
+        import math
+        for price in [bar.open_usd, bar.high_usd, bar.low_usd, bar.close_usd]:
+            if math.isnan(price) or math.isinf(price):
+                return False, f"Invalid price value: {price}"
+        
+        # Check high >= open and high >= close
+        if bar.high_usd < bar.open_usd or bar.high_usd < bar.close_usd:
+            return False, f"High < Open or Close: H={bar.high_usd}, O={bar.open_usd}, C={bar.close_usd}"
+        
+        # Check low <= open and low <= close
+        if bar.low_usd > bar.open_usd or bar.low_usd > bar.close_usd:
+            return False, f"Low > Open or Close: L={bar.low_usd}, O={bar.open_usd}, C={bar.close_usd}"
+        
+        # Check volume is non-negative
+        if bar.volume < 0:
+            return False, f"Negative volume: {bar.volume}"
+        
+        # Check native prices if they're set (should be >= 0)
+        if bar.open_native < 0 or bar.high_native < 0 or bar.low_native < 0 or bar.close_native < 0:
+            return False, f"Negative native prices: O={bar.open_native}, H={bar.high_native}, L={bar.low_native}, C={bar.close_native}"
+        
+        return True, None
+    
     def _store_ohlc_bars(self, data_source: DataSource, bars: List[OHLCBar]) -> int:
         """Store OHLC bars in the appropriate table"""
         if not bars:
             return 0
         
+        # Validate and filter bars
+        valid_bars = []
+        invalid_count = 0
+        for bar in bars:
+            is_valid, error_msg = self._validate_ohlc_bar(bar)
+            if is_valid:
+                valid_bars.append(bar)
+            else:
+                invalid_count += 1
+                self.logger.warning(
+                    f"Invalid OHLC bar rejected for {bar.token_contract}/{bar.chain} "
+                    f"at {bar.timestamp} ({bar.timeframe}): {error_msg}"
+                )
+        
+        if invalid_count > 0:
+            self.logger.warning(f"Rejected {invalid_count} invalid bars out of {len(bars)} total")
+        
+        if not valid_bars:
+            self.logger.error("No valid bars to store after validation")
+            return 0
+        
         # Convert OHLCBar objects to database rows
         rows = []
-        for bar in bars:
+        for bar in valid_bars:
             row = {
                 "token_contract": bar.token_contract,
                 "chain": bar.chain,
@@ -807,7 +1521,11 @@ class GenericOHLCRollup:
                 "low_usd": bar.low_usd,
                 "close_usd": bar.close_usd,
                 "volume": bar.volume,
-                "source": bar.source
+                "source": bar.source,
+                "partial": bar.partial,
+                "coverage_pct": bar.coverage_pct,
+                "bars_used": bar.bars_used,
+                "expected_bars": bar.expected_bars
             }
             if data_source == DataSource.LOWCAPS:
                 row.update({
@@ -843,11 +1561,43 @@ class GenericOHLCRollup:
 
 def main():
     """Main entry point for testing"""
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    import sys
     
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     rollup = GenericOHLCRollup()
     
-    # Test 5m rollup for both majors and lowcaps
+    # Check if catch-up command
+    if len(sys.argv) > 1 and sys.argv[1] == "catch-up":
+        # Usage: python rollup_ohlc.py catch-up [data_source] [timeframe] [lookback_hours] [max_boundaries] [max_tokens]
+        # Example: python rollup_ohlc.py catch-up lowcaps 15m 24 100 50
+        data_source_str = sys.argv[2] if len(sys.argv) > 2 else "lowcaps"
+        timeframe_str = sys.argv[3] if len(sys.argv) > 3 else "15m"
+        lookback_hours = int(sys.argv[4]) if len(sys.argv) > 4 else 24
+        max_boundaries = int(sys.argv[5]) if len(sys.argv) > 5 else 100
+        max_tokens = int(sys.argv[6]) if len(sys.argv) > 6 else 50
+        
+        data_source = DataSource.LOWCAPS if data_source_str.lower() == "lowcaps" else DataSource.MAJORS
+        timeframe_map = {
+            "5m": Timeframe.M5,
+            "15m": Timeframe.M15,
+            "1h": Timeframe.H1,
+            "4h": Timeframe.H4,
+        }
+        timeframe = timeframe_map.get(timeframe_str.lower(), Timeframe.M15)
+        
+        logger.info(f"Running catch-up: {data_source.value} {timeframe.value}, lookback={lookback_hours}h")
+        result = rollup.catch_up_rollups(
+            data_source=data_source,
+            timeframe=timeframe,
+            lookback_hours=lookback_hours,
+            max_boundaries=max_boundaries,
+            max_tokens=max_tokens
+        )
+        
+        logger.info(f"Catch-up result: {result}")
+        return
+    
+    # Default: Test 5m rollup for both majors and lowcaps
     logger.info("Testing 5m rollup...")
     
     # Test majors 5m rollup

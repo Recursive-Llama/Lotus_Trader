@@ -130,6 +130,15 @@ def run_all_timeframes() -> Dict[str, Any]:
 
 def show_regime_summary() -> None:
     """Show a summary of current regime states."""
+    def _glyph(stage: str) -> str:
+        mapping = {
+            "S0": "🜁0",
+            "S1": "🜂1",
+            "S2": "🜃2",
+            "S3": "🜓3",
+            "S4": "🝪4",
+        }
+        return mapping.get(str(stage), str(stage))
     try:
         from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import (
             RegimeAECalculator,
@@ -152,7 +161,7 @@ def show_regime_summary() -> None:
                 for tf in ["1d", "1h", "1m"]:
                     if tf in summary[driver]:
                         data = summary[driver][tf]
-                        state = data.get("state", "?")
+                        state = _glyph(data.get("state", "?"))
                         flags = []
                         if data.get("buy_flag"):
                             flags.append("BUY")
@@ -170,7 +179,7 @@ def show_regime_summary() -> None:
                 for tf in ["1d", "1h", "1m"]:
                     if tf in summary[driver]:
                         data = summary[driver][tf]
-                        state = data.get("state", "?")
+                        state = _glyph(data.get("state", "?"))
                         flags = []
                         if data.get("buy_flag"):
                             flags.append("BUY")

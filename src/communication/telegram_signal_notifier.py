@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 class TelegramSignalNotifier:
     """Sends trading signals to Telegram group with rich formatting"""
     
+    @staticmethod
+    def _stage_glyph(stage: str) -> str:
+        mapping = {
+            "S0": "🜁0",
+            "S1": "🜂1",
+            "S2": "🜃2",
+            "S3": "🜓3",
+            "S4": "🝪4",
+        }
+        return mapping.get(str(stage), str(stage))
+    
     def __init__(self, bot_token: str, channel_id: str, api_id: int, api_hash: str, session_file: str = None):
         """
         Initialize Telegram Signal Notifier
@@ -534,6 +545,7 @@ class TelegramSignalNotifier:
     ) -> bool:
         """Send entry notification (initial position)"""
         try:
+            state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
@@ -546,7 +558,7 @@ class TelegramSignalNotifier:
                 "reclaimed_ema333": "Reclaimed EMA333 (S3)"
             }.get(signal, signal)
             
-            message = f"⚘𒀭 **LOTUS TRENCHER ENTRY** ⚘⟁⌖\n\n"
+            message = f"⚘𒀭 **LOTUS TRADER ENTRY** ⚘⟁⌖\n\n"
             message += f"**Token:** [{token_ticker}]({token_link})\n"
             message += f"**Chain:** {chain.upper()}\n"
             message += f"**Timeframe:** {timeframe}\n\n"
@@ -554,7 +566,7 @@ class TelegramSignalNotifier:
             message += f"**Entry Price:** ${entry_price_usd:.8f}\n"
             if allocation_pct:
                 message += f"**Allocation:** {allocation_pct:.1f}% of portfolio\n\n"
-            message += f"**State:** {state}\n"
+            message += f"**State:** {state_glyph}\n"
             message += f"**Signal:** {signal_desc}\n"
             message += f"**A/E:** {a_score:.2f}/{e_score:.2f}\n\n"
             message += f"**Transaction:** [View]({tx_link})\n"
@@ -593,6 +605,7 @@ class TelegramSignalNotifier:
     ) -> bool:
         """Send add notification (scaling up position)"""
         try:
+            state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
@@ -603,14 +616,14 @@ class TelegramSignalNotifier:
                 "reclaimed_ema333": "Auto-rebuy (S3)"
             }.get(signal, signal)
             
-            message = f"⚘⥈ **LOTUS TRENCHER ADD** ⚘⟁⌖\n\n"
+            message = f"⚘⥈ **LOTUS TRADER ADD** ⚘⟁⌖\n\n"
             message += f"**Token:** [{token_ticker}]({token_link})\n"
             message += f"**Chain:** {chain.upper()}\n"
             message += f"**Timeframe:** {timeframe}\n\n"
             message += f"**Amount Added:** ${amount_usd:.2f}\n"
             message += f"**Entry Price:** ${entry_price_usd:.8f}\n"
             message += f"**Size:** {size_frac*100:.1f}% of remaining allocation\n\n"
-            message += f"**State:** {state}\n"
+            message += f"**State:** {state_glyph}\n"
             message += f"**Signal:** {signal_desc}\n"
             message += f"**A/E:** {a_score:.2f}/{e_score:.2f}\n\n"
             message += f"**Position Size:** {position_size:.2f} tokens\n"
@@ -653,6 +666,7 @@ class TelegramSignalNotifier:
     ) -> bool:
         """Send trim notification (partial exit)"""
         try:
+            state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
@@ -662,7 +676,7 @@ class TelegramSignalNotifier:
                 "trim_flag": "Profit trim (S2)" if state == "S2" else "Exhaustion trim (S3)"
             }.get(signal, signal)
             
-            message = f"⚘𒋻 **LOTUS TRENCHER TRIM** ⚘⟁⌖\n\n"
+            message = f"⚘𒋻 **LOTUS TRADER TRIM** ⚘⟁⌖\n\n"
             message += f"**Token:** [{token_ticker}]({token_link})\n"
             message += f"**Chain:** {chain.upper()}\n"
             message += f"**Timeframe:** {timeframe}\n\n"
@@ -670,7 +684,7 @@ class TelegramSignalNotifier:
             message += f"**Sell Price:** ${sell_price_usd:.8f}\n"
             message += f"**Value Extracted:** ${value_extracted_usd:.2f}\n"
             message += f"**Size:** {size_frac*100:.1f}% of position\n\n"
-            message += f"**State:** {state}\n"
+            message += f"**State:** {state_glyph}\n"
             message += f"**Signal:** {signal_desc}\n"
             message += f"**E Score:** {e_score:.2f}\n\n"
             message += f"**Remaining:** {remaining_tokens:.2f} tokens\n"
@@ -709,6 +723,7 @@ class TelegramSignalNotifier:
     ) -> bool:
         """Send emergency exit notification (full exit)"""
         try:
+            state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
@@ -720,14 +735,14 @@ class TelegramSignalNotifier:
                 "emergency_exit": "Trend ending" if state == "S3" else "Structural exit"
             }.get(reason.lower(), reason)
             
-            message = f"⚘𒉿 **LOTUS TRENCHER EXIT** ⚘⟁⌖\n\n"
+            message = f"⚘𒉿 **LOTUS TRADER EXIT** ⚘⟁⌖\n\n"
             message += f"**Token:** [{token_ticker}]({token_link})\n"
             message += f"**Chain:** {chain.upper()}\n"
             message += f"**Timeframe:** {timeframe}\n\n"
             message += f"**Amount Sold:** {tokens_sold:.2f} tokens\n"
             message += f"**Sell Price:** ${sell_price_usd:.8f}\n"
             message += f"**Value Extracted:** ${value_extracted_usd:.2f}\n\n"
-            message += f"**State:** {state}\n"
+            message += f"**State:** {state_glyph}\n"
             message += f"**Reason:** {reason_desc}\n"
             message += f"**E Score:** {e_score:.2f}\n\n"
             message += f"**Total P&L:** ${total_pnl_usd:+.2f} ({total_pnl_pct:+.1f}%)\n"
@@ -772,7 +787,7 @@ class TelegramSignalNotifier:
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
             
-            message = f"⚘🝗⩜ **LOTUS TRENCHER POSITION SUMMARY** ⚘⟁⌖\n\n"
+            message = f"⚘🝗⩜ **LOTUS TRADER POSITION SUMMARY** ⚘⟁⌖\n\n"
             message += f"**Token:** [{token_ticker}]({token_link})\n"
             message += f"**Chain:** {chain.upper()}\n"
             message += f"**Timeframe:** {timeframe}\n\n"

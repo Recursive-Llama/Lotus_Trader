@@ -25,9 +25,10 @@ from src.utils.supabase_manager import SupabaseManager
 logger = logging.getLogger(__name__)
 
 
+# GeckoTerminal network slugs
 NETWORK_MAP = {
     'solana': 'solana',
-    'ethereum': 'ethereum', 
+    'ethereum': 'eth',  # GT expects 'eth' not 'ethereum'
     'base': 'base',
     'bsc': 'bsc',
 }

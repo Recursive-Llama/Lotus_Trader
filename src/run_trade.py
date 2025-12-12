@@ -59,7 +59,9 @@ def setup_logging():
         'learning_system': 'logs/learning_system.log',
         'price_collector': 'logs/price_collector.log',
         'schedulers': 'logs/schedulers.log',
-        'system': 'logs/system.log'
+        'system': 'logs/system.log',
+        'uptrend_engine': 'logs/uptrend_engine.log',
+        'rollup': 'logs/rollup.log',
     }
 
     # Configure root logger to suppress debug/info to console
@@ -218,10 +220,11 @@ class StrandMonitor:
 
     def _get_stage_glyph(self, stage: str) -> str:
         mapping = {
-            'S0': '🜁', # Air (Watchlist)
-            'S1': '🜂', # Fire (Ignition)
-            'S2': '🜃', # Earth (Solid)
-            'S3': '🜇', # Water/Aether (Flow)
+            'S0': '🜁0',  # Air / Watchlist
+            'S1': '🜂1',  # Fire
+            'S2': '🜃2',  # Earth
+            'S3': '🜓3',  # swap to new symbol
+            'S4': '🝪4',  # No clear state
         }
         return mapping.get(stage, stage)
 
@@ -253,7 +256,7 @@ class StrandMonitor:
                 action = content.get('action', 'WAIT')
                 # Decision Maker writes 'allocation_pct', not 'allocation_percentage'
                 alloc = content.get('allocation_pct', content.get('allocation_percentage', 0))
-                reason = (content.get('reasoning') or "")[:150]
+                reason = (content.get('reasoning') or "")[:300]
                 # Check for learning context
                 learning_suffix = " | 𓂀" if module_intel else ""
                 output = f"∆φ DECISION | {action} {symbol} | Alloc: {alloc}%{learning_suffix}"
@@ -594,6 +597,32 @@ class TradingSystem:
             rollup.rollup_timeframe(DataSource.LOWCAPS, timeframe_enum)
         except Exception as e:
             logger.error(f"{name} error: {e}", exc_info=True)
+    
+    def _wrap_rollup_catchup(self, timeframe_enum, name, lookback_hours: int = 24):
+        """Run catch-up for missed rollup boundaries (separate from normal rollup)"""
+        try:
+            rollup = GenericOHLCRollup()
+            scheduler_logger = logging.getLogger('schedulers')
+            scheduler_logger.info(f"Running catch-up for {name} (lookback: {lookback_hours}h)")
+            
+            catchup_result = rollup.catch_up_rollups(
+                data_source=DataSource.LOWCAPS,
+                timeframe=timeframe_enum,
+                lookback_hours=lookback_hours,
+                max_boundaries=100,  # Process up to 100 boundaries per run
+                max_tokens=50        # Process up to 50 tokens per run
+            )
+            
+            if catchup_result.get("boundaries_filled", 0) > 0:
+                scheduler_logger.info(
+                    f"Catch-up {name}: filled {catchup_result['boundaries_filled']} boundaries, "
+                    f"skipped {catchup_result['boundaries_skipped']}, "
+                    f"tokens: {catchup_result['tokens_processed']}"
+                )
+            elif catchup_result.get("status") == "no_gaps":
+                scheduler_logger.debug(f"Catch-up {name}: no gaps found")
+        except Exception as e:
+            logger.error(f"Catch-up {name} error: {e}", exc_info=True)
 
     def _wrap_uptrend(self, timeframe):
         try:
@@ -771,6 +800,13 @@ class TradingSystem:
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_rollup(Timeframe.H4, "Rollup 4h"), "Rollup 4h")))
         # Run TA → Uptrend → PM sequentially to ensure correct ordering
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_ta_then_uptrend_then_pm("4h"), "TA→Uptrend→PM 4h")))
+        
+        # Catch-up Jobs (run hourly to fill any missed rollup boundaries)
+        # Run at :02 to run after normal rollups at :00/:01
+        # Lookback: 2 hours (since we run hourly, max gap should be ~1 hour, but 2h gives safety margin)
+        tasks.append(asyncio.create_task(self._schedule_hourly(2, lambda: self._wrap_rollup_catchup(Timeframe.M15, "Catch-up 15m", lookback_hours=2), "Catch-up 15m")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(2, lambda: self._wrap_rollup_catchup(Timeframe.H1, "Catch-up 1h", lookback_hours=2), "Catch-up 1h")))
+        tasks.append(asyncio.create_task(self._schedule_hourly(2, lambda: self._wrap_rollup_catchup(Timeframe.H4, "Catch-up 4h", lookback_hours=6), "Catch-up 4h")))  # 6h lookback for 4h (covers 1.5 boundaries)
         
         # Daily Jobs (1d regime - macro)
         async def schedule_daily(offset_hour: int, func, name: str):

@@ -43,7 +43,7 @@ class DecisionMakerLowcapSimple:
         # Simple configuration
         self.config = config or self._get_default_config()
         self.default_allocation_pct = float(self.config.get('default_allocation_pct', 10.0))
-        self.book_id = self.config.get('book_id', 'social')
+        self.book_id = self.config.get('book_id', 'onchain_crypto')
         
         # Initialize learning system components
         self.coefficient_reader = CoefficientReader(supabase_manager.client)
@@ -152,7 +152,7 @@ class DecisionMakerLowcapSimple:
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
         return {
-            'book_id': 'social',
+            'book_id': 'onchain_crypto',
             # No dollar amounts needed - percentage-based only
             'min_curator_score': 0.1,  # Minimum curator score to approve
             'max_exposure_pct': 100.0,  # 100% max exposure for lowcap portfolio
@@ -906,12 +906,13 @@ class DecisionMakerLowcapSimple:
                     bars_summary = f"{backfill_results.get('1m', 0)}/{backfill_results.get('15m', 0)}/{backfill_results.get('1h', 0)}/{backfill_results.get('4h', 0)}"
                     self.logger.info(f"Backfill {token_ticker}: {bars_summary}")
                     
-                    # Trigger TA Tracker and Uptrend Engine immediately (don't wait for schedule)
+                    # Trigger TA Tracker, Uptrend Engine, and PM Core immediately (don't wait for schedule)
                     try:
                         from intelligence.lowcap_portfolio_manager.jobs.ta_tracker import TATracker
                         from intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import UptrendEngineV4
+                        from intelligence.lowcap_portfolio_manager.jobs.pm_core_tick import PMCoreTick
                         
-                        self.logger.info(f"🔄 Triggering TA Tracker and Uptrend Engine for {token_ticker}...")
+                        self.logger.info(f"🔄 Triggering TA Tracker, Uptrend Engine, and PM Core for {token_ticker}...")
                         
                         # Run TA Tracker for all timeframes that have enough bars
                         for tf in timeframes_to_backfill:
@@ -933,9 +934,19 @@ class DecisionMakerLowcapSimple:
                             except Exception as e:
                                 self.logger.warning(f"⚠️ Uptrend Engine {tf} failed for {token_ticker}: {e}")
                         
-                        self.logger.info(f"✅ TA Tracker and Uptrend Engine complete for {token_ticker}")
+                        # Run PM Core for all timeframes (after TA + Engine complete)
+                        for tf in timeframes_to_backfill:
+                            try:
+                                pm_core = PMCoreTick(timeframe=tf)
+                                written = pm_core.run()
+                                if written > 0:
+                                    self.logger.info(f"✅ PM Core {tf} processed {written} positions for {token_ticker}")
+                            except Exception as e:
+                                self.logger.warning(f"⚠️ PM Core {tf} failed for {token_ticker}: {e}")
+                        
+                        self.logger.info(f"✅ TA Tracker, Uptrend Engine, and PM Core complete for {token_ticker}")
                     except Exception as e:
-                        self.logger.warning(f"⚠️ Failed to trigger TA Tracker/Uptrend Engine for {token_ticker}: {e}")
+                        self.logger.warning(f"⚠️ Failed to trigger TA Tracker/Uptrend Engine/PM Core for {token_ticker}: {e}")
                         # Don't fail the whole process if this fails - scheduled jobs will catch up
                     
                 except Exception as e:

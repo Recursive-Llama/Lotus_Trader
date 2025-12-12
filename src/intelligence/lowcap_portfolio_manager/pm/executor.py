@@ -629,6 +629,21 @@ class PMExecutor:
                         }
                     
                     output = json.loads(json_line)
+                    
+                    # Harden logging: surface executor-level errors even when JSON parses
+                    if not output.get("success", False):
+                        logger.warning(
+                            "Li.Fi executor returned error output (action=%s, chain=%s, from=%s, to=%s, amount=%s): %s | stdout=%s | stderr=%s",
+                            action,
+                            input_data.get("chain") or f"{input_data.get('fromChain')}->{input_data.get('toChain')}",
+                            from_token,
+                            to_token,
+                            amount,
+                            output.get("error"),
+                            (result.stdout or "")[:500],
+                            (result.stderr or "")[:500],
+                        )
+                    
                     return output
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse Li.Fi executor output: {e}")
@@ -698,33 +713,56 @@ class PMExecutor:
         chain = position.get("token_chain", "").lower()
         timeframe = position.get("timeframe", "1h")
         size_frac = float(decision.get("size_frac", 0.0))
+        token_label = position.get("token_ticker") or token_contract
+        logger.info("EXEC START: %s %s/%s tf=%s size_frac=%.4f", decision_type, token_label, chain, timeframe, size_frac)
         
         if not token_contract or not decision_type or decision_type == "hold":
-            return {
+            result = {
                 "status": "error",
                 "error": "Invalid decision or missing token contract"
             }
+            logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
+            return result
         
         # Get latest price from OHLC table (timeframe-specific)
         price_usd, price_native = _latest_price_ohlc(self.sb, token_contract, chain, timeframe)
         
         if not price_usd:
-            logger.warning(f"No price data for {token_contract} {timeframe}")
-            return {
+            result = {
                 "status": "error",
                 "error": f"No price data available for {token_contract} {timeframe}"
             }
+            logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
+            return result
         
         # Execute based on decision type
         if decision_type in ["add", "entry"]:
-            return self._execute_add(decision, position, chain, token_contract, price_usd, price_native, size_frac)
+            result = self._execute_add(decision, position, chain, token_contract, price_usd, price_native, size_frac)
+            status = result.get("status")
+            if status == "success":
+                logger.info("EXEC OK: add/entry %s/%s tf=%s bought=%.6f price=%.8f",
+                            token_label, chain, timeframe, result.get("tokens_bought", 0.0), result.get("price") or 0.0)
+            else:
+                logger.error("EXEC FAIL: add/entry %s/%s tf=%s err=%s",
+                             token_label, chain, timeframe, result.get("error", "unknown"))
+            return result
         elif decision_type in ["trim", "emergency_exit"]:
-            return self._execute_sell(decision, position, chain, token_contract, price_usd, price_native, size_frac)
+            result = self._execute_sell(decision, position, chain, token_contract, price_usd, price_native, size_frac)
+            status = result.get("status")
+            if status == "success":
+                logger.info("EXEC OK: sell %s/%s tf=%s sold=%.6f price=%.8f",
+                            token_label, chain, timeframe, result.get("tokens_sold", 0.0), result.get("price") or 0.0)
+            else:
+                logger.error("EXEC FAIL: sell %s/%s tf=%s err=%s",
+                             token_label, chain, timeframe, result.get("error", "unknown"))
+            return result
         else:
-            return {
+            result = {
                 "status": "error",
                 "error": f"Unsupported decision type: {decision_type}"
             }
+            logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
+            return result
     
     def _execute_add(
         self,
@@ -804,10 +842,46 @@ class PMExecutor:
                 self._decimals_cache[cache_key] = token_decimals
 
             tokens_field = result.get("tokens_received")
+            tokens_received_raw = result.get("tokens_received_raw")
+            to_token_decimals = result.get("to_token_decimals")
+            
+            # Parse tokens_received - Li.Fi should return human-readable amount, but verify
             tokens_received = float(tokens_field or 0.0)
+            
+            # Log what we received from Li.Fi for debugging
+            logger.info(
+                f"Li.Fi execution result for {token_contract} on {chain}: "
+                f"tokens_received={tokens_received} (type={type(tokens_field).__name__}, raw_value={tokens_field}), "
+                f"tokens_received_raw={tokens_received_raw}, to_token_decimals={to_token_decimals}, "
+                f"notional_usd={notional_usd}, price_from_lifi={result.get('price')}"
+            )
+            
+            # CRITICAL: Check if tokens_received seems wrong (too small) - likely a decimal conversion issue
+            # If tokens_received is suspiciously small (< 0.0001) but we have raw value and decimals, recalculate
+            if tokens_received > 0 and tokens_received < 0.0001 and tokens_received_raw and to_token_decimals:
+                try:
+                    # tokens_received_raw is in smallest units (e.g., "713647634932" for 713.647634932 tokens with 9 decimals)
+                    # Convert to human-readable: raw / (10 ** decimals)
+                    recalculated = float(tokens_received_raw) / (10 ** int(to_token_decimals))
+                    if recalculated > tokens_received * 100:  # Significant difference indicates wrong value
+                        logger.warning(
+                            f"Decimal conversion issue detected for {token_contract} on {chain}: "
+                            f"tokens_received={tokens_received} seems incorrect, "
+                            f"recalculated from raw={recalculated} (raw={tokens_received_raw}, decimals={to_token_decimals})"
+                        )
+                        # Use recalculated value
+                        tokens_received = recalculated
+                except (ValueError, TypeError, ZeroDivisionError) as e:
+                    logger.warning(f"Failed to recalculate tokens from raw for {token_contract}: {e}")
+            
+            # Calculate price: USD spent / tokens received
+            # Since this is a full execution (not partial), use notional_usd
             actual_price = float(result.get("price", price_usd))
             if tokens_received > 0:
                 actual_price = notional_usd / tokens_received
+            else:
+                logger.error(f"Invalid tokens_received={tokens_received} for {token_contract} on {chain}")
+            
             slippage = float(result.get("slippage", 0.0))
             
             # Update wallet balance (subtract USDC from Solana)
@@ -821,7 +895,7 @@ class PMExecutor:
                 "token_decimals": token_decimals,
                 "price": actual_price,
                 "price_native": price_native,
-                "notional_usd": notional_usd,
+                "notional_usd": notional_usd,  # USD amount that was intended and executed
                 "slippage": slippage
             }
                 
