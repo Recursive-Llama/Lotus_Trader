@@ -19,13 +19,30 @@ from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 
 from .pattern_scope_aggregator import run_pattern_scope_aggregator
-from .lesson_builder_v5 import run_lesson_builder
+from .lesson_builder_v5 import build_lessons_from_pattern_scope_stats
 from .override_materializer import run_override_materializer
-from .regime_weight_learner import run_regime_weight_learner
-from .half_life_estimator import run_half_life_estimator
-from .latent_factor_clusterer import run_latent_factor_clusterer
+# Removed redundant meta-learning jobs (regime_weight_learner, half_life_estimator, latent_factor_clusterer)
+# - Regime weights: Not integrated into runtime
+# - Half-life: Now computed directly in lesson builder
+# - Latent factors: Not integrated into runtime
 
 logger = logging.getLogger(__name__)
+
+
+def run_lesson_builder(sb_client: Client) -> None:
+    """
+    Wrapper for lesson builder that processes both PM and DM modules.
+    Synchronous wrapper for async function to match scheduler signature.
+    """
+    import asyncio
+    try:
+        # Process PM lessons
+        asyncio.run(build_lessons_from_pattern_scope_stats(sb_client, module='pm'))
+        # Process DM lessons  
+        asyncio.run(build_lessons_from_pattern_scope_stats(sb_client, module='dm'))
+    except Exception as e:
+        logger.error(f"Lesson builder error: {e}", exc_info=True)
+        raise
 
 
 def get_feature_flags(sb_client: Client) -> dict:
@@ -50,7 +67,6 @@ def get_feature_flags(sb_client: Client) -> dict:
                 'learning_overrides_enabled': flags.get('learning_overrides_enabled', True),
                 'learning_overrides_enabled_regimes': flags.get('learning_overrides_enabled_regimes', []),
                 'learning_overrides_enabled_buckets': flags.get('learning_overrides_enabled_buckets', []),
-                'v5_meta_learning_enabled': flags.get('v5_meta_learning_enabled', True),
                 'v5_aggregation_enabled': flags.get('v5_aggregation_enabled', True),
                 'v5_lesson_builder_enabled': flags.get('v5_lesson_builder_enabled', True),
                 'v5_override_materializer_enabled': flags.get('v5_override_materializer_enabled', True)
@@ -63,7 +79,6 @@ def get_feature_flags(sb_client: Client) -> dict:
         'learning_overrides_enabled': True,
         'learning_overrides_enabled_regimes': [],
         'learning_overrides_enabled_buckets': [],
-        'v5_meta_learning_enabled': True,
         'v5_aggregation_enabled': True,
         'v5_lesson_builder_enabled': True,
         'v5_override_materializer_enabled': True
@@ -169,14 +184,10 @@ async def schedule_v5_learning_jobs(sb_client: Optional[Client] = None):
     # Override materializer: Every 2 hours
     asyncio.create_task(schedule_interval(2, run_override_materializer, "Override Materializer"))
     
-    # Regime weight learner (v5.1): Daily at 01:00 UTC
-    asyncio.create_task(schedule_daily(1, 0, run_regime_weight_learner, "Regime Weight Learner (v5.1)"))
-    
-    # Half-life estimator (v5.2): Weekly on Monday at 02:00 UTC
-    asyncio.create_task(schedule_weekly(0, 2, 0, run_half_life_estimator, "Half-Life Estimator (v5.2)"))
-    
-    # Latent factor clusterer (v5.3): Weekly on Monday at 03:00 UTC
-    asyncio.create_task(schedule_weekly(0, 3, 0, run_latent_factor_clusterer, "Latent Factor Clusterer (v5.3)"))
+    # Meta-learning jobs removed (see analysis in docs/investigations/meta_learning_redundancy_analysis.md):
+    # - Regime weight learner: Not integrated into runtime
+    # - Half-life estimator: Now computed directly in lesson builder (exponential decay)
+    # - Latent factor clusterer: Not integrated into runtime
     
     logger.info("All v5 learning jobs scheduled")
 
@@ -221,27 +232,8 @@ async def run_all_jobs_once(sb_client: Optional[Client] = None):
             logger.error(f"Override Materializer error: {e}", exc_info=True)
             results['override_materializer'] = {'error': str(e)}
     
-    if flags.get('v5_meta_learning_enabled', True):
-        logger.info("Running Regime Weight Learner (v5.1)...")
-        try:
-            results['regime_weight_learner'] = await asyncio.to_thread(run_regime_weight_learner, sb_client)
-        except Exception as e:
-            logger.error(f"Regime Weight Learner error: {e}", exc_info=True)
-            results['regime_weight_learner'] = {'error': str(e)}
-        
-        logger.info("Running Half-Life Estimator (v5.2)...")
-        try:
-            results['half_life_estimator'] = await asyncio.to_thread(run_half_life_estimator, sb_client)
-        except Exception as e:
-            logger.error(f"Half-Life Estimator error: {e}", exc_info=True)
-            results['half_life_estimator'] = {'error': str(e)}
-        
-        logger.info("Running Latent Factor Clusterer (v5.3)...")
-        try:
-            results['latent_factor_clusterer'] = await asyncio.to_thread(run_latent_factor_clusterer, sb_client)
-        except Exception as e:
-            logger.error(f"Latent Factor Clusterer error: {e}", exc_info=True)
-            results['latent_factor_clusterer'] = {'error': str(e)}
+    # Meta-learning jobs removed - see docs/investigations/meta_learning_redundancy_analysis.md
+    # Half-life is now computed directly in lesson builder
     
     return results
 

@@ -53,19 +53,14 @@ class SocialIngestModule:
         # Token ignore list - load from learning_configs, fallback to hardcoded
         self.ignored_tokens = self._load_ignored_tokens()
         # Allowed chains and minimum volume thresholds (USD) for early filtering
-        self.allowed_chains = ['solana', 'ethereum', 'base', 'bsc']
+        # SOLANA ONLY - Simplified to reduce complexity
+        self.allowed_chains = ['solana']
         self.min_volume_requirements = {
             'solana': 100000,   # $100k on Solana
-            'ethereum': 25000,  # $25k on Ethereum
-            'base': 25000,      # $25k on Base
-            'bsc': 100000        # $100k on BSC
         }
         # Minimum liquidity requirements (USD) for early filtering
         self.min_liquidity_requirements = {
             'solana': 20000,    # $20k on Solana
-            'ethereum': 20000,  # $20k on Ethereum
-            'base': 20000,      # $20k on Base
-            'bsc': 20000        # $20k on BSC
         }
         
         # Load curator configuration

@@ -510,6 +510,81 @@ curators:
     tags: ["degen", "calls"]
     notes: "Telegram-only curator; channel 'Iced's House of Degeneracy' (channel ID: -1001819368322)"
 
+  - id: "knight"
+    name: "Knight"
+    platforms:
+      twitter:
+        handle: "@KnightsInvest"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "dapo"
+    name: "Dapo"
+    platforms:
+      twitter:
+        handle: "@1__of_1"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "1mpal"
+    name: "1mPal"
+    platforms:
+      twitter:
+        handle: "@impalementd"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "nolt"
+    name: "Nolt"
+    platforms:
+      twitter:
+        handle: "@Crypto_Nolt"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "degennolt"
+    name: "DegnNolt"
+    platforms:
+      twitter:
+        handle: "@degenolt"
+        active: true
+        priority: "medium"
+    tags: ["degen", "alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "bigwarz"
+    name: "BigWarz"
+    platforms:
+      twitter:
+        handle: "@bigwarzeth"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
+  - id: "ironside"
+    name: "IronSide"
+    platforms:
+      twitter:
+        handle: "@NobleIrons7de"
+        active: true
+        priority: "medium"
+      telegram:
+        handle: "@AlphasnValhalla"
+        channel_id: -1001605794606
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls", "multi_platform"]
+    notes: "Multi-platform curator; Twitter @NobleIrons7de and Telegram channel 'Alphas in Valhalla ⚔️' (channel ID: -1001605794606)"
+
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
 #   name: "Example Curator"

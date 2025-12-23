@@ -284,12 +284,17 @@ class PMExecutor:
         self.trader = trader
         self.sb = sb_client
         
-        # Path to Li.Fi executor script
+        # Path to Li.Fi executor script (kept for non-Solana chains, but we'll disable those)
         script_dir = Path(__file__).parent.parent.parent.parent.parent / "scripts" / "lifi_sandbox" / "src"
         self.lifi_executor_path = script_dir / "lifi_executor.mjs"
         
         if not self.lifi_executor_path.exists():
             logger.error(f"Li.Fi executor script not found at {self.lifi_executor_path}")
+        
+        # Initialize SolanaExecutor for Solana trades (uses Jupiter directly)
+        self.solana_executor = None
+        self.js_solana_client = None
+        self._setup_solana_executor()
         
         # Gas management configuration
         self.native_gas_target_usd = float(os.getenv("NATIVE_GAS_TARGET_USD", "15.0"))  # Target native token amount (~$15)
@@ -298,6 +303,42 @@ class PMExecutor:
         
         # Token decimals cache (to avoid repeated lookups)
         self._decimals_cache: Dict[Tuple[str, str], int] = {}
+        
+        # SOLANA ONLY - Reject non-Solana chains
+        self.allowed_chains = ['solana']
+    
+    def _setup_solana_executor(self):
+        """Setup SolanaExecutor for direct Jupiter swaps (Solana-only trading)"""
+        try:
+            solana_key = os.getenv('SOL_WALLET_PRIVATE_KEY')
+            if not solana_key:
+                logger.warning("No SOL_WALLET_PRIVATE_KEY found - SolanaExecutor not initialized")
+                return
+            
+            # Get RPC URL
+            helius_key = os.getenv('HELIUS_API_KEY')
+            if helius_key:
+                rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            else:
+                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+            
+            # Initialize JSSolanaClient
+            try:
+                from trading.js_solana_client import JSSolanaClient
+                self.js_solana_client = JSSolanaClient(rpc_url=rpc_url, private_key=solana_key)
+                
+                # Initialize SolanaExecutor with JS client
+                from intelligence.trader_lowcap.solana_executor import SolanaExecutor
+                self.solana_executor = SolanaExecutor(self.js_solana_client)
+                
+                logger.info("✅ SolanaExecutor initialized for direct Jupiter swaps")
+            except ImportError as e:
+                logger.warning(f"Failed to import SolanaExecutor components: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize SolanaExecutor: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Error setting up SolanaExecutor: {e}")
     
     def _get_chain_id(self, chain: str) -> str:
         """Map chain name to Li.Fi chain identifier."""
@@ -517,6 +558,715 @@ class PMExecutor:
         # Native token balance will be updated by scheduled job
         
         return True
+    
+    def _parse_solana_transaction_for_token_delta(
+        self,
+        tx_hash: str,
+        token_mint: str,
+        wallet_address: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Parse Solana transaction to get actual token amount received/sent.
+        
+        This gets the ACTUAL amount from the transaction (not quote estimate),
+        and also gets the correct decimals from transaction metadata.
+        
+        Args:
+            tx_hash: Transaction signature
+            token_mint: Token mint address
+            wallet_address: Optional wallet address to filter by
+        
+        Returns:
+            Dict with amount, rawAmount, decimals, or None if not found
+        """
+        if not self.js_solana_client:
+            return None
+        
+        try:
+            # Create JavaScript code to parse transaction
+            js_code = f"""
+const {{ Connection, PublicKey }} = require('@solana/web3.js');
+
+async function parseTransaction() {{
+    try {{
+        const connection = new Connection('{self.js_solana_client.rpc_url}');
+        const txHash = '{tx_hash}';
+        const tokenMint = '{token_mint}';
+        const walletAddress = {f"'{wallet_address}'" if wallet_address else 'null'};
+        
+        // Wait for transaction to be finalized
+        let parsedTx = null;
+        for (let attempt = 0; attempt < 30; attempt++) {{
+            parsedTx = await connection.getParsedTransaction(txHash, {{
+                commitment: 'finalized',
+                maxSupportedTransactionVersion: 0,
+            }});
+            if (parsedTx) break;
+            if (attempt < 29) {{
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }}
+        }}
+        
+        if (!parsedTx) {{
+            return {{ success: false, error: 'Transaction not found' }};
+        }}
+        
+        // Parse token balances
+        const meta = parsedTx.meta;
+        const postBalances = meta.postTokenBalances || [];
+        const preBalances = meta.preTokenBalances || [];
+        const transaction = parsedTx.transaction;
+        
+        const normalizeOwner = (entry) => {{
+            if (entry?.owner) {{
+                return entry.owner;
+            }}
+            if (transaction?.message?.accountKeys) {{
+                const accountKey = transaction.message.accountKeys[entry.accountIndex];
+                if (accountKey && typeof accountKey === 'object' && accountKey.pubkey) {{
+                    return accountKey.pubkey.toString();
+                }}
+                if (typeof accountKey === 'string') {{
+                    return accountKey;
+                }}
+            }}
+            return null;
+        }};
+        
+        const findMatchingEntry = (balances, accountIndex) => {{
+            return balances.find((entry) => entry.accountIndex === accountIndex && entry.mint === tokenMint);
+        }};
+        
+        for (const postEntry of postBalances) {{
+            if (postEntry.mint !== tokenMint) {{
+                continue;
+            }}
+            
+            const postOwner = normalizeOwner(postEntry);
+            if (walletAddress && postOwner !== walletAddress) {{
+                continue;
+            }}
+            
+            const preEntry = findMatchingEntry(preBalances, postEntry.accountIndex);
+            const postRaw = BigInt(postEntry.uiTokenAmount?.amount ?? postEntry.amount ?? '0');
+            const preRaw = preEntry ? BigInt(preEntry.uiTokenAmount?.amount ?? preEntry.amount ?? '0') : 0n;
+            const rawDelta = postRaw - preRaw;
+            
+            if (rawDelta !== 0n) {{
+                const decimals = postEntry.uiTokenAmount?.decimals ?? postEntry.decimals ?? 9;
+                const amount = Number(rawDelta) / (10 ** decimals);
+                return {{
+                    success: true,
+                    amount: amount,
+                    rawAmount: rawDelta.toString(),
+                    decimals: decimals,
+                    owner: postOwner
+                }};
+            }}
+        }}
+        
+        return {{ success: false, error: 'No token delta found' }};
+        
+    }} catch (error) {{
+        return {{ success: false, error: error.message }};
+    }}
+}}
+
+parseTransaction().then(result => {{
+    console.log(JSON.stringify(result));
+}}).catch(error => {{
+    console.error(JSON.stringify({{ success: false, error: error.message }}));
+}});
+"""
+            
+            # Write JavaScript to temporary file
+            with open('temp_parse_tx.js', 'w') as f:
+                f.write(js_code)
+            
+            # Execute JavaScript
+            result = subprocess.run(
+                ['node', 'temp_parse_tx.js'],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=os.getcwd()
+            )
+            
+            # Clean up
+            os.remove('temp_parse_tx.js')
+            
+            if result.returncode != 0:
+                logger.warning(f"Failed to parse transaction {tx_hash[:8]}...: {result.stderr}")
+                return None
+            
+            # Parse result
+            result_data = json.loads(result.stdout.strip())
+            
+            if result_data.get('success'):
+                return {
+                    'amount': result_data.get('amount'),
+                    'rawAmount': result_data.get('rawAmount'),
+                    'decimals': result_data.get('decimals'),
+                    'owner': result_data.get('owner')
+                }
+            else:
+                logger.warning(f"Transaction parsing failed for {tx_hash[:8]}...: {result_data.get('error')}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"Error parsing transaction {tx_hash[:8]}...: {e}")
+            return None
+    
+    def _execute_solana_buy_usdc_to_token(
+        self,
+        token_contract: str,
+        usdc_amount: float,
+        slippage_bps: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Execute Solana buy using Jupiter: USDC → Token
+        
+        Args:
+            token_contract: Token mint address
+            usdc_amount: USDC amount to spend
+            slippage_bps: Slippage in basis points (50 = 0.5%)
+        
+        Returns:
+            Execution result dict
+        """
+        if not self.js_solana_client:
+            return {
+                "status": "error",
+                "error": "Solana executor not initialized"
+            }
+        
+        try:
+            USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            
+            # Retry configuration: 3 attempts total (initial + 2 retries)
+            max_attempts = 3
+            slippage_levels = [slippage_bps, 300, 600]  # 50 bps -> 300 bps -> 600 bps
+            
+            last_error = None
+            
+            for attempt in range(max_attempts):
+                current_slippage = slippage_levels[attempt]
+                usdc_amount_raw = int(usdc_amount * 1_000_000)  # USDC has 6 decimals
+                
+                # Log attempt
+                if attempt == 0:
+                    logger.info(
+                        f"RETRY: Solana buy attempt {attempt + 1}/{max_attempts} | "
+                        f"token={token_contract[:8]}... | "
+                        f"usdc_amount={usdc_amount:.2f} | "
+                        f"slippage={current_slippage} bps"
+                    )
+                else:
+                    logger.info(
+                        f"RETRY: Solana buy attempt {attempt + 1}/{max_attempts} | "
+                        f"token={token_contract[:8]}... | "
+                        f"usdc_amount={usdc_amount:.2f} | "
+                        f"slippage={current_slippage} bps | "
+                        f"previous_error={last_error[:100] if last_error else 'N/A'}"
+                    )
+                
+                # Execute swap via Jupiter (async call in sync context)
+                # Use asyncio.run() which always creates a fresh event loop
+                # This avoids "Cannot run the event loop while another loop is running" errors
+                try:
+                    # asyncio.run() creates a new event loop, runs the coro, and closes it
+                    # This is the recommended way to run async code from sync context
+                    async def _run_swap():
+                        swap_result = await self.js_solana_client.execute_jupiter_swap(
+                            input_mint=USDC_MINT,
+                            output_mint=token_contract,
+                            amount=usdc_amount_raw,
+                            slippage_bps=current_slippage
+                        )
+                        decimals_result = await self.js_solana_client.get_token_decimals(token_contract)
+                        return swap_result, decimals_result
+                    
+                    result, decimals_result = asyncio.run(_run_swap())
+                except RuntimeError as e:
+                    # If asyncio.run() fails (e.g., nested event loop), fall back to manual loop management
+                    error_msg = str(e).lower()
+                    if 'event loop' in error_msg or 'runtimeerror' in error_msg:
+                        # Try with a new event loop in a thread-safe way
+                        import threading
+                        result_container = {}
+                        exception_container = {}
+                        
+                        def _run_in_thread():
+                            try:
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                swap_result = new_loop.run_until_complete(
+                                    self.js_solana_client.execute_jupiter_swap(
+                                        input_mint=USDC_MINT,
+                                        output_mint=token_contract,
+                                        amount=usdc_amount_raw,
+                                        slippage_bps=current_slippage
+                                    )
+                                )
+                                decimals_result = new_loop.run_until_complete(
+                                    self.js_solana_client.get_token_decimals(token_contract)
+                                )
+                                result_container['result'] = swap_result
+                                result_container['decimals'] = decimals_result
+                                new_loop.close()
+                            except Exception as ex:
+                                exception_container['error'] = ex
+                        
+                        thread = threading.Thread(target=_run_in_thread)
+                        thread.start()
+                        thread.join(timeout=60)  # 60 second timeout
+                        
+                        if exception_container:
+                            # Convert exception to result dict so it can be retried
+                            error_str = str(exception_container['error'])
+                            result = {'success': False, 'error': error_str}
+                            decimals_result = {'success': False, 'decimals': 9}  # Default fallback
+                        elif 'result' not in result_container:
+                            # Timeout or other failure - convert to result dict for retry
+                            result = {'success': False, 'error': 'Event loop execution timed out or failed'}
+                            decimals_result = {'success': False, 'decimals': 9}  # Default fallback
+                        else:
+                            result = result_container['result']
+                            decimals_result = result_container['decimals']
+                    else:
+                        # Re-raise if it's a different RuntimeError (will be caught by outer handler)
+                        raise
+                
+                # Check if successful
+                if result.get('success'):
+                    tx_hash = result.get('signature') or result.get('tx_hash')
+                    
+                    # FIX 2: Parse transaction to get ACTUAL amount (not quote estimate)
+                    # This also gives us correct decimals from transaction metadata
+                    actual_result = self._parse_solana_transaction_for_token_delta(
+                        tx_hash=tx_hash,
+                        token_mint=token_contract,
+                        wallet_address=None  # Will find any token delta for this mint
+                    )
+                    
+                    if actual_result:
+                        # Use actual amount from transaction (source of truth)
+                        tokens_received = actual_result['amount']
+                        tokens_received_raw = actual_result['rawAmount']
+                        token_decimals = actual_result['decimals']
+                        
+                        logger.info(
+                            f"TRANSACTION PARSED: Got actual amount from transaction | "
+                            f"token={token_contract[:8]}... | "
+                            f"amount={tokens_received:.6f} | "
+                            f"decimals={token_decimals}"
+                        )
+                    else:
+                        # Fallback to quote amount (shouldn't happen, but safety)
+                        logger.warning(
+                            f"TRANSACTION PARSING FAILED: Falling back to quote amount | "
+                            f"token={token_contract[:8]}... | "
+                            f"tx={tx_hash[:8] if tx_hash else 'N/A'}..."
+                        )
+                        output_amount_raw = result.get('outputAmount', 0)
+                        token_decimals = decimals_result.get('decimals', 9) if decimals_result.get('success') else 9
+                        tokens_received = float(output_amount_raw) / (10 ** token_decimals)
+                        tokens_received_raw = str(output_amount_raw)
+                    
+                    price_per_token = usdc_amount / tokens_received if tokens_received > 0 else 0
+                    price_impact = result.get('priceImpact', 0)
+                    slippage = float(price_impact) if price_impact else 0.0
+                    
+                    # Log success
+                    if attempt > 0:
+                        logger.info(
+                            f"RETRY SUCCESS: Solana buy succeeded on attempt {attempt + 1} | "
+                            f"token={token_contract[:8]}... | "
+                            f"tx={tx_hash[:8] if tx_hash else 'N/A'}... | "
+                            f"tokens_received={tokens_received:.6f} | "
+                            f"usdc_spent={usdc_amount:.2f} | "
+                            f"slippage={slippage:.2f}% | "
+                            f"final_slippage_bps={current_slippage}"
+                        )
+                    
+                    return {
+                        "status": "success",
+                        "tx_hash": tx_hash,
+                        "tokens_received": tokens_received,
+                        "tokens_received_raw": tokens_received_raw,
+                        "token_decimals": token_decimals,
+                        "price": price_per_token,
+                        "slippage": slippage,
+                        "usdc_spent": usdc_amount,
+                        "attempt": attempt + 1,
+                        "final_slippage_bps": current_slippage
+                    }
+                
+                # Failed - check if retryable
+                last_error = result.get('error', 'Jupiter swap failed')
+                
+                # Log failure
+                logger.warning(
+                    f"RETRY: Solana buy attempt {attempt + 1} failed | "
+                    f"token={token_contract[:8]}... | "
+                    f"error={last_error[:200]} | "
+                    f"usdc_amount={usdc_amount:.2f} | "
+                    f"slippage_bps={current_slippage}"
+                )
+                
+                # Check if retryable and if we have more attempts
+                if attempt < max_attempts - 1 and self._is_retryable_error(last_error):
+                    # Wait a moment before retry (let price/network settle)
+                    if attempt > 0:
+                        time.sleep(1.0)
+                    continue
+                else:
+                    # Not retryable or out of attempts
+                    if attempt < max_attempts - 1:
+                        logger.error(
+                            f"RETRY: Solana buy error not retryable | "
+                            f"token={token_contract[:8]}... | "
+                            f"error={last_error[:200]}"
+                        )
+                    else:
+                        logger.error(
+                            f"RETRY: Solana buy failed after {max_attempts} attempts | "
+                            f"token={token_contract[:8]}... | "
+                            f"final_error={last_error[:200]} | "
+                            f"tried_slippage_bps={slippage_levels}"
+                        )
+                    
+                    return {
+                        "status": "error",
+                        "error": last_error,
+                        "attempts": attempt + 1,
+                        "final_slippage_bps": current_slippage
+                    }
+            
+        except Exception as e:
+            logger.error(f"Error executing Solana buy: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def _is_retryable_error(self, error: str) -> bool:
+        """
+        Check if an error is retryable.
+        
+        Retryable errors:
+        - Simulation failures (slippage, liquidity)
+        - Custom program errors (0x1788, etc.)
+        - Network/timeout issues
+        
+        Not retryable:
+        - No tokens to sell
+        - Invalid addresses
+        - Auth errors
+        """
+        if not error:
+            return False
+        
+        error_lower = error.lower()
+        retryable_patterns = [
+            'simulation failed',
+            'custom program error',
+            '0x1788',
+            'timeout',
+            'network',
+            'connection',
+            'rate limit',
+            '429',
+            'transaction failed',
+            'event loop',
+            'runtimeerror',
+            'cannot run the event loop'
+        ]
+        
+        non_retryable_patterns = [
+            'no tokens to sell',
+            'total_quantity is 0',
+            'insufficient balance',
+            'invalid',
+            'unauthorized',
+            'authentication'
+        ]
+        
+        # Check non-retryable first
+        for pattern in non_retryable_patterns:
+            if pattern in error_lower:
+                return False
+        
+        # Check retryable patterns
+        for pattern in retryable_patterns:
+            if pattern in error_lower:
+                return True
+        
+        return False
+    
+    def _execute_solana_sell_token_to_usdc(
+        self,
+        token_contract: str,
+        tokens_to_sell: float,
+        token_decimals: int,
+        slippage_bps: int = 50,
+        is_emergency_exit: bool = False,
+        original_amount: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute Solana sell using Jupiter: Token → USDC
+        
+        Args:
+            token_contract: Token mint address
+            tokens_to_sell: Amount of tokens to sell
+            token_decimals: Token decimals
+            slippage_bps: Slippage in basis points (50 = 0.5%)
+        
+        Returns:
+            Execution result dict
+        """
+        if not self.js_solana_client:
+            return {
+                "status": "error",
+                "error": "Solana executor not initialized"
+            }
+        
+        try:
+            USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            
+            # Store original amount for emergency exit retries
+            if original_amount is None:
+                original_amount = tokens_to_sell
+            
+            # Retry configuration: 3 attempts total (initial + 2 retries)
+            max_attempts = 3
+            slippage_levels = [slippage_bps, 300, 600]  # 50 bps -> 300 bps -> 600 bps
+            
+            # For emergency exits, reduce amount on retries: 100% -> 96% -> 93%
+            if is_emergency_exit:
+                amount_multipliers = [1.0, 0.96, 0.93]
+            else:
+                amount_multipliers = [1.0, 1.0, 1.0]  # No reduction for trims/buys
+            
+            last_error = None
+            
+            for attempt in range(max_attempts):
+                # Calculate amount for this attempt
+                current_amount = original_amount * amount_multipliers[attempt]
+                current_amount = round(current_amount, 4)  # Limit to 4 decimal places
+                current_slippage = slippage_levels[attempt]
+                
+                # Log attempt
+                if attempt == 0:
+                    logger.info(
+                        f"RETRY: Solana sell attempt {attempt + 1}/{max_attempts} | "
+                        f"token={token_contract[:8]}... | "
+                        f"amount={current_amount:.4f} | "
+                        f"slippage={current_slippage} bps | "
+                        f"emergency_exit={is_emergency_exit}"
+                    )
+                else:
+                    logger.info(
+                        f"RETRY: Solana sell attempt {attempt + 1}/{max_attempts} | "
+                        f"token={token_contract[:8]}... | "
+                        f"amount={current_amount:.4f} ({amount_multipliers[attempt]*100:.0f}% of original) | "
+                        f"slippage={current_slippage} bps | "
+                        f"previous_error={last_error[:100] if last_error else 'N/A'}"
+                    )
+                
+                tokens_raw = int(current_amount * (10 ** token_decimals))
+                
+                # Execute swap via Jupiter (async call in sync context)
+                # Use asyncio.run() which always creates a fresh event loop
+                # This avoids "Cannot run the event loop while another loop is running" errors
+                try:
+                    # asyncio.run() creates a new event loop, runs the coro, and closes it
+                    # This is the recommended way to run async code from sync context
+                    async def _run_swap():
+                        return await self.js_solana_client.execute_jupiter_swap(
+                            input_mint=token_contract,
+                            output_mint=USDC_MINT,
+                            amount=tokens_raw,
+                            slippage_bps=current_slippage
+                        )
+                    
+                    result = asyncio.run(_run_swap())
+                except RuntimeError as e:
+                    # If asyncio.run() fails (e.g., nested event loop), fall back to manual loop management
+                    error_msg = str(e).lower()
+                    if 'event loop' in error_msg or 'runtimeerror' in error_msg:
+                        # Try with a new event loop in a thread-safe way
+                        import threading
+                        result_container = {}
+                        exception_container = {}
+                        
+                        def _run_in_thread():
+                            try:
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                swap_result = new_loop.run_until_complete(
+                                    self.js_solana_client.execute_jupiter_swap(
+                                        input_mint=token_contract,
+                                        output_mint=USDC_MINT,
+                                        amount=tokens_raw,
+                                        slippage_bps=current_slippage
+                                    )
+                                )
+                                result_container['result'] = swap_result
+                                new_loop.close()
+                            except Exception as ex:
+                                exception_container['error'] = ex
+                        
+                        thread = threading.Thread(target=_run_in_thread)
+                        thread.start()
+                        thread.join(timeout=60)  # 60 second timeout
+                        
+                        if exception_container:
+                            # Convert exception to result dict so it can be retried
+                            error_str = str(exception_container['error'])
+                            result = {'success': False, 'error': error_str}
+                        elif 'result' not in result_container:
+                            # Timeout or other failure - convert to result dict for retry
+                            result = {'success': False, 'error': 'Event loop execution timed out or failed'}
+                        else:
+                            result = result_container['result']
+                    else:
+                        # Re-raise if it's a different RuntimeError (will be caught by outer handler)
+                        raise
+                
+                # Check if successful
+                if result.get('success'):
+                    tx_hash = result.get('signature') or result.get('tx_hash')
+                    
+                    # FIX 3: Parse transaction to get ACTUAL USDC received (not quote estimate)
+                    # For sells, we're receiving USDC, so we need to check USDC delta
+                    USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                    actual_result = self._parse_solana_transaction_for_token_delta(
+                        tx_hash=tx_hash,
+                        token_mint=USDC_MINT,  # We're receiving USDC
+                        wallet_address=None  # Will find any USDC delta
+                    )
+                    
+                    if actual_result and actual_result['amount'] > 0:
+                        # Use actual USDC received from transaction (source of truth)
+                        usdc_received = actual_result['amount']
+                        usdc_received_raw = actual_result['rawAmount']
+                        
+                        logger.info(
+                            f"TRANSACTION PARSED: Got actual USDC from transaction | "
+                            f"token={token_contract[:8]}... | "
+                            f"usdc_received={usdc_received:.2f}"
+                        )
+                    else:
+                        # Fallback to quote amount (shouldn't happen, but safety)
+                        logger.warning(
+                            f"TRANSACTION PARSING FAILED: Falling back to quote amount | "
+                            f"token={token_contract[:8]}... | "
+                            f"tx={tx_hash[:8] if tx_hash else 'N/A'}..."
+                        )
+                        output_amount_raw = result.get('outputAmount', 0)
+                        usdc_received = float(output_amount_raw) / 1_000_000  # USDC has 6 decimals
+                        usdc_received_raw = str(output_amount_raw)
+                    
+                    price_per_token = usdc_received / current_amount if current_amount > 0 else 0
+                    price_impact = result.get('priceImpact', 0)
+                    slippage = float(price_impact) if price_impact else 0.0
+                    
+                    # Log success
+                    if attempt > 0:
+                        logger.info(
+                            f"RETRY SUCCESS: Solana sell succeeded on attempt {attempt + 1} | "
+                            f"token={token_contract[:8]}... | "
+                            f"tx={tx_hash[:8] if tx_hash else 'N/A'}... | "
+                            f"amount_sold={current_amount:.4f} | "
+                            f"usdc_received={usdc_received:.2f} | "
+                            f"slippage={slippage:.2f}% | "
+                            f"final_slippage_bps={current_slippage}"
+                        )
+                    
+                    return {
+                        "status": "success",
+                        "tx_hash": tx_hash,
+                        "usdc_received": usdc_received,
+                        "usdc_received_raw": usdc_received_raw,
+                        "price": price_per_token,
+                        "slippage": slippage,
+                        "tokens_sold": current_amount,
+                        "attempt": attempt + 1,
+                        "final_slippage_bps": current_slippage
+                    }
+                
+                # Failed - check if retryable
+                last_error = result.get('error', 'Jupiter swap failed')
+                
+                # Log failure
+                logger.warning(
+                    f"RETRY: Solana sell attempt {attempt + 1} failed | "
+                    f"token={token_contract[:8]}... | "
+                    f"error={last_error[:200]} | "
+                    f"amount={current_amount:.4f} | "
+                    f"slippage_bps={current_slippage}"
+                )
+                
+                # Check if retryable and if we have more attempts
+                if attempt < max_attempts - 1 and self._is_retryable_error(last_error):
+                    # Wait a moment before retry (let price/network settle)
+                    if attempt > 0:
+                        time.sleep(1.0)
+                    continue
+                else:
+                    # Not retryable or out of attempts
+                    if attempt < max_attempts - 1:
+                        logger.error(
+                            f"RETRY: Solana sell error not retryable | "
+                            f"token={token_contract[:8]}... | "
+                            f"error={last_error[:200]}"
+                        )
+                    else:
+                        logger.error(
+                            f"RETRY: Solana sell failed after {max_attempts} attempts | "
+                            f"token={token_contract[:8]}... | "
+                            f"final_error={last_error[:200]} | "
+                            f"tried_slippage_bps={slippage_levels} | "
+                            f"tried_amounts={[round(original_amount * m, 4) for m in amount_multipliers]}"
+                        )
+                    
+                    return {
+                        "status": "error",
+                        "error": last_error,
+                        "attempts": attempt + 1,
+                        "final_slippage_bps": current_slippage
+                    }
+            
+            tx_hash = result.get('signature') or result.get('tx_hash')
+            output_amount_raw = result.get('outputAmount', 0)
+            
+            # Convert USDC output to human-readable (6 decimals)
+            usdc_received = float(output_amount_raw) / 1_000_000
+            
+            # Calculate price
+            price_per_token = usdc_received / tokens_to_sell if tokens_to_sell > 0 else 0
+            
+            # Calculate slippage (if available from result)
+            price_impact = result.get('priceImpact', 0)
+            slippage = float(price_impact) if price_impact else 0.0
+            
+            return {
+                "status": "success",
+                "tx_hash": tx_hash,
+                "usdc_received": usdc_received,
+                "usdc_received_raw": str(output_amount_raw),
+                "price": price_per_token,
+                "slippage": slippage,
+                "tokens_sold": tokens_to_sell
+            }
+            
+        except Exception as e:
+            logger.error(f"Error executing Solana sell: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
     
     def _update_balance_after_trade(self, chain: str, token: str, amount_change: float) -> None:
         """
@@ -773,7 +1523,34 @@ class PMExecutor:
         timeframe = position.get("timeframe", "1h")
         size_frac = float(decision.get("size_frac", 0.0))
         token_label = position.get("token_ticker") or token_contract
-        logger.info("EXEC START: %s %s/%s tf=%s size_frac=%.4f", decision_type, token_label, chain, timeframe, size_frac)
+        # Extract decision context for logging
+        reasons = decision.get("reasons") or {}
+        flag = reasons.get("flag", "unknown")
+        uptrend = (position.get("features") or {}).get("uptrend_engine_v4") or {}
+        state = uptrend.get("state", "unknown")
+        total_quantity = float(position.get("total_quantity") or 0.0)
+        status = position.get("status", "unknown")
+        method = "jupiter" if chain.lower() == "solana" else "lifi"
+        
+        logger.info(
+            "EXEC START: %s %s/%s tf=%s size_frac=%.4f | "
+            "position_qty=%.6f status=%s | "
+            "flag=%s state=%s | "
+            "method=%s chain=%s",
+            decision_type, token_label, chain, timeframe, size_frac,
+            total_quantity, status,
+            flag, state,
+            method, chain
+        )
+        
+        # SOLANA ONLY - Reject non-Solana chains
+        if chain not in self.allowed_chains:
+            result = {
+                "status": "error",
+                "error": f"Chain '{chain}' not allowed. Only Solana is supported."
+            }
+            logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
+            return result
         
         if not token_contract or not decision_type or decision_type == "hold":
             result = {
@@ -799,21 +1576,66 @@ class PMExecutor:
             result = self._execute_add(decision, position, chain, token_contract, price_usd, price_native, size_frac)
             status = result.get("status")
             if status == "success":
-                logger.info("EXEC OK: add/entry %s/%s tf=%s bought=%.6f price=%.8f",
-                            token_label, chain, timeframe, result.get("tokens_bought", 0.0), result.get("price") or 0.0)
+                tokens_bought = result.get("tokens_bought", 0.0)
+                price = result.get("price") or 0.0
+                slippage = result.get("slippage", 0.0)
+                qty_before = total_quantity
+                qty_after = qty_before + tokens_bought
+                
+                logger.info(
+                    "EXEC OK: add/entry %s/%s tf=%s | "
+                    "tx=%s | "
+                    "tokens=%.6f price=%.8f slippage=%.2f%% | "
+                    "qty_before=%.6f qty_after=%.6f",
+                    token_label, chain, timeframe,
+                    result.get("tx_hash", "unknown")[:8] + "..." if result.get("tx_hash") else "unknown",
+                    tokens_bought, price, slippage,
+                    qty_before, qty_after
+                )
             else:
-                logger.error("EXEC FAIL: add/entry %s/%s tf=%s err=%s",
-                             token_label, chain, timeframe, result.get("error", "unknown"))
+                logger.error(
+                    "EXEC FAIL: add/entry %s/%s tf=%s | "
+                    "err=%s | "
+                    "position_qty=%.6f status=%s | "
+                    "flag=%s state=%s",
+                    token_label, chain, timeframe,
+                    result.get("error", "unknown"),
+                    total_quantity, status,
+                    flag, state
+                )
             return result
         elif decision_type in ["trim", "emergency_exit"]:
             result = self._execute_sell(decision, position, chain, token_contract, price_usd, price_native, size_frac)
             status = result.get("status")
             if status == "success":
-                logger.info("EXEC OK: sell %s/%s tf=%s sold=%.6f price=%.8f",
-                            token_label, chain, timeframe, result.get("tokens_sold", 0.0), result.get("price") or 0.0)
+                tokens_sold = result.get("tokens_sold", 0.0)
+                price = result.get("price") or 0.0
+                actual_usd = result.get("actual_usd", 0.0)
+                slippage = result.get("slippage", 0.0)
+                qty_before = total_quantity
+                qty_after = max(0.0, qty_before - tokens_sold)
+                
+                logger.info(
+                    "EXEC OK: sell %s/%s tf=%s | "
+                    "tx=%s | "
+                    "tokens_sold=%.6f price=%.8f usd_received=%.2f slippage=%.2f%% | "
+                    "qty_before=%.6f qty_after=%.6f",
+                    token_label, chain, timeframe,
+                    result.get("tx_hash", "unknown")[:8] + "..." if result.get("tx_hash") else "unknown",
+                    tokens_sold, price, actual_usd, slippage,
+                    qty_before, qty_after
+                )
             else:
-                logger.error("EXEC FAIL: sell %s/%s tf=%s err=%s",
-                             token_label, chain, timeframe, result.get("error", "unknown"))
+                logger.error(
+                    "EXEC FAIL: sell %s/%s tf=%s | "
+                    "err=%s | "
+                    "position_qty=%.6f status=%s | "
+                    "flag=%s state=%s",
+                    token_label, chain, timeframe,
+                    result.get("error", "unknown"),
+                    total_quantity, status,
+                    flag, state
+                )
             return result
         else:
             result = {
@@ -834,10 +1656,10 @@ class PMExecutor:
         size_frac: float
     ) -> Dict[str, Any]:
         """
-        Execute a buy order using cross-chain swap from Solana USDC → target chain token.
+        Execute a buy order.
         
-        Always uses cross-chain swap from Solana (home chain) to target chain.
-        No pre-bridging needed - Li.Fi handles bridge + swap in one transaction.
+        For Solana: Uses Jupiter directly (USDC → Token)
+        For other chains: Uses Li.Fi (cross-chain swap from Solana USDC → target chain token)
         """
         try:
             # Calculate notional USD from usd_alloc_remaining (remaining capacity)
@@ -863,6 +1685,50 @@ class PMExecutor:
                     "error": f"Insufficient USDC on Solana (home chain)"
                 }
             
+            # SOLANA: Use Jupiter directly
+            if chain.lower() == "solana":
+                result = self._execute_solana_buy_usdc_to_token(
+                    token_contract=token_contract,
+                    usdc_amount=notional_usd,
+                    slippage_bps=50  # 0.5%
+                )
+                
+                if not result.get("status") == "success":
+                    return result
+                
+                # Extract results from Jupiter
+                tx_hash = result.get("tx_hash")
+                tokens_received = result.get("tokens_received", 0.0)
+                tokens_received_raw = result.get("tokens_received_raw", "0")
+                token_decimals = result.get("token_decimals", 9)
+                actual_price = result.get("price", price_usd)
+                slippage = result.get("slippage", 0.0)
+                
+                # Cache token decimals
+                cache_key = (token_contract.lower(), chain.lower())
+                self._decimals_cache[cache_key] = token_decimals
+                
+                # Update wallet balance (subtract USDC from Solana)
+                self._update_balance_after_trade(self.home_chain, "USDC", -notional_usd)
+                
+                logger.info(
+                    f"Jupiter buy execution for {token_contract} on {chain}: "
+                    f"tokens_received={tokens_received}, price={actual_price:.8f}, slippage={slippage:.2f}%"
+                )
+                
+                return {
+                    "status": "success",
+                    "tx_hash": tx_hash,
+                    "tokens_bought": tokens_received,
+                    "tokens_bought_raw": tokens_received_raw,
+                    "token_decimals": token_decimals,
+                    "price": actual_price,
+                    "price_native": price_native,
+                    "notional_usd": notional_usd,
+                    "slippage": slippage
+                }
+            
+            # NON-SOLANA: Use Li.Fi (for future multi-chain support)
             # Check and top up gas on target chain if needed
             self._check_and_topup_gas(chain)
             
@@ -870,7 +1736,6 @@ class PMExecutor:
             usdc_amount = str(int(notional_usd * 1_000_000))
             
             # Execute cross-chain swap: Solana USDC → Target Chain Token
-            # Li.Fi automatically handles bridge + swap in one transaction
             result = self._call_lifi_executor(
                 action="swap",
                 chain=chain,  # Target chain
@@ -888,7 +1753,7 @@ class PMExecutor:
                     "error": result.get("error", "Li.Fi cross-chain swap failed")
                 }
             
-            # Extract results
+            # Extract results from Li.Fi
             tx_hash = result.get("tx_hash")
             token_decimals = result.get("to_token_decimals")
             try:
@@ -910,44 +1775,26 @@ class PMExecutor:
             # Log what we received from Li.Fi for debugging
             logger.info(
                 f"Li.Fi execution result for {token_contract} on {chain}: "
-                f"tokens_received={tokens_received} (type={type(tokens_field).__name__}, raw_value={tokens_field}), "
-                f"tokens_received_raw={tokens_received_raw}, to_token_decimals={to_token_decimals}, "
-                f"notional_usd={notional_usd}, price_from_lifi={result.get('price')}"
+                f"tokens_received={tokens_received}, tokens_received_raw={tokens_received_raw}, "
+                f"to_token_decimals={to_token_decimals}, notional_usd={notional_usd}"
             )
             
             # CRITICAL: If we have tokens_received_raw, always prefer it over tokens_received
-            # Li.Fi's tokens_received may use wrong decimals, but raw value is always correct
-            # Fetch correct decimals from the contract and recalculate
             if tokens_received_raw:
                 try:
                     raw_value = float(tokens_received_raw)
-                    
-                    # Fetch correct decimals from the contract
                     correct_decimals = self._get_token_decimals(token_contract, chain)
-                    
-                    # Recalculate using correct decimals
                     recalculated = raw_value / (10 ** correct_decimals)
                     
-                    # Check if there's a discrepancy
                     if tokens_received > 0:
                         diff_pct = abs(recalculated - tokens_received) / max(recalculated, tokens_received) * 100
-                        if diff_pct > 1.0:  # More than 1% difference
+                        if diff_pct > 1.0:
                             logger.warning(
                                 f"Decimal mismatch for {token_contract} on {chain}: "
-                                f"Li.Fi reported={tokens_received} (using decimals={to_token_decimals}), "
-                                f"correct={recalculated} (using decimals={correct_decimals} from contract), "
-                                f"raw={tokens_received_raw}"
+                                f"Li.Fi reported={tokens_received}, correct={recalculated}, raw={tokens_received_raw}"
                             )
-                    else:
-                        # tokens_received is suspiciously small or zero
-                        logger.warning(
-                            f"Li.Fi reported suspicious tokens_received={tokens_received} for {token_contract} on {chain}. "
-                            f"Recalculating from raw={tokens_received_raw} using correct decimals={correct_decimals} from contract"
-                        )
                     
-                    # Always use the recalculated value with correct decimals
                     tokens_received = recalculated
-                    # Update token_decimals for consistency
                     if token_decimals is None or token_decimals != correct_decimals:
                         token_decimals = correct_decimals
                         cache_key = (token_contract.lower(), chain.lower())
@@ -957,7 +1804,6 @@ class PMExecutor:
                     logger.warning(f"Failed to recalculate tokens from raw for {token_contract} on {chain}: {e}")
             
             # Calculate price: USD spent / tokens received
-            # Since this is a full execution (not partial), use notional_usd
             actual_price = float(result.get("price", price_usd))
             if tokens_received > 0:
                 actual_price = notional_usd / tokens_received
@@ -977,7 +1823,7 @@ class PMExecutor:
                 "token_decimals": token_decimals,
                 "price": actual_price,
                 "price_native": price_native,
-                "notional_usd": notional_usd,  # USD amount that was intended and executed
+                "notional_usd": notional_usd,
                 "slippage": slippage
             }
                 
@@ -999,12 +1845,15 @@ class PMExecutor:
         size_frac: float
     ) -> Dict[str, Any]:
         """
-        Execute a sell order using cross-chain swap: target chain token → Solana USDC.
+        Execute a sell order.
         
-        Always swaps back to Solana USDC (home chain) - all proceeds go to Solana.
-        Li.Fi handles bridge + swap in one transaction.
+        For Solana: Uses Jupiter directly (Token → USDC)
+        For other chains: Uses Li.Fi (cross-chain swap: target chain token → Solana USDC)
         """
         try:
+            # Derive decision type for branching (e.g., emergency exit)
+            decision_type = decision.get("decision_type", "").lower()
+            
             # Calculate tokens to sell
             total_quantity = float(position.get("total_quantity") or 0.0)
             if total_quantity <= 0:
@@ -1033,11 +1882,56 @@ class PMExecutor:
             if token_decimals is None:
                 token_decimals = self._get_token_decimals(token_contract, chain)
             
+            # SOLANA: Use Jupiter directly
+            if chain.lower() == "solana":
+                is_emergency_exit = (decision_type == "emergency_exit")
+                result = self._execute_solana_sell_token_to_usdc(
+                    token_contract=token_contract,
+                    tokens_to_sell=tokens_to_sell,
+                    token_decimals=token_decimals,
+                    slippage_bps=50,  # 0.5%
+                    is_emergency_exit=is_emergency_exit,
+                    original_amount=tokens_to_sell
+                )
+                
+                if not result.get("status") == "success":
+                    return result
+                
+                # Extract results from Jupiter
+                tx_hash = result.get("tx_hash")
+                usdc_received = result.get("usdc_received", 0.0)
+                actual_price = result.get("price", price_usd)
+                slippage = result.get("slippage", 0.0)
+                
+                # Calculate expected vs actual
+                expected_usd = tokens_to_sell * price_usd
+                actual_usd = usdc_received  # USDC received is already in USD
+                
+                # Update wallet balance (add USDC to Solana)
+                self._update_balance_after_trade(self.home_chain, "USDC", actual_usd)
+                
+                logger.info(
+                    f"Jupiter sell execution for {token_contract} on {chain}: "
+                    f"tokens_sold={tokens_to_sell:.6f}, usdc_received=${usdc_received:.2f}, "
+                    f"price={actual_price:.8f}, slippage={slippage:.2f}%"
+                )
+                
+                return {
+                    "status": "success",
+                    "tx_hash": tx_hash,
+                    "tokens_sold": tokens_to_sell,
+                    "price": actual_price,
+                    "price_native": price_native,
+                    "expected_usd": expected_usd,
+                    "actual_usd": actual_usd,
+                    "slippage": slippage
+                }
+            
+            # NON-SOLANA: Use Li.Fi (for future multi-chain support)
             # Convert tokens to smallest unit
             token_amount = str(int(tokens_to_sell * (10 ** token_decimals)))
             
             # Execute cross-chain swap: Target Chain Token → Solana USDC
-            # Li.Fi automatically handles swap + bridge in one transaction
             result = self._call_lifi_executor(
                 action="swap",
                 chain=chain,  # Source chain (where token is)
@@ -1055,7 +1949,7 @@ class PMExecutor:
                     "error": result.get("error", "Li.Fi cross-chain swap failed")
                 }
             
-            # Extract results
+            # Extract results from Li.Fi
             tx_hash = result.get("tx_hash")
             usdc_received = float(result.get("tokens_received", 0.0))  # USDC received on Solana
             actual_usd = usdc_received  # USDC received is already in USD
@@ -1063,14 +1957,16 @@ class PMExecutor:
             if tokens_to_sell > 0:
                 actual_price = actual_usd / tokens_to_sell
             slippage = float(result.get("slippage", 0.0))
-            token_decimals = result.get("from_token_decimals")
-            try:
-                token_decimals = int(token_decimals) if token_decimals is not None else None
-            except (TypeError, ValueError):
-                token_decimals = None
-            if token_decimals is not None:
-                cache_key = (token_contract.lower(), chain.lower())
-                self._decimals_cache[cache_key] = token_decimals
+            
+            # Cache token decimals if available
+            result_token_decimals = result.get("from_token_decimals")
+            if result_token_decimals is not None:
+                try:
+                    result_token_decimals = int(result_token_decimals)
+                    cache_key = (token_contract.lower(), chain.lower())
+                    self._decimals_cache[cache_key] = result_token_decimals
+                except (TypeError, ValueError):
+                    pass
             
             # Calculate expected vs actual
             expected_usd = tokens_to_sell * price_usd

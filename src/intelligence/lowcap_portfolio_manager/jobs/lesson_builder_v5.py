@@ -57,31 +57,129 @@ def _linear_regression(times: List[float], values: List[float]) -> float:
         return 0.0
     return (n * sum_tv - sum_t * sum_v) / denom
 
+def estimate_half_life(edge_history: List[Tuple[float, datetime]]) -> Optional[float]:
+    """
+    Estimate exponential decay half-life from edge history.
+    
+    Fits exponential decay toward zero: |y(t)| = |y_0| * exp(-lambda * t)
+    Works for both positive and negative values by using absolute values for fitting.
+    Model: y(t) = sign(y_0) * |y_0| * exp(-lambda * t) (decays toward zero)
+    
+    Args:
+        edge_history: List of (edge_value, timestamp) tuples, sorted by time
+        
+    Returns:
+        Half-life in hours, or None if insufficient data or fit fails
+    """
+    if len(edge_history) < 5:
+        return None
+    
+    # Sort by timestamp (should already be sorted, but be safe)
+    sorted_history = sorted(edge_history, key=lambda x: x[1])
+    
+    # Extract times and values
+    t0 = sorted_history[0][1]
+    times = []
+    values = []
+    
+    for edge_val, ts in sorted_history:
+        hours = (ts - t0).total_seconds() / 3600.0
+        times.append(hours)
+        values.append(edge_val)
+    
+    # Check if values cross zero (change sign)
+    signs = [1 if v > 0 else (-1 if v < 0 else 0) for v in values]
+    has_positive = any(s > 0 for s in signs)
+    has_negative = any(s < 0 for s in signs)
+    crosses_zero = has_positive and has_negative
+    
+    if crosses_zero:
+        # If values cross zero, use the more recent segment (after zero-crossing)
+        # Find the zero-crossing point
+        zero_cross_idx = None
+        for i in range(1, len(values)):
+            if (values[i-1] > 0 and values[i] <= 0) or (values[i-1] < 0 and values[i] >= 0):
+                zero_cross_idx = i
+                break
+        
+        if zero_cross_idx is not None and len(values) - zero_cross_idx >= 5:
+            # Use segment after zero-crossing
+            times = times[zero_cross_idx:]
+            values = values[zero_cross_idx:]
+        elif zero_cross_idx is not None and zero_cross_idx >= 5:
+            # Use segment before zero-crossing
+            times = times[:zero_cross_idx]
+            values = values[:zero_cross_idx]
+        else:
+            # Not enough data on either side, can't fit reliably
+            return None
+    
+    # Use absolute values for fitting (exponential decay toward zero)
+    # Filter out zero values (can't take log)
+    abs_pairs = [(t, abs(v)) for t, v in zip(times, values) if abs(v) > 1e-9]
+    if len(abs_pairs) < 5:
+        return None
+    
+    abs_times = [t for t, _ in abs_pairs]
+    abs_values = [v for _, v in abs_pairs]
+    
+    # Fit exponential decay: |y| = |y_0| * exp(-lambda * t)
+    # Take log: ln(|y|) = ln(|y_0|) - lambda * t
+    log_values = [math.log(v) for v in abs_values]
+    
+    # Linear regression: ln(|y|) = a + b*t, where b = -lambda
+    slope = _linear_regression(abs_times, log_values)
+    
+    # If slope is positive or near zero, pattern is improving or stable (no decay)
+    if slope >= -1e-6:
+        return None  # No decay to measure (pattern is improving or stable)
+    
+    # lambda = -slope
+    lambda_val = -slope
+    
+    # Half-life: t_half = ln(2) / lambda
+    if lambda_val > 0:
+        half_life_hours = math.log(2) / lambda_val
+        # Clamp to reasonable range (1 hour to 1 year)
+        half_life_hours = max(1.0, min(8760.0, half_life_hours))
+        return half_life_hours
+    
+    return None
+
 def fit_decay_curve(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Fit decay curve to event series (RR over time).
+    Uses exponential decay to compute half-life.
     Returns decay metadata.
     """
     if len(events) < 5:
-        return {"state": "insufficient", "multiplier": 1.0}
+        return {"state": "insufficient", "multiplier": 1.0, "half_life_hours": None}
     
     # Sort by timestamp
     sorted_events = sorted(events, key=lambda x: x['timestamp'])
     
-    # Extract (t, rr)
-    # Normalize t to hours from start
+    # Extract (t, rr) for exponential decay fitting
     t0 = datetime.fromisoformat(sorted_events[0]['timestamp'].replace('Z', '+00:00'))
     
+    edge_history = []
+    for e in sorted_events:
+        ts = datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00'))
+        rr = float(e['rr'])
+        edge_history.append((rr, ts))
+    
+    # Estimate half-life using exponential decay
+    half_life_hours = estimate_half_life(edge_history)
+    
+    # Also compute linear slope for state detection (backward compat)
     times = []
     values = []
-    
     for e in sorted_events:
         ts = datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00'))
         hours = (ts - t0).total_seconds() / 3600.0
         rr = float(e['rr'])
         times.append(hours)
         values.append(rr)
-        
+    
     slope = _linear_regression(times, values)
     
     state = "stable"
@@ -89,21 +187,33 @@ def fit_decay_curve(events: List[Dict[str, Any]]) -> Dict[str, Any]:
         state = "decaying"
     elif slope > 0.001:
         state = "improving"
-        
-    # Calculate simple decay multiplier for Override usage
+    
+    # Calculate decay multiplier based on half-life if available, otherwise use slope
     mult = 1.0
-    if state == "decaying":
-        severity = min(abs(slope) * 100, 0.5) 
-        mult = max(0.5, 1.0 - severity)
-    elif state == "improving":
-        severity = min(abs(slope) * 100, 0.5)
-        mult = min(1.5, 1.0 + severity)
+    if half_life_hours:
+        # If half-life is short (< 7 days), apply decay multiplier
+        # Longer half-life = more stable = higher multiplier
+        if half_life_hours < 168:  # 7 days
+            # Decay multiplier based on half-life quality
+            # 1 day = 0.5, 7 days = 0.9, 30+ days = 1.0
+            half_life_quality = min(1.0, half_life_hours / 168.0)
+            mult = 0.5 + 0.5 * half_life_quality
+        else:
+            mult = 1.0  # Stable pattern
+    else:
+        # Fallback to slope-based multiplier (backward compat)
+        if state == "decaying":
+            severity = min(abs(slope) * 100, 0.5) 
+            mult = max(0.5, 1.0 - severity)
+        elif state == "improving":
+            severity = min(abs(slope) * 100, 0.5)
+            mult = min(1.5, 1.0 + severity)
     
     return {
         "state": state,
         "slope": slope,
         "multiplier": mult,
-        "half_life_hours": None 
+        "half_life_hours": half_life_hours
     }
 
 def compute_lesson_stats(events: List[Dict[str, Any]], global_baseline_rr: float) -> Dict[str, Any]:

@@ -55,7 +55,7 @@ def setup_logging():
         'social_ingest': 'logs/social_ingest.log',
         'decision_maker': 'logs/decision_maker.log',
         'pm_core': 'logs/pm_core.log',
-        'intelligence.lowcap_portfolio_manager.pm.executor': 'logs/pm_executor.log',
+        'src.intelligence.lowcap_portfolio_manager.pm.executor': 'logs/pm_executor.log',
         'trader': 'logs/trader.log',
         'learning_system': 'logs/learning_system.log',
         'price_collector': 'logs/price_collector.log',
@@ -63,6 +63,8 @@ def setup_logging():
         'system': 'logs/system.log',
         'uptrend_engine': 'logs/uptrend_engine.log',
         'rollup': 'logs/rollup.log',
+        'src.intelligence.lowcap_portfolio_manager.jobs.regime_price_collector': 'logs/regime_price_collector.log',
+        'src.communication.telegram_signal_notifier': 'logs/telegram_notifier.log',
     }
 
     # Configure root logger to suppress debug/info to console

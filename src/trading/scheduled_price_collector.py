@@ -3,16 +3,31 @@
 Scheduled Price Collection System
 
 Collects price data every minute for active position tokens and stores in database.
+Uses parallel async requests for scalability.
+
+Tiered Collection Strategy:
+- 0-250 tokens: Every 1 min, 60% coverage threshold
+- 250-500 tokens: Every 2 min, 45% coverage threshold
+- 500-750 tokens: Every 3 min, 33% coverage threshold
+- etc.
+
+Active/Watchlist 1m positions always collected every 1 minute (priority).
 """
 
 import asyncio
 import logging
+import math
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Tuple
 from datetime import datetime, timezone, timedelta
-import requests
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# Rate limits
+MAX_CALLS_PER_MINUTE = 250  # DexScreener limit is 300, we use 250 for safety
+MAX_CONCURRENT_REQUESTS = 50  # Max concurrent HTTP requests
 
 
 class ScheduledPriceCollector:
@@ -20,6 +35,7 @@ class ScheduledPriceCollector:
     Scheduled price collection system for active position tokens
     
     Collects price data every minute from DexScreener API and stores in database.
+    Uses parallel async requests for scalability with tiered collection.
     """
     
     def __init__(self, supabase_manager, price_oracle):
@@ -35,7 +51,11 @@ class ScheduledPriceCollector:
         self.collecting = False
         self.collect_task = None
         
-        logger.info("Scheduled price collector initialized")
+        # Track collection cycles for tiered collection
+        self.current_cycle = 0  # Increments each minute
+        self.last_collection_time: Dict[Tuple[str, str], datetime] = {}  # (token, chain) -> last collected
+        
+        logger.info("Scheduled price collector initialized (parallel mode)")
     
     async def start_collection(self, interval_minutes: int = 1):
         """
@@ -75,7 +95,14 @@ class ScheduledPriceCollector:
             # Log tick at debug level - heartbeat is logged every 5 minutes at INFO level
             logger.debug("Price collection tick")
             try:
-                await self._collect_prices_for_active_positions()
+                start_time = datetime.now(timezone.utc)
+                await self._collect_prices_parallel()
+                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                logger.info(f"Price collection completed in {elapsed:.2f}s")
+                
+                # Increment cycle counter
+                self.current_cycle += 1
+                
                 # Lightweight heartbeat approximately every 5 minutes
                 now = datetime.now(timezone.utc)
                 if (now - last_heartbeat) >= timedelta(minutes=5):
@@ -88,24 +115,118 @@ class ScheduledPriceCollector:
                 logger.error(f"Error in price collection loop: {e}")
                 await asyncio.sleep(interval_minutes * 60)
     
-    async def _collect_prices_for_active_positions(self):
-        """Collect prices for all active position tokens"""
+    def _get_collection_interval(self, total_tokens: int) -> int:
+        """
+        Calculate collection interval based on total token count.
+        
+        Returns interval in minutes (1, 2, 3, etc.)
+        - 0-250 tokens: Every 1 min
+        - 250-500 tokens: Every 2 min
+        - 500-750 tokens: Every 3 min
+        - etc.
+        """
+        if total_tokens <= 0:
+            return 1
+        return max(1, math.ceil(total_tokens / MAX_CALLS_PER_MINUTE))
+    
+    def _get_coverage_threshold(self, interval: int) -> float:
+        """
+        Calculate coverage threshold based on collection interval.
+        
+        Returns threshold as decimal (0.60, 0.45, 0.33, etc.)
+        Formula: threshold = 1 / interval (with buffer)
+        """
+        if interval <= 1:
+            return 0.60  # 60% for every-minute collection
+        elif interval == 2:
+            return 0.45  # 45% for every-2-minute collection
+        else:
+            # Dynamic: (60 / interval) / 60 = 1/interval, with small buffer
+            return max(0.20, (60 / interval - 2) / 60)  # Small buffer below theoretical max
+    
+    async def _get_priority_1m_positions(self) -> Set[Tuple[str, str]]:
+        """
+        Get active and watchlist 1m positions that need every-minute collection.
+        
+        Returns set of (token_contract, chain) tuples.
+        """
         try:
-            # Get active positions from database
-            active_positions = await self._get_active_positions()
+            result = (
+                self.supabase_manager.client.table('lowcap_positions')
+                .select('token_contract', 'token_chain')
+                .eq('timeframe', '1m')
+                .in_('status', ['active', 'watchlist'])
+                .execute()
+            )
             
-            if not active_positions:
-                logger.info("No active positions found")
+            priority_tokens = set()
+            for row in (result.data or []):
+                token = row.get('token_contract')
+                chain = (row.get('token_chain') or '').lower()
+                if token and chain:
+                    priority_tokens.add((token, chain))
+            
+            return priority_tokens
+        except Exception as e:
+            logger.error(f"Error getting priority 1m positions: {e}")
+            return set()
+    
+    def _should_collect_this_cycle(self, token: str, chain: str, interval: int, priority_1m: Set[Tuple[str, str]]) -> bool:
+        """
+        Determine if a token should be collected this cycle.
+        
+        Priority 1m tokens: Always collect
+        Other tokens: Collect based on interval (cycle % interval == 0)
+        """
+        # Priority 1m tokens always collected
+        if (token, chain) in priority_1m:
+            return True
+        
+        # For interval-based collection, use hash to distribute tokens across cycles
+        # This ensures even distribution and consistent collection
+        token_hash = hash((token, chain)) % interval
+        return (self.current_cycle % interval) == token_hash
+    
+    async def _collect_prices_parallel(self):
+        """Collect prices using parallel async requests with tiered collection"""
+        try:
+            # Get all positions
+            all_positions = await self._get_active_positions()
+            
+            if not all_positions:
+                logger.info("No positions to collect prices for")
                 return
             
-            logger.info(f"Collecting prices for {len(active_positions)} active positions")
+            total_tokens = len(all_positions)
             
-            # Group tokens by chain for batch API calls
-            tokens_by_chain = self._group_tokens_by_chain(active_positions)
+            # Calculate interval and threshold
+            interval = self._get_collection_interval(total_tokens)
+            threshold = self._get_coverage_threshold(interval)
             
-            # Collect prices for each chain
-            for chain, tokens in tokens_by_chain.items():
-                await self._collect_prices_for_chain(chain, tokens)
+            # Get priority 1m positions
+            priority_1m = await self._get_priority_1m_positions()
+            
+            # Filter tokens to collect this cycle
+            tokens_to_collect = []
+            for pos in all_positions:
+                token = pos.get('token_contract')
+                chain = pos.get('token_chain', '').lower()
+                if token and chain and self._should_collect_this_cycle(token, chain, interval, priority_1m):
+                    tokens_to_collect.append({'token_contract': token, 'token_chain': chain})
+            
+            # Log collection stats
+            priority_count = sum(1 for pos in tokens_to_collect 
+                               if (pos['token_contract'], pos['token_chain']) in priority_1m)
+            logger.info(
+                f"Collecting {len(tokens_to_collect)}/{total_tokens} tokens "
+                f"(interval={interval}min, threshold={threshold:.0%}, priority_1m={priority_count}, cycle={self.current_cycle})"
+            )
+            
+            if not tokens_to_collect:
+                return
+            
+            # Collect prices in parallel
+            await self._collect_prices_batch_parallel(tokens_to_collect)
             
             # Update P&L for all positions after price collection
             await self._update_all_positions_pnl()
@@ -114,7 +235,71 @@ class ScheduledPriceCollector:
             await self._update_all_wallet_balances()
                 
         except Exception as e:
-            logger.error(f"Error collecting prices for active positions: {e}")
+            logger.error(f"Error in parallel price collection: {e}")
+    
+    async def _collect_prices_batch_parallel(self, positions: List[Dict[str, Any]]):
+        """Collect prices for a batch of positions in parallel using aiohttp"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Create tasks for all tokens
+                tasks = []
+                for pos in positions:
+                    token = pos['token_contract']
+                    chain = pos['token_chain']
+                    tasks.append(self._fetch_and_store_price(session, token, chain))
+                
+                # Run with concurrency limit
+                results = []
+                for i in range(0, len(tasks), MAX_CONCURRENT_REQUESTS):
+                    batch = tasks[i:i + MAX_CONCURRENT_REQUESTS]
+                    batch_results = await asyncio.gather(*batch, return_exceptions=True)
+                    results.extend(batch_results)
+                
+                # Count successes and failures
+                success_count = sum(1 for r in results if r is True)
+                error_count = sum(1 for r in results if isinstance(r, Exception) or r is False)
+                
+                if error_count > 0:
+                    logger.warning(f"Price collection: {success_count} success, {error_count} errors")
+                else:
+                    logger.debug(f"Price collection: {success_count} success")
+                    
+        except Exception as e:
+            logger.error(f"Error in batch parallel collection: {e}")
+    
+    async def _fetch_and_store_price(self, session: aiohttp.ClientSession, token_contract: str, chain: str) -> bool:
+        """Fetch price from DexScreener and store in database"""
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{token_contract}"
+            
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    pairs = data.get('pairs') or []
+                    
+                    # Process and store price data
+                    await self._process_token_price_data(token_contract, chain, pairs)
+                    
+                    # Update last collection time
+                    self.last_collection_time[(token_contract, chain)] = datetime.now(timezone.utc)
+                    return True
+                elif response.status == 429:
+                    logger.warning(f"Rate limited for {token_contract[:8]}...")
+                    return False
+                else:
+                    logger.debug(f"DexScreener API error for {token_contract[:8]}...: {response.status}")
+                    return False
+                    
+        except asyncio.TimeoutError:
+            logger.debug(f"Timeout fetching price for {token_contract[:8]}...")
+            return False
+        except Exception as e:
+            logger.debug(f"Error fetching price for {token_contract[:8]}...: {e}")
+            return False
+    
+    async def _collect_prices_for_active_positions(self):
+        """Legacy method - redirects to parallel collection"""
+        await self._collect_prices_parallel()
     
     async def _get_active_positions(self) -> List[Dict[str, Any]]:
         """Get active positions from database"""
@@ -191,7 +376,7 @@ class ScheduledPriceCollector:
                     
                     if response.ok:
                         data = response.json()
-                        pairs = data.get('pairs', [])
+                        pairs = data.get('pairs') or []  # Handle None case
                         
                         # Process this token's price data
                         await self._process_token_price_data(token, chain, pairs)
@@ -207,6 +392,10 @@ class ScheduledPriceCollector:
     async def _process_token_price_data(self, token_contract: str, chain: str, pairs: List[Dict]):
         """Process and store price data for a single token"""
         try:
+            # Ensure pairs is a list (handle None case)
+            if pairs is None:
+                pairs = []
+            
             # Find pairs for this token on this chain
             token_pairs = [
                 p for p in pairs 
@@ -216,7 +405,7 @@ class ScheduledPriceCollector:
             ]
             
             if not token_pairs:
-                logger.warning(f"No pairs found for token {token_contract} on {chain}")
+                logger.debug(f"No pairs found for token {token_contract} on {chain}")
                 return
             
             # Get the best pair - prioritize native token pairs (WETH, SOL, BNB)

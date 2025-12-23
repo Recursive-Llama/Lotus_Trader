@@ -234,8 +234,20 @@ class UniversalLearningSystem:
             # Get the most recent completed trade (last one in array)
             completed_trade = completed_trades[-1] if isinstance(completed_trades, list) else completed_trades
             
-            # Extract R/R metrics
-            rr = completed_trade.get('rr')
+            # Extract R/R metrics - handle both flat structure and nested structure (summary.rr)
+            if isinstance(completed_trade, dict):
+                # Check if rr is directly in completed_trade or in summary
+                rr = completed_trade.get('rr')
+                if rr is None and 'summary' in completed_trade:
+                    summary = completed_trade.get('summary', {})
+                    rr = summary.get('rr')
+                # Also check trade_summary in content as fallback
+                if rr is None:
+                    trade_summary = content.get('trade_summary', {})
+                    rr = trade_summary.get('rr')
+            else:
+                rr = None
+            
             if rr is None:
                 self.logger.warning(f"No R/R metric found in completed_trade, skipping coefficient update")
                 return
@@ -305,12 +317,20 @@ class UniversalLearningSystem:
             timeframe: Timeframe for this trade (1m, 15m, 1h, 4h)
         """
         try:
+            # Handle both flat structure and nested structure (summary.rr)
             rr = completed_trade.get('rr')
+            if rr is None and isinstance(completed_trade, dict) and 'summary' in completed_trade:
+                summary = completed_trade.get('summary', {})
+                rr = summary.get('rr')
+            
             if rr is None:
                 return
             
-            # Get trade timestamp
+            # Get trade timestamp - check both locations
             exit_timestamp_str = completed_trade.get('exit_timestamp')
+            if not exit_timestamp_str and isinstance(completed_trade, dict) and 'summary' in completed_trade:
+                summary = completed_trade.get('summary', {})
+                exit_timestamp_str = summary.get('exit_timestamp')
             if exit_timestamp_str:
                 try:
                     trade_timestamp = datetime.fromisoformat(exit_timestamp_str.replace('Z', '+00:00'))

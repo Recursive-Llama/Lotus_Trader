@@ -91,27 +91,41 @@ class PMCoreTick:
 
     def _fire_and_forget(self, coro, description: str = "notification") -> bool:
         """Run async notification without blocking the trading path."""
+        logger.info(f"NOTIFICATION SCHEDULING: {description}")
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No running loop: execute synchronously
+            logger.info(f"NOTIFICATION EXECUTING SYNC: {description} (no running loop)")
             try:
-                return asyncio.run(coro)
+                result = asyncio.run(coro)
+                if result:
+                    logger.info(f"NOTIFICATION SUCCESS: {description}")
+                else:
+                    logger.warning(f"NOTIFICATION FAILED: {description} (returned False)")
+                return result
             except Exception as e:
-                logger.warning("Failed to run %s: %s", description, e)
+                logger.error(f"NOTIFICATION ERROR: {description} - {e}", exc_info=True)
                 return False
 
         try:
             task = loop.create_task(coro)
+            logger.info(f"NOTIFICATION SCHEDULED: {description} (async task created)")
         except Exception as e:
-            logger.warning("Failed to schedule %s: %s", description, e)
+            logger.error(f"NOTIFICATION SCHEDULING ERROR: {description} - {e}", exc_info=True)
             return False
 
         def _log_result(task: asyncio.Task) -> None:
             if task.cancelled():
-                logger.warning("%s task was cancelled", description)
+                logger.warning(f"NOTIFICATION CANCELLED: {description}")
             elif task.exception():
-                logger.warning("%s task failed: %s", description, task.exception())
+                logger.error(f"NOTIFICATION TASK ERROR: {description} - {task.exception()}", exc_info=True)
+            else:
+                result = task.result()
+                if result:
+                    logger.info(f"NOTIFICATION SUCCESS: {description}")
+                else:
+                    logger.warning(f"NOTIFICATION FAILED: {description} (returned False)")
 
         task.add_done_callback(_log_result)
         return True
@@ -1739,28 +1753,23 @@ class PMCoreTick:
         current_usd_value = total_quantity * market_price if market_price > 0 else 0.0
         updates["current_usd_value"] = current_usd_value
         
-        # Calculate realized P&L (rpnl_usd, rpnl_pct)
-        if total_tokens_sold > 0 and avg_entry_price > 0 and avg_exit_price > 0:
-            # Realized P&L = (tokens_sold * avg_exit_price) - (tokens_sold * avg_entry_price)
-            rpnl_usd = (total_tokens_sold * avg_exit_price) - (total_tokens_sold * avg_entry_price)
-            # rpnl_pct should use cost basis of sold tokens, not total allocation
-            cost_basis_of_sold_tokens = total_tokens_sold * avg_entry_price
-            rpnl_pct = (rpnl_usd / cost_basis_of_sold_tokens * 100.0) if cost_basis_of_sold_tokens > 0 else 0.0
-            updates["rpnl_usd"] = rpnl_usd
-            updates["rpnl_pct"] = rpnl_pct
-        else:
-            updates["rpnl_usd"] = 0.0
-            updates["rpnl_pct"] = 0.0
-        
-        # Calculate total P&L (rpnl_usd + unrealized_pnl)
-        # Unrealized P&L = current_usd_value - net_cost_basis (cost of remaining tokens)
-        net_cost_basis = total_allocation_usd - total_extracted_usd
-        unrealized_pnl = current_usd_value - net_cost_basis
-        total_pnl_usd = updates.get("rpnl_usd", 0.0) + unrealized_pnl
-        # total_pnl_pct should use net_cost_basis as denominator, not total_allocation_usd
-        total_pnl_pct = (total_pnl_usd / net_cost_basis * 100.0) if net_cost_basis > 0 else 0.0
+        # === "God View" PnL Calculation ===
+        # 1. Total PnL first (bulletproof anchor of truth)
+        # Total PnL = (qty × price) + extracted - allocated
+        total_pnl_usd = current_usd_value + total_extracted_usd - total_allocation_usd
+        total_pnl_pct = (total_pnl_usd / total_allocation_usd * 100.0) if total_allocation_usd > 0 else 0.0
         updates["total_pnl_usd"] = total_pnl_usd
         updates["total_pnl_pct"] = total_pnl_pct
+        
+        # 2. Unrealized PnL (is my current bag green or red?)
+        # Unrealized = (current_price - avg_entry) × quantity
+        unrealized_pnl = (market_price - avg_entry_price) * total_quantity if avg_entry_price > 0 else 0.0
+        
+        # 3. Realized PnL (derived from total - unrealized)
+        rpnl_usd = total_pnl_usd - unrealized_pnl
+        rpnl_pct = (rpnl_usd / total_allocation_usd * 100.0) if total_allocation_usd > 0 else 0.0
+        updates["rpnl_usd"] = rpnl_usd
+        updates["rpnl_pct"] = rpnl_pct
         
         # Calculate usd_alloc_remaining
         # Formula: (total_allocation_pct * wallet_balance) - (total_allocation_usd - total_extracted_usd)
@@ -1814,16 +1823,25 @@ class PMCoreTick:
         position_status_before: str = ""
     ) -> None:
         """Send Telegram notification after successful execution (non-blocking)"""
+        token_ticker = position.get("token_ticker", "")
+        token_contract = position.get("token_contract", "")
+        chain = position.get("token_chain", "")
+        timeframe = position.get("timeframe", self.timeframe)
+        
+        # Log notification attempt
+        logger.info(
+            f"NOTIFICATION ATTEMPT: {decision_type} {token_ticker}/{chain} tf={timeframe} | "
+            f"exec_status={exec_result.get('status')} | "
+            f"telegram_notifier={'available' if self.telegram_notifier else 'None'}"
+        )
+        
         if not self.telegram_notifier:
+            logger.warning(f"NOTIFICATION SKIPPED: telegram_notifier is None for {decision_type} {token_ticker}/{chain}")
             return
         
         try:
             import asyncio
             
-            token_ticker = position.get("token_ticker", "")
-            token_contract = position.get("token_contract", "")
-            chain = position.get("token_chain", "")
-            timeframe = position.get("timeframe", self.timeframe)
             tx_hash = exec_result.get("tx_hash", "")
             source_tweet_url = position.get("source_tweet_url")
             
@@ -1907,6 +1925,13 @@ class PMCoreTick:
                 value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
                 remaining_tokens = total_quantity
                 
+                logger.info(
+                    f"NOTIFICATION DATA: trim {token_ticker}/{chain} | "
+                    f"tokens_sold={tokens_sold:.2f} price=${sell_price_usd:.8f} value=${value_extracted_usd:.2f} | "
+                    f"remaining={remaining_tokens:.2f} position_value=${position_value_usd:.2f} | "
+                    f"tx_hash={tx_hash[:8] if tx_hash else 'None'} state={state} signal={signal}"
+                )
+                
                 self._fire_and_forget(
                     self.telegram_notifier.send_trim_notification(
                         token_ticker=token_ticker,
@@ -1929,7 +1954,7 @@ class PMCoreTick:
                         rpnl_pct=rpnl_pct,
                         source_tweet_url=source_tweet_url
                     ),
-                    description="telegram trim notification"
+                    description=f"telegram trim notification {token_ticker}/{chain}"
                 )
             elif decision_type == "emergency_exit":
                 # Emergency exit notification
@@ -1937,6 +1962,12 @@ class PMCoreTick:
                 sell_price_usd = float(exec_result.get("price", 0.0))
                 value_extracted_usd = float(exec_result.get("actual_usd", 0.0))
                 exit_reason = reasons.get("exit_reason", "emergency_exit")
+                
+                logger.info(
+                    f"NOTIFICATION DATA: emergency_exit {token_ticker}/{chain} | "
+                    f"tokens_sold={tokens_sold:.2f} price=${sell_price_usd:.8f} value=${value_extracted_usd:.2f} | "
+                    f"tx_hash={tx_hash[:8] if tx_hash else 'None'} state={state} reason={exit_reason}"
+                )
                 
                 self._fire_and_forget(
                     self.telegram_notifier.send_emergency_exit_notification(
@@ -1957,10 +1988,13 @@ class PMCoreTick:
                         rpnl_pct=rpnl_pct,
                         source_tweet_url=source_tweet_url
                     ),
-                    description="telegram emergency exit notification"
+                    description=f"telegram emergency exit notification {token_ticker}/{chain}"
                 )
         except Exception as e:
-            logger.warning(f"Error sending execution notification: {e}")
+            logger.error(
+                f"NOTIFICATION EXCEPTION: {decision_type} {token_ticker}/{chain} tf={timeframe} - {e}",
+                exc_info=True
+            )
             # Don't block execution if notification fails
     
     def _send_position_summary_notification(
@@ -1970,23 +2004,49 @@ class PMCoreTick:
         buyback_result: Optional[Dict[str, Any]]
     ) -> None:
         """Send Position Summary notification after closure (non-blocking)"""
+        token_ticker = position.get("token_ticker", "")
+        token_contract = position.get("token_contract", "")
+        chain = position.get("token_chain", "")
+        timeframe = position.get("timeframe", self.timeframe)
+        
+        # Log notification attempt
+        logger.info(
+            f"NOTIFICATION ATTEMPT: position_summary {token_ticker}/{chain} tf={timeframe} | "
+            f"telegram_notifier={'available' if self.telegram_notifier else 'None'} | "
+            f"token_ticker={token_ticker} token_contract={token_contract[:8] if token_contract else 'None'} chain={chain}"
+        )
+        
         if not self.telegram_notifier:
+            logger.warning(f"NOTIFICATION SKIPPED: telegram_notifier is None for position_summary {token_ticker}/{chain}")
             return
         
         try:
             import asyncio
             
-            token_ticker = position.get("token_ticker", "")
-            token_contract = position.get("token_contract", "")
-            chain = position.get("token_chain", "")
-            timeframe = position.get("timeframe", self.timeframe)
             source_tweet_url = position.get("source_tweet_url")
             
             # Get final exit info
             features = position.get("features") or {}
             exec_history = features.get("pm_execution_history") or {}
             final_exit_type = "EMERGENCY_EXIT"  # Default, could be improved
-            exit_reason = f"S3 → S0 transition (trend ended, not fakeout)"
+            
+            # Determine exit reason from uptrend state transition
+            # Check both uptrend dict and features for exit_reason (may be set in different places)
+            exit_reason_raw = uptrend.get("exit_reason", "") or features.get("uptrend_engine_v4", {}).get("exit_reason", "")
+            prev_state = uptrend.get("prev_state", "")
+            current_state = uptrend.get("state", "S0")
+            
+            # Build proper exit reason message based on actual state transition
+            if exit_reason_raw == "s1_to_s0_bearish_order":
+                exit_reason = "S1 → S0 transition (trend ended, not fakeout)"
+            elif exit_reason_raw == "all_emas_below_333":
+                exit_reason = "S3 → S0 transition (trend ended, not fakeout)"
+            elif prev_state and current_state == "S0":
+                # Fallback: use prev_state if available (most reliable)
+                exit_reason = f"{prev_state} → S0 transition (trend ended, not fakeout)"
+            else:
+                # Default fallback
+                exit_reason = "S0 transition (trend ended, not fakeout)"
             
             # Get position metrics
             total_allocation_usd = float(position.get("total_allocation_usd", 0.0))
@@ -2072,7 +2132,10 @@ class PMCoreTick:
                 description="telegram position summary notification"
             )
         except Exception as e:
-            logger.warning(f"Error sending position summary notification: {e}")
+            logger.error(
+                f"NOTIFICATION EXCEPTION: position_summary {token_ticker}/{chain} tf={timeframe} - {e}",
+                exc_info=True
+            )
             # Don't block closure if notification fails
     
     def _calculate_rr_metrics(
@@ -2156,10 +2219,15 @@ class PMCoreTick:
             ohlc_data = overlapping_bars
             
             if not ohlc_data:
-                logger.warning(f"No OHLCV data found for R/R calculation: {token_contract} {timeframe}")
-                logger.warning(f"  Entry: {entry_timestamp.isoformat()}, Exit: {exit_timestamp.isoformat()}")
-                logger.warning(f"  Timeframe: {timeframe} ({timeframe_hours}h duration)")
-                logger.warning(f"  Query range: {earliest_bar_start.isoformat()} to {exit_timestamp.isoformat()}")
+                logger.error(
+                    f"CRITICAL DATA ISSUE: No OHLCV data found for R/R calculation - "
+                    f"this indicates a serious data fetching problem. "
+                    f"Token: {token_contract} on {chain}, Timeframe: {timeframe} ({timeframe_hours}h duration). "
+                    f"Entry: {entry_timestamp.isoformat()}, Exit: {exit_timestamp.isoformat()}. "
+                    f"Query range: {earliest_bar_start.isoformat()} to {exit_timestamp.isoformat()}. "
+                    f"Expected at least 1 overlapping bar but found 0. "
+                    f"This trade cannot be closed until OHLC data is available."
+                )
                 return {
                     "rr": None,
                     "return": None,
@@ -2198,9 +2266,10 @@ class PMCoreTick:
                 # No drawdown - perfect trade (or entry was at absolute bottom)
                 rr = float('inf') if return_pct > 0 else 0.0
             
-            # Bound R/R to reasonable range (e.g., -10 to 10)
+            # Bound R/R to reasonable range (-33 to 33)
+            # Captures extreme but realistic trades while preventing infinite values
             if rr != float('inf') and rr != float('-inf'):
-                rr = max(-10.0, min(10.0, rr))
+                rr = max(-33.0, min(33.0, rr))
             
             return {
                 "rr": rr if rr != float('inf') and rr != float('-inf') else None,
@@ -2301,10 +2370,10 @@ class PMCoreTick:
             True if trade was closed, False otherwise
         """
         try:
-            # Get position details for R/R calculation (including features for S3 timestamp)
+            # Get position details for R/R calculation (including features for S3 timestamp and PnL data)
             position_details = (
                 self.sb.table("lowcap_positions")
-                .select("first_entry_timestamp,avg_entry_price,created_at,token_contract,token_chain,timeframe,current_trade_id,completed_trades,entry_context,total_quantity,features,rpnl_usd,total_extracted_usd,total_allocation_usd,total_pnl_usd")
+                .select("first_entry_timestamp,avg_entry_price,avg_exit_price,created_at,token_ticker,token_contract,token_chain,timeframe,current_trade_id,completed_trades,entry_context,total_quantity,features,rpnl_usd,rpnl_pct,total_extracted_usd,total_allocation_usd,total_pnl_usd,total_pnl_pct,total_tokens_bought,total_tokens_sold,current_usd_value,source_tweet_url,closed_at")
                 .eq("id", position_id)
                 .limit(1)
                 .execute()
@@ -2317,9 +2386,15 @@ class PMCoreTick:
             features = pos_details.get("features") or {}
             total_quantity = float(pos_details.get("total_quantity", 0.0))
             
-            # Only close if position is empty (emergency_exit already sold everything)
-            if total_quantity > 0:
-                return False
+            # S0 means trade ended - close it regardless of tiny amounts left
+            # Log warning if we have tokens left (rounding error or emergency exit issue)
+            if total_quantity > 0.01:
+                logger.warning(
+                    f"Position {position_id} closing in S0 but has {total_quantity} tokens left. "
+                    f"S0 means trade ended - closing anyway. "
+                    f"TODO: Check emergency_exit execution status if needed."
+                )
+            # Continue with closure - S0 is the signal that trade ended
             
             # Get latest price for exit
             token_contract = pos_details.get("token_contract")
@@ -2393,10 +2468,15 @@ class PMCoreTick:
             # Classify outcome
             rr_value = rr_metrics.get("rr")
             if rr_value is None:
-                logger.warning(
-                    f"Could not calculate R/R for position {position_id} on S0 transition"
+                logger.error(
+                    f"CRITICAL: Cannot close position {position_id} - R/R calculation failed. "
+                    f"This indicates a serious data fetching issue (no OHLC data available). "
+                    f"Position will remain open until OHLC data is available. "
+                    f"Token: {token_contract} on {chain}, Timeframe: {timeframe}, "
+                    f"Entry: {entry_timestamp.isoformat()}, Exit: {exit_timestamp.isoformat()}"
                 )
-                rr = 0.0
+                # Skip trade closure - cannot proceed without R/R data
+                return False
             else:
                 rr = float(rr_value)
             
@@ -2462,6 +2542,19 @@ class PMCoreTick:
             except Exception as e:
                 logger.warning(f"Error fetching v5 fields from pm_action strands: {e}")
             
+            # Get PnL data before wiping (save to completed_trades, then wipe for next trade)
+            rpnl_usd = float(pos_details.get("rpnl_usd", 0.0))
+            rpnl_pct = float(pos_details.get("rpnl_pct", 0.0))
+            total_pnl_usd = float(pos_details.get("total_pnl_usd", 0.0))
+            total_pnl_pct = float(pos_details.get("total_pnl_pct", 0.0))
+            total_allocation_usd = float(pos_details.get("total_allocation_usd", 0.0))
+            total_extracted_usd = float(pos_details.get("total_extracted_usd", 0.0))
+            total_tokens_bought = float(pos_details.get("total_tokens_bought", 0.0))
+            total_tokens_sold = float(pos_details.get("total_tokens_sold", 0.0))
+            avg_entry_price_final = float(pos_details.get("avg_entry_price", 0.0)) if pos_details.get("avg_entry_price") is not None else None
+            avg_exit_price_final = float(pos_details.get("avg_exit_price", 0.0)) if pos_details.get("avg_exit_price") is not None else None
+            current_usd_value = float(pos_details.get("current_usd_value", 0.0))
+            
             # Build trade summary (same structure as original _check_position_closure)
             trade_summary = {
                 "entry_context": entry_context,
@@ -2483,6 +2576,18 @@ class PMCoreTick:
                 "hold_time_days": hold_time_days,
                 "hold_time_class": hold_time_class,
                 "time_to_s3": time_to_s3,  # Time from entry to S3 state transition (None if never reached S3)
+                # PnL data (saved to completed_trades before wiping)
+                "rpnl_usd": rpnl_usd,
+                "rpnl_pct": rpnl_pct,
+                "total_pnl_usd": total_pnl_usd,
+                "total_pnl_pct": total_pnl_pct,
+                "total_allocation_usd": total_allocation_usd,
+                "total_extracted_usd": total_extracted_usd,
+                "total_tokens_bought": total_tokens_bought,
+                "total_tokens_sold": total_tokens_sold,
+                "avg_entry_price": avg_entry_price_final,
+                "avg_exit_price": avg_exit_price_final,
+                "current_usd_value": current_usd_value,
                 # Include v5 fields for aggregation
                 **v5_fields
             }
@@ -2525,26 +2630,26 @@ class PMCoreTick:
             }
             completed_trades.append(trade_cycle_entry)
             
-            # Update position
-            self.sb.table("lowcap_positions").update({
-                "completed_trades": completed_trades,
-                "status": "watchlist",
-                "closed_at": exit_timestamp.isoformat(),
-                "current_trade_id": None,
-                "last_activity_timestamp": exit_timestamp.isoformat(),
+            # Calculate buyback BEFORE wiping PnL data (need PnL for profit calculation)
+            # Build position dict with PnL data for buyback calculation
+            # Include all fields needed for notification
+            position_for_buyback = {
+                "token_ticker": pos_details.get("token_ticker", ""),
+                "token_contract": token_contract,
+                "token_chain": chain,
+                "timeframe": timeframe,
+                "rpnl_usd": rpnl_usd,
+                "total_extracted_usd": total_extracted_usd,
+                "total_allocation_usd": total_allocation_usd,
+                "total_pnl_usd": total_pnl_usd,
                 "features": features,
-            }).eq("id", position_id).execute()
-            
-            # Fetch updated position to get latest rpnl_usd for buyback calculation
-            updated_position = (
-                self.sb.table("lowcap_positions")
-                .select("rpnl_usd,total_extracted_usd,total_allocation_usd,total_pnl_usd,features")
-                .eq("id", position_id)
-                .limit(1)
-                .execute()
-            ).data
-            
-            position_for_buyback = updated_position[0] if updated_position else current_pos
+                "source_tweet_url": pos_details.get("source_tweet_url"),
+                "closed_at": exit_timestamp.isoformat(),
+                "first_entry_timestamp": entry_timestamp.isoformat(),
+                "completed_trades": completed_trades,
+                "curator": pos_details.get("entry_context", {}).get("curator") if isinstance(pos_details.get("entry_context"), dict) else None,
+                "mcap_bucket": pos_details.get("entry_context", {}).get("mcap_bucket") if isinstance(pos_details.get("entry_context"), dict) else None,
+            }
             
             # Execute Lotus buyback (10% of profit → Lotus Coin, then transfer 69% to holding wallet)
             try:
@@ -2555,22 +2660,46 @@ class PMCoreTick:
                         f"{buyback_result.get('lotus_tokens', 0):.6f} tokens, "
                         f"{buyback_result.get('lotus_tokens_transferred', 0):.6f} transferred to holding wallet"
                     )
-                    # Store buyback info in position features
+                    # Store buyback info in position features (will be saved in main update below)
                     if not isinstance(features, dict):
                         features = {}
                     if "pm_execution_history" not in features:
                         features["pm_execution_history"] = {}
                     features["pm_execution_history"]["lotus_buyback"] = buyback_result
-                    self.sb.table("lowcap_positions").update({
-                        "features": features
-                    }).eq("id", position_id).execute()
                 elif buyback_result and not buyback_result.get("success"):
                     logger.warning(f"Lotus buyback failed for position {position_id}: {buyback_result.get('error')}")
             except Exception as e:
                 logger.error(f"Error executing Lotus buyback for position {position_id}: {e}", exc_info=True)
                 # Don't block position closure if buyback fails
+                buyback_result = None
+            
+            # Update position: save completed_trades, wipe trade data and PnL fields (ready for next trade)
+            # This happens AFTER buyback (buyback needs PnL data)
+            self.sb.table("lowcap_positions").update({
+                "completed_trades": completed_trades,
+                "status": "watchlist",
+                "closed_at": exit_timestamp.isoformat(),
+                "current_trade_id": None,
+                "last_activity_timestamp": exit_timestamp.isoformat(),
+                "features": features,  # Includes buyback result if successful
+                # Wipe PnL data (all info saved in completed_trades above, ready for next trade)
+                "rpnl_usd": 0.0,
+                "rpnl_pct": 0.0,
+                "total_pnl_usd": 0.0,
+                "total_pnl_pct": 0.0,
+                "total_allocation_usd": 0.0,
+                "total_extracted_usd": 0.0,
+                "total_tokens_bought": 0.0,
+                "total_tokens_sold": 0.0,
+                "avg_entry_price": None,
+                "avg_exit_price": None,
+                "current_usd_value": 0.0,
+                "total_quantity": 0.0,  # Also wipe quantity (should be 0 anyway, but ensure clean state)
+            }).eq("id", position_id).execute()
             
             # Send Position Summary notification (non-blocking)
+            # Use position_for_buyback which has PnL data (before wipe)
+            # Pass uptrend to get exit_reason for proper state transition message
             self._send_position_summary_notification(position_for_buyback, uptrend, buyback_result)
             
             # Emit position_closed strand
@@ -2591,6 +2720,7 @@ class PMCoreTick:
                     "entry_context": entry_context,
                     "trade_id": trade_id,
                     "trade_summary": trade_summary,
+                    "completed_trades": completed_trades,  # Required by learning system
                     "decision_type": decision_type,
                     "exit_reason": uptrend.get("exit_reason", "state_transition_to_s0"),
                 },
@@ -2603,16 +2733,12 @@ class PMCoreTick:
             
             self.sb.table("ad_strands").insert(position_closed_strand).execute()
             logger.info(f"Position {position_id} closed on S0 transition - emitted position_closed strand")
-            return True
             
-        except Exception as e:
-            logger.error(f"Error closing trade on S0 transition for position {position_id}: {e}")
-            return False
+            # Process strand in learning system (async call from sync context)
+            # Since run() is synchronous and called from thread pool, we create a new event loop
+            # Position closures are rare (1-2 per day), so blocking is acceptable
             if self.learning_system:
                 try:
-                    # Process strand in learning system (async call from sync context)
-                    # Since run() is synchronous and called from thread pool, we create a new event loop
-                    # Position closures are rare (1-2 per day), so blocking is acceptable
                     import asyncio
                     asyncio.run(self.learning_system.process_strand_event(position_closed_strand))
                     logger.info(f"Learning system processed position_closed strand: {position_id}")
@@ -2626,7 +2752,7 @@ class PMCoreTick:
             return True
             
         except Exception as e:
-            logger.error(f"Error handling position closure for {position_id}: {e}")
+            logger.error(f"Error closing trade on S0 transition for position {position_id}: {e}")
             return False
     
     def _write_strands(self, position: Dict[str, Any], token: str, now: datetime, a_val: float, e_val: float, phase: str, actions: list[dict], execution_results: Dict[str, Dict[str, Any]] = None, regime_context: Dict[str, Dict[str, Any]] = None, token_bucket: Optional[str] = None) -> None:
@@ -3048,8 +3174,16 @@ class PMCoreTick:
                     exec_key = f"{p.get('id')}:{decision_type}"
                     execution_results[exec_key] = exec_result
                     
+                    # Log execution result
+                    exec_status = exec_result.get("status", "unknown")
+                    logger.info(
+                        f"EXECUTION RESULT: {decision_type} {p.get('token_ticker', '')}/{p.get('token_chain', '')} | "
+                        f"status={exec_status} | "
+                        f"tx_hash={exec_result.get('tx_hash', 'None')[:8] if exec_result.get('tx_hash') else 'None'}"
+                    )
+                    
                     # Update position table
-                    if exec_result.get("status") == "success":
+                    if exec_status == "success":
                         # Get a_final and e_final from the action's lever_diag if available
                         lever_diag = act.get("lever_diag", {})
                         a_e_components = lever_diag.get("a_e_components", {})

@@ -142,19 +142,19 @@ class TelegramSignalNotifier:
             return None
     
     async def _get_client(self) -> TelegramClient:
-        """Get or create Telegram client"""
+        """Get or create Telegram client using bot token (not user session)
+        
+        Uses bot token to avoid conflicts with TelegramScanner which uses user session.
+        This allows both to run simultaneously without session ID conflicts.
+        """
         if not self.client:
-            if os.path.exists(self.session_file):
-                with open(self.session_file, 'r') as f:
-                    session_string = f.read().strip()
-                self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
-            else:
-                # Fallback to bot client if no session file
-                self.client = TelegramClient('signal_bot', self.api_id, self.api_hash)
-                await self.client.start(bot_token=self.bot_token)
+            # Always use bot token (not user session) to avoid conflicts with TelegramScanner
+            self.client = TelegramClient('signal_bot', self.api_id, self.api_hash)
+            await self.client.start(bot_token=self.bot_token)
+            logger.debug("Telegram signal notifier connected using bot token")
         
         if not self.client.is_connected():
-            await self.client.start()
+            await self.client.start(bot_token=self.bot_token)
         
         return self.client
     
@@ -665,6 +665,11 @@ class TelegramSignalNotifier:
         source_tweet_url: Optional[str] = None
     ) -> bool:
         """Send trim notification (partial exit)"""
+        logger.info(
+            f"TELEGRAM NOTIFICATION: send_trim_notification called | "
+            f"{token_ticker}/{chain} tf={timeframe} | "
+            f"tokens_sold={tokens_sold:.2f} tx_hash={tx_hash[:8] if tx_hash else 'None'}"
+        )
         try:
             state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
@@ -697,9 +702,14 @@ class TelegramSignalNotifier:
                 message += f"**Source:** [Tweet]({source_tweet_url})\n"
             message += f"\n⚘𒋻 **PARTIAL PROFIT SECURED** ⚘𒋻"
             
-            return await self._send_message(message)
+            result = await self._send_message(message)
+            if result:
+                logger.info(f"TELEGRAM NOTIFICATION SUCCESS: trim {token_ticker}/{chain} tf={timeframe}")
+            else:
+                logger.warning(f"TELEGRAM NOTIFICATION FAILED: trim {token_ticker}/{chain} tf={timeframe} (_send_message returned False)")
+            return result
         except Exception as e:
-            logger.error(f"Error sending trim notification: {e}")
+            logger.error(f"TELEGRAM NOTIFICATION ERROR: trim {token_ticker}/{chain} tf={timeframe} - {e}", exc_info=True)
             return False
     
     async def send_emergency_exit_notification(
@@ -722,6 +732,11 @@ class TelegramSignalNotifier:
         source_tweet_url: Optional[str] = None
     ) -> bool:
         """Send emergency exit notification (full exit)"""
+        logger.info(
+            f"TELEGRAM NOTIFICATION: send_emergency_exit_notification called | "
+            f"{token_ticker}/{chain} tf={timeframe} | "
+            f"tokens_sold={tokens_sold:.2f} tx_hash={tx_hash[:8] if tx_hash else 'None'} reason={reason}"
+        )
         try:
             state_glyph = self._stage_glyph(state)
             tx_link = self._create_transaction_link(tx_hash, chain)
@@ -753,9 +768,14 @@ class TelegramSignalNotifier:
                 message += f"**Source:** [Tweet]({source_tweet_url})\n"
             message += f"\n⚘𒉿 **FINAL EXIT - TREND ENDED** ⚘𒉿"
             
-            return await self._send_message(message)
+            result = await self._send_message(message)
+            if result:
+                logger.info(f"TELEGRAM NOTIFICATION SUCCESS: emergency_exit {token_ticker}/{chain} tf={timeframe}")
+            else:
+                logger.warning(f"TELEGRAM NOTIFICATION FAILED: emergency_exit {token_ticker}/{chain} tf={timeframe} (_send_message returned False)")
+            return result
         except Exception as e:
-            logger.error(f"Error sending emergency exit notification: {e}")
+            logger.error(f"TELEGRAM NOTIFICATION ERROR: emergency_exit {token_ticker}/{chain} tf={timeframe} - {e}", exc_info=True)
             return False
     
     async def send_position_summary_notification(
@@ -783,6 +803,11 @@ class TelegramSignalNotifier:
         source_tweet_url: Optional[str] = None
     ) -> bool:
         """Send position summary notification (full closure confirmation)"""
+        logger.info(
+            f"TELEGRAM NOTIFICATION: send_position_summary_notification called | "
+            f"{token_ticker}/{chain} tf={timeframe} | "
+            f"exit_type={final_exit_type} total_invested=${total_allocation_usd:.2f} total_extracted=${total_extracted_usd:.2f}"
+        )
         try:
             token_link = self._create_token_link(token_contract, chain)
             timestamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
@@ -844,9 +869,14 @@ class TelegramSignalNotifier:
                 message += f"**Source:** [Tweet]({source_tweet_url})\n"
             message += f"\n⚘🝗⩜ **TREND ENDED PROFIT SECURED** ⚘🝗⩜"
             
-            return await self._send_message(message)
+            result = await self._send_message(message)
+            if result:
+                logger.info(f"TELEGRAM NOTIFICATION SUCCESS: position_summary {token_ticker}/{chain} tf={timeframe}")
+            else:
+                logger.warning(f"TELEGRAM NOTIFICATION FAILED: position_summary {token_ticker}/{chain} tf={timeframe} (_send_message returned False)")
+            return result
         except Exception as e:
-            logger.error(f"Error sending position summary notification: {e}")
+            logger.error(f"TELEGRAM NOTIFICATION ERROR: position_summary {token_ticker}/{chain} tf={timeframe} - {e}", exc_info=True)
             return False
     
     async def _send_message(self, message: str) -> bool:

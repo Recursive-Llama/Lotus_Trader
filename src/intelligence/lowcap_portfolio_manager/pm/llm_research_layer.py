@@ -326,7 +326,7 @@ class LLMResearchLayer:
           - No raw trades.
           - No direct price series.
 
-        v5: Reads from pattern_scope_stats (v5 only).
+        v5: Reads from learning_lessons (v5 only).
         """
         from datetime import timedelta
         
@@ -336,8 +336,10 @@ class LLMResearchLayer:
         top_braids: List[BraidStats] = []
         
         stats_res = (
-            self.sb.table("pattern_scope_stats")
-            .select("pattern_key,action_category,scope_values,scope_mask,n,stats,updated_at")
+            self.sb.table("learning_lessons")
+            .select("pattern_key,action_category,scope_subset,scope_values,n,stats,updated_at")
+            .eq("module", module)
+            .eq("status", "active")
             .gte("updated_at", cutoff_time.isoformat())
             .limit(100)  # Fetch more, then sort by edge_raw in Python
             .execute()
@@ -361,28 +363,11 @@ class LLMResearchLayer:
                 # Use pattern with highest edge_raw (already sorted)
                 if pattern_key not in pattern_map:
                     stats = row.get("stats") or {}
-                    scope_values = row.get("scope_values") or {}
-                    scope_mask = row.get("scope_mask", 0)
+                    # Use scope_subset if available, fallback to scope_values (compat column)
+                    scope_values = row.get("scope_subset") or row.get("scope_values") or {}
                     
-                    # Extract scope dims from mask
-                    scope_dims = []
-                    # Regime states mapped to bit positions (up to 32 bits available)
-                    bit_map = [
-                        (0, "btc_macro"), (1, "btc_meso"), (2, "btc_micro"),
-                        (3, "alt_macro"), (4, "alt_meso"), (5, "alt_micro"),
-                        (6, "bucket_macro"), (7, "bucket_meso"), (8, "bucket_micro"),
-                        (9, "btcd_macro"), (10, "btcd_meso"), (11, "btcd_micro"),
-                        (12, "usdtd_macro"), (13, "usdtd_meso"), (14, "usdtd_micro"),
-                        (15, "bucket_leader"), (16, "bucket_rank_position"),
-                    ]
-                    for bit, name in bit_map:
-                        if scope_mask & (1 << bit):
-                            scope_dims.append(name)
-                    if scope_mask & (1 << 5): scope_dims.append("market_family")
-                    if scope_mask & (1 << 6): scope_dims.append("bucket")
-                    if scope_mask & (1 << 7): scope_dims.append("timeframe")
-                    if scope_mask & (1 << 8): scope_dims.append("A_mode")
-                    if scope_mask & (1 << 9): scope_dims.append("E_mode")
+                    # Extract scope dims from scope JSONB keys (instead of bitmask)
+                    scope_dims = list(scope_values.keys()) if isinstance(scope_values, dict) else []
                     
                     # Derive family_id from pattern_key (format: "module.family.state.motif")
                     parts = pattern_key.split(".")
@@ -424,12 +409,12 @@ class LLMResearchLayer:
                         )
                     )
                 except Exception as e:
-                    logger.warning(f"Skipping pattern_scope_stats row in snapshot: {e}")
+                    logger.warning(f"Skipping learning_lessons row in snapshot: {e}")
 
         # Query lessons with v5 fields
         lessons_res = (
             self.sb.table("learning_lessons")
-            .select("id,family_id,module,stats,pattern_key,action_category,scope_dims,scope_values,lesson_strength,decay_halflife_hours,latent_factor_id")
+            .select("id,module,stats,pattern_key,action_category,scope_subset,scope_values,decay_halflife_hours,latent_factor_id")
             .eq("module", module)
             .eq("status", "active")
             .limit(20)
@@ -441,20 +426,30 @@ class LLMResearchLayer:
         for row in lessons:
             stats = row.get("stats") or {}
             try:
+                # Derive family_id from pattern_key
+                pattern_key = row.get("pattern_key", "")
+                parts = pattern_key.split(".") if pattern_key else []
+                family_id = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else "unknown"
+                
+                # Derive scope_dims from scope_subset keys
+                scope_subset = row.get("scope_subset") or row.get("scope_values") or {}
+                scope_dims = list(scope_subset.keys()) if isinstance(scope_subset, dict) else []
+                scope_values = scope_subset if isinstance(scope_subset, dict) else (row.get("scope_values") or {})
+                
                 top_lessons.append(
                     LessonStats(
                         lesson_id=str(row.get("id")),
                         module=row.get("module", module),
-                        family_id=row.get("family_id", "unknown"),
+                        family_id=family_id,
                         n=int(stats.get("n", 0)),
                         avg_rr=float(stats.get("avg_rr", 0.0)),
                         edge_raw=float(stats.get("edge_raw", 0.0)),
                         recurrence_score=stats.get("recurrence_score"),
-                        pattern_key=row.get("pattern_key"),
+                        pattern_key=pattern_key,
                         action_category=row.get("action_category"),
-                        scope_dims=row.get("scope_dims"),
-                        scope_values=row.get("scope_values"),
-                        lesson_strength=row.get("lesson_strength"),
+                        scope_dims=scope_dims,
+                        scope_values=scope_values,
+                        lesson_strength=stats.get("lesson_strength"),  # May be in stats JSONB
                         decay_halflife_hours=row.get("decay_halflife_hours"),
                         latent_factor_id=row.get("latent_factor_id"),
                     )
@@ -599,15 +594,17 @@ class LLMResearchLayer:
         L3: Ask the LLM to suggest better family cores (groupings of patterns).
         """
         stats_res = (
-            self.sb.table("pattern_scope_stats")
-            .select("pattern_key,action_category,scope_values,scope_mask,stats")
+            self.sb.table("learning_lessons")
+            .select("pattern_key,action_category,scope_subset,scope_values,stats")
+            .eq("module", module)
+            .eq("status", "active")
             .limit(300)
             .execute()
         )
         stats_rows = stats_res.data or []
         
         if not stats_rows:
-            logger.info("L3: no pattern_scope_stats data available")
+            logger.info("L3: no learning_lessons data available")
             return []
         
         # Sort by edge_raw descending
@@ -627,12 +624,13 @@ class LLMResearchLayer:
             if pattern_key not in pattern_map:
                 parts = pattern_key.split(".")
                 family_id = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else "unknown"
+                scope_data = row.get("scope_subset") or row.get("scope_values") or {}
                 pattern_map[pattern_key] = {
                     "pattern_key": pattern_key,
                     "family_id": family_id,
                     "module": module,
                     "stats": row.get("stats", {}),
-                    "dimensions": row.get("scope_values", {}),
+                    "dimensions": scope_data,
                 }
         
         braids = list(pattern_map.values())
@@ -721,8 +719,10 @@ class LLMResearchLayer:
         L4: For each family, propose 1–3 semantic pattern names that compress multiple braids.
         """
         stats_res = (
-            self.sb.table("pattern_scope_stats")
+            self.sb.table("learning_lessons")
             .select("pattern_key")
+            .eq("module", module)
+            .eq("status", "active")
             .limit(500)
             .execute()
         )
@@ -743,8 +743,10 @@ class LLMResearchLayer:
 
         for fid in family_ids:
             stats_res = (
-                self.sb.table("pattern_scope_stats")
-                .select("pattern_key,scope_values,stats")
+                self.sb.table("learning_lessons")
+                .select("pattern_key,scope_subset,scope_values,stats")
+                .eq("module", module)
+                .eq("status", "active")
                 .like("pattern_key", f"{fid}%")
                 .limit(50)
                 .execute()
@@ -765,12 +767,13 @@ class LLMResearchLayer:
             for row in stats_rows:
                 pattern_key = row.get("pattern_key", "")
                 if pattern_key:
+                    scope_data = row.get("scope_subset") or row.get("scope_values") or {}
                     braids.append({
                         "pattern_key": pattern_key,
                         "family_id": fid,
                         "module": module,
                         "stats": row.get("stats", {}),
-                        "dimensions": row.get("scope_values", {}),
+                        "dimensions": scope_data,
                     })
             
             if len(braids) < 5:
@@ -846,15 +849,17 @@ class LLMResearchLayer:
         L5: Use braids + lessons to generate NEW testable hypotheses.
         """
         stats_res = (
-            self.sb.table("pattern_scope_stats")
-            .select("pattern_key,action_category,scope_values,stats")
+            self.sb.table("learning_lessons")
+            .select("pattern_key,action_category,scope_subset,scope_values,stats")
+            .eq("module", module)
+            .eq("status", "active")
             .limit(200)
             .execute()
         )
         stats_rows = stats_res.data or []
         
         if not stats_rows:
-            logger.info("L5: no pattern_scope_stats data available")
+            logger.info("L5: no learning_lessons data available")
             return []
         
         # Sort by edge_raw descending
@@ -874,24 +879,44 @@ class LLMResearchLayer:
             if pattern_key not in pattern_map:
                 parts = pattern_key.split(".")
                 family_id = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else "unknown"
+                scope_data = row.get("scope_subset") or row.get("scope_values") or {}
                 pattern_map[pattern_key] = {
                     "pattern_key": pattern_key,
                     "family_id": family_id,
                     "module": module,
                     "stats": row.get("stats", {}),
-                    "dimensions": row.get("scope_values", {}),
+                    "dimensions": scope_data,
                 }
         
         braids = list(pattern_map.values())
 
         lessons_res = (
             self.sb.table("learning_lessons")
-            .select("id,family_id,module,stats,trigger,effect,pattern_key,action_category,scope_dims,scope_values")
+            .select("id,module,stats,pattern_key,action_category,scope_subset,scope_values")
             .eq("module", module)
+            .eq("status", "active")
             .limit(50)
             .execute()
         )
         lessons = lessons_res.data or []
+        
+        # Process lessons to derive missing fields
+        processed_lessons = []
+        for lesson in lessons:
+            pattern_key = lesson.get("pattern_key", "")
+            parts = pattern_key.split(".") if pattern_key else []
+            family_id = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else "unknown"
+            scope_subset = lesson.get("scope_subset") or lesson.get("scope_values") or {}
+            scope_dims = list(scope_subset.keys()) if isinstance(scope_subset, dict) else []
+            
+            processed_lessons.append({
+                **lesson,
+                "family_id": family_id,
+                "scope_dims": scope_dims,
+                "trigger": None,  # Not in v5 schema
+                "effect": None,   # Not in v5 schema
+            })
+        lessons = processed_lessons
 
         if len(braids) < 5:
             logger.info("L5: not enough braids for hypothesis generation")

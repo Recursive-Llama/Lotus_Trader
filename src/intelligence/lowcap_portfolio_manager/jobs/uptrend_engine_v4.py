@@ -1449,7 +1449,7 @@ class UptrendEngineV4:
                 
                 current_ts = last.get("ts") or _now_iso()
                 
-                # Bootstrap logic: only S0 or S3, otherwise no state
+                # Bootstrap logic: only S0, otherwise wait in S4
                 if not prev_state or prev_state == "":
                     logger.debug("Bootstrap check for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
                     
@@ -1457,42 +1457,7 @@ class UptrendEngineV4:
                     s3_meta = features.get("uptrend_engine_v4_meta") or {}
                     has_s3_history = bool(s3_meta.get("s3_start_ts"))
                     
-                    if self._check_s3_order(ema_vals):
-                        logger.info("Bootstrap→S3: %s/%s (timeframe=%s, full bullish alignment)", 
-                                   contract, chain, self.timeframe)
-                        # Bootstrap to S3: Record S3 start timestamp
-                        current_ts = last.get("ts") or _now_iso()
-                        self._set_s3_start_ts(pid, features, current_ts)
-                        
-                        # Compute S3 scores for bootstrap
-                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
-                        
-                        # For dormant positions: write diagnostics but still allow signals
-                        extra_data = {
-                            "trending": True,
-                            "scores": {
-                                "ox": s3_scores.get("ox", 0.0),
-                                "dx": s3_scores.get("dx", 0.0),
-                                "edx": s3_scores.get("edx", 0.0),
-                            },
-                            "diagnostics": s3_scores.get("diagnostics", {}),
-                            }
-                        
-                        payload = self._build_payload(
-                            "S3",
-                            contract,
-                            chain,
-                            price,
-                            ema_vals,
-                            features,
-                            extra_data,
-                            prev_state=prev_state,
-                        )
-                        features["uptrend_engine_v4"] = payload
-                        self._write_features(pid, features)
-                        updated += 1
-                        continue
-                    elif self._check_s0_order(ema_vals):
+                    if self._check_s0_order(ema_vals):
                         # Bootstrap to S0: Write state immediately
                         payload = self._build_payload(
                             "S0",
@@ -1790,36 +1755,9 @@ class UptrendEngineV4:
                         self._write_features(pid, features)
                         updated += 1
                 
-                # S4: Holding pattern waiting for trend clarity
+                # S4: Holding pattern waiting for S0 order (bearish alignment)
                 elif prev_state == "S4":
-                    if self._check_s3_order(ema_vals):
-                        current_ts = last.get("ts") or _now_iso()
-                        self._set_s3_start_ts(pid, features, current_ts)
-                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
-                        extra_data = {
-                            "trending": True,
-                            "scores": {
-                                "ox": s3_scores.get("ox", 0.0),
-                                "dx": s3_scores.get("dx", 0.0),
-                                "edx": s3_scores.get("edx", 0.0),
-                            },
-                            "diagnostics": s3_scores.get("diagnostics", {}),
-                        }
-                        payload = self._build_payload(
-                            "S3",
-                            contract,
-                            chain,
-                            price,
-                            ema_vals,
-                            features,
-                            extra_data,
-                            prev_state=prev_state,
-                        )
-                        features["uptrend_engine_v4"] = payload
-                        self._write_features(pid, features)
-                        self._emit_event("uptrend_state_change", payload)
-                        updated += 1
-                    elif self._check_s0_order(ema_vals):
+                    if self._check_s0_order(ema_vals):
                         logger.info("Bootstrap→S0: %s/%s (timeframe=%s, full bearish alignment)", 
                                    contract, chain, self.timeframe)
                         payload = self._build_payload(
@@ -1855,13 +1793,36 @@ class UptrendEngineV4:
                 elif prev_state == "S3":
                     logger.debug("Processing S3 state for %s/%s (timeframe=%s)", contract, chain, self.timeframe)
                     # S3 → S0: All EMAs break below EMA333
+                    ema20_val = ema_vals.get("ema20", 0.0)
+                    ema30_val = ema_vals.get("ema30", 0.0)
+                    ema60_val = ema_vals.get("ema60", 0.0)
+                    ema144_val = ema_vals.get("ema144", 0.0)
+                    ema250_val = ema_vals.get("ema250", 0.0)
+                    ema333_val = ema_vals.get("ema333", 0.0)
+                    
                     all_below_333 = (
-                        ema_vals.get("ema20", 0.0) < ema_vals.get("ema333", 0.0) and
-                        ema_vals.get("ema30", 0.0) < ema_vals.get("ema333", 0.0) and
-                        ema_vals.get("ema60", 0.0) < ema_vals.get("ema333", 0.0) and
-                        ema_vals.get("ema144", 0.0) < ema_vals.get("ema333", 0.0) and
-                        ema_vals.get("ema250", 0.0) < ema_vals.get("ema333", 0.0)
+                        ema20_val < ema333_val and
+                        ema30_val < ema333_val and
+                        ema60_val < ema333_val and
+                        ema144_val < ema333_val and
+                        ema250_val < ema333_val
                     )
+                    
+                    # Log EMA values for debugging S3→S0 transition (only when checking the transition, not emergency exit)
+                    # Note: emergency_exit (price < EMA333) is different from S3→S0 (all EMAs < EMA333)
+                    if not all_below_333 and price < ema333_val:  # In S3, price below EMA333 but not all EMAs below
+                        logger.info(
+                            "S3→S0 CHECK: %s/%s (timeframe=%s) | price=%.8f < ema333=%.8f | "
+                            "EMA20=%.8f %s | EMA30=%.8f %s | EMA60=%.8f %s | "
+                            "EMA144=%.8f %s | EMA250=%.8f %s | all_below_333=%s",
+                            contract, chain, self.timeframe, price, ema333_val,
+                            ema20_val, "<" if ema20_val < ema333_val else ">=",
+                            ema30_val, "<" if ema30_val < ema333_val else ">=",
+                            ema60_val, "<" if ema60_val < ema333_val else ">=",
+                            ema144_val, "<" if ema144_val < ema333_val else ">=",
+                            ema250_val, "<" if ema250_val < ema333_val else ">=",
+                            all_below_333
+                        )
                     
                     if all_below_333:
                         logger.info("S3→S0 TRANSITION: %s/%s (timeframe=%s, all EMAs below EMA333, S3 buy/trim checks stopped)", 

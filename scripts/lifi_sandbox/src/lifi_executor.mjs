@@ -594,6 +594,11 @@ const executeSwap = async (input) => {
     console.log('[LiFi] fromAddress', fromAddress, 'toAddress', toAddress)
   }
     
+    // Convert slippage from percentage (0.5 = 0.5%) to decimal (0.005 = 0.5%)
+    // Li.Fi SDK expects slippage as a decimal fraction, not a percentage
+    const slippageValue = input.slippage || 0.5
+    const slippageDecimal = slippageValue / 100
+    
     const request = {
       fromChainId: fromChainId,
       toChainId: toChainId,
@@ -604,7 +609,7 @@ const executeSwap = async (input) => {
       toAddress: toAddress,
       options: {
         allowSwitchChain: true,
-        slippage: input.slippage || 0.5,
+        slippage: slippageDecimal,
       },
     }
     
@@ -1002,6 +1007,11 @@ const executeBridge = async (input) => {
     const fromAddress = await getWalletAddress(fromChainId)
     const toAddress = input.toAddress || await getWalletAddress(toChainId)
     
+    // Convert slippage from percentage (0.5 = 0.5%) to decimal (0.005 = 0.5%)
+    // Li.Fi SDK expects slippage as a decimal fraction, not a percentage
+    const slippageValue = input.slippage || 0.5
+    const slippageDecimal = slippageValue / 100
+    
     const request = {
       fromChainId: fromChainId,
       toChainId: toChainId,
@@ -1012,7 +1022,7 @@ const executeBridge = async (input) => {
       toAddress: toAddress,
       options: {
         allowSwitchChain: true,
-        slippage: input.slippage || 0.5,
+        slippage: slippageDecimal,
       },
     }
     

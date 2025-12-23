@@ -360,17 +360,9 @@ class BacktestEngine(UptrendEngineV4):
         
         sr_levels = self._read_sr_levels(features)
         
-        # Call engine's bootstrap logic
+        # Call engine's bootstrap logic (only S0, otherwise S4)
         if not prev_state or prev_state == "":
-            if self._check_s3_order(ema_vals):
-                prev_state = "S3"
-                # Set S3 start timestamp for bootstrap (backtester doesn't write to DB, just store in features)
-                current_ts_iso = self.target_ts.isoformat() if hasattr(self, 'target_ts') and self.target_ts else None
-                if current_ts_iso:
-                    if "uptrend_engine_v4_meta" not in features:
-                        features["uptrend_engine_v4_meta"] = {}
-                    features["uptrend_engine_v4_meta"]["s3_start_ts"] = current_ts_iso
-            elif self._check_s0_order(ema_vals):
+            if self._check_s0_order(ema_vals):
                 prev_state = "S0"
             else:
                 # No state (S4)

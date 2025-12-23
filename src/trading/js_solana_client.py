@@ -259,7 +259,7 @@ executeJupiterSwap().then(result => {{
             }
     
     async def get_token_decimals(self, mint_address: str) -> Dict[str, Any]:
-        """Get token decimals for a given mint address"""
+        """Get token decimals for a given mint address (supports both SPL and Token-2022)"""
         try:
             # Create JavaScript code to get token decimals
             js_code = f"""
@@ -271,23 +271,45 @@ async function getTokenDecimals() {{
         const connection = new Connection('{self.rpc_url}');
         const mintAddress = new PublicKey('{mint_address}');
         
-        const mintInfo = await getMint(connection, mintAddress);
-        
-        return {{
-            success: true,
-            decimals: mintInfo.decimals,
-            mint: mintAddress.toString()
-        }};
+        // Try standard SPL token first
+        try {{
+            const mintInfo = await getMint(connection, mintAddress);
+            return {{
+                success: true,
+                decimals: mintInfo.decimals,
+                mint: mintAddress.toString(),
+                isToken2022: false
+            }};
+        }} catch (splError) {{
+            // Not standard SPL token, try Token-2022 or read account directly
+            const accountInfo = await connection.getAccountInfo(mintAddress);
+            if (accountInfo && accountInfo.data.length >= 45) {{
+                // Mint account structure: decimals are at offset 44
+                const decimals = accountInfo.data.readUInt8(44);
+                return {{
+                    success: true,
+                    decimals: decimals,
+                    mint: mintAddress.toString(),
+                    isToken2022: true
+                }};
+            }}
+            
+            // Account doesn't exist or data too short
+            throw new Error('Account not found or invalid');
+        }}
         
     }} catch (error) {{
-        // If we can't get decimals, return a default of 9
+        // Only default to 9 if we truly can't determine decimals
         if (error.message.includes('could not find account') || 
             error.message.includes('Account does not exist') ||
-            error.message === '') {{
+            error.message === '' ||
+            error.message.includes('Account not found')) {{
             return {{
                 success: true,
                 decimals: 9,
-                mint: '{mint_address}'
+                mint: '{mint_address}',
+                isToken2022: false,
+                warning: 'Defaulted to 9 decimals - could not determine actual decimals'
             }};
         }}
         

@@ -178,7 +178,8 @@ class DecisionMakerLowcapSimple:
             chain = token_data.get('chain', '').lower()
             volume_24h = venue_data.get('vol24h_usd', 0)
             min_volume = self.min_volume_requirements.get(chain, 0)
-            supported_chains = ['solana', 'ethereum', 'base', 'bsc']
+            # SOLANA ONLY - Reject non-Solana chains
+            supported_chains = ['solana']
 
             self.logger.info(f"Making decision for {curator_id} -> {token_ticker}")
 
@@ -187,7 +188,7 @@ class DecisionMakerLowcapSimple:
 
             # Note: Token ignore filtering now handled in Social Ingest (early filtering)
 
-            # 1) Supported chain
+            # 1) Supported chain (SOLANA ONLY)
             chain_pass = chain in supported_chains
             criteria.append({
                 'name': 'supported_chain',
@@ -645,36 +646,59 @@ class DecisionMakerLowcapSimple:
             # Note: We no longer calculate fixed USD amounts here
             # PM will calculate USD amounts at execution time based on current portfolio size
             
+            # Base timeframe splits (defaults) - only 15m, 1h, 4h normalize to 100%
+            # 1m is separate and only traded if other timeframes aren't active
+            base_splits = {
+                '15m': 0.25,  # 25%
+                '1h': 0.50,   # 50%
+                '4h': 0.25    # 25%
+                # Note: 1m is handled separately, not part of the 100% split
+            }
+            
             # Get learned timeframe weights (Phase 3)
+            # Learned weights are R/R ratios: weight = timeframe_rr / global_rr
+            # If 15m has weight 1.4, it means it performs 40% better than average
+            # We normalize these weights directly to get allocation splits (original approach)
             try:
                 timeframe_weights = self.coefficient_reader.get_timeframe_weights(module='dm')
-                normalized_weights = self.coefficient_reader.normalize_timeframe_weights(timeframe_weights)
                 
                 # Check if we have actual learned data (not just default 1.0 weights)
-                # If all weights are 1.0, it means no learned data exists, so use defaults
+                # If all weights are 1.0, it means no learned data exists, so use base splits
                 has_learned_data = any(w != 1.0 for w in timeframe_weights.values())
                 
-                # Use learned weights if available and we have actual learned data, otherwise fallback to defaults
-                if normalized_weights and all(w > 0 for w in normalized_weights.values()) and has_learned_data:
-                    timeframe_splits = normalized_weights
+                if has_learned_data and all(w > 0 for w in timeframe_weights.values()):
+                    # Extract weights for 15m, 1h, 4h only (normalize these to 100%)
+                    # 1m is separate with fixed 10% allocation
+                    main_timeframe_weights = {
+                        '15m': timeframe_weights.get('15m', 1.0),
+                        '1h': timeframe_weights.get('1h', 1.0),
+                        '4h': timeframe_weights.get('4h', 1.0)
+                    }
+                    
+                    # Normalize learned weights to sum to 1.0 (original approach)
+                    # This directly reflects performance: better performing timeframes get more allocation
+                    normalized_weights = self.coefficient_reader.normalize_timeframe_weights(main_timeframe_weights)
+                    
+                    # Add 1m with fixed 10% allocation (separate from the 100% normalization)
+                    timeframe_splits = {
+                        '1m': 0.10,  # Fixed 10% for 1m
+                        **normalized_weights  # 15m, 1h, 4h normalized to 100%
+                    }
                     self.logger.info(f"Using learned timeframe weights: {timeframe_splits}")
                 else:
-                    # Fallback to default splits
+                    # No learned data or invalid weights - use base splits
+                    # Add 1m with fixed 10% allocation
                     timeframe_splits = {
-                        '1m': 0.05,   # 5%
-                        '15m': 0.125, # 12.5%
-                        '1h': 0.70,   # 70%
-                        '4h': 0.125   # 12.5%
+                        '1m': 0.10,  # Fixed 10% for 1m
+                        **base_splits  # 15m, 1h, 4h = 100%
                     }
-                    self.logger.info(f"Using default timeframe splits: {timeframe_splits}")
+                    self.logger.info(f"Using base timeframe splits (no learned data): {timeframe_splits}")
             except Exception as e:
-                self.logger.warning(f"Error getting learned timeframe weights, using defaults: {e}")
-                # Fallback to default splits
+                self.logger.warning(f"Error getting learned timeframe weights, using base splits: {e}")
+                # Fallback to base splits - add 1m with fixed 10% allocation
                 timeframe_splits = {
-                    '1m': 0.05,   # 5%
-                    '15m': 0.125, # 12.5%
-                    '1h': 0.70,   # 70%
-                    '4h': 0.125   # 12.5%
+                    '1m': 0.10,  # Fixed 10% for 1m
+                    **base_splits  # 15m, 1h, 4h = 100%
                 }
             
             # Build entry_context for learning system (with buckets)

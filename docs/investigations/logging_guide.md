@@ -180,60 +180,102 @@ grep -i "error" logs/system.log
 ---
 
 ### 5. `logs/pm_core.log`
-**Purpose**: Portfolio Manager Core tick execution and decision-making.
+**Purpose**: Portfolio Manager Core tick execution and decision-making (WHY decisions were made), plus Telegram notification tracking.
 
 **Contains**:
 - PM Core tick start/completion (per timeframe)
-- First-dip buy detection and blocking reasons
-- Action planning (buy/sell/trim decisions)
-- Emergency exit handling
-- Entry size calculations
-- `usd_alloc_remaining` calculations
-- Execution history checks
+- **Decision planning context**: Full decision context (flags, state, scores, position state)
+- **Action planning**: Why decisions were made or blocked
+- **Emergency exit handling**: Why emergency exits trigger or are blocked
+- **Reclaim detection**: Why reclaim buys trigger or are blocked
+- **Trim decisions**: Why trims trigger or are blocked (cooldown, SR level checks)
+- **Buy decisions**: Why buys trigger or are blocked (S1, S2, S3, first-dip, reclaim)
+- Entry size calculations with multipliers
+- Execution history checks and blocking reasons
+- State transitions and their impact on decisions
+- **Execution results**: Trade execution status (success/fail) and transaction hashes
+- **Notification tracking**: Complete notification lifecycle from attempt to delivery
+  - Notification attempts (decision type, token, execution status)
+  - Notification data being sent (tokens, prices, values)
+  - Notification scheduling (async task creation)
+  - Notification success/failure with error details
+- **Position summary notifications**: Position closure notifications with full metrics
 
 **When to check**:
+- Understanding why a decision was made (audit trail)
+- Decisions not being generated (check blocking reasons)
+- Emergency exits not triggering reclaims
 - First-dip buys detected but not executing
-- Actions not being generated
+- Trim cooldown or SR level issues
 - PM Core crashes
-- Allocation calculations
+- **Telegram notifications not appearing** (see Scenario 5)
+- **Notification failures or missing data** (see Scenario 5)
 
 **Example entries**:
 ```
 2025-12-10 16:30:31,234 - pm_core - INFO - PM Core Tick (15m) starting
-2025-12-10 16:30:31,456 - pm_core - INFO - PM DETECTED first_dip_buy_flag=True for WHISTLE (15m)
-2025-12-10 16:30:31,467 - pm_core - INFO - PM BLOCKED first_dip_buy for WHISTLE (15m): can_buy=False (last_buy=2025-12-10T13:15:00+00:00, state_transitioned=False)
-2025-12-10 16:30:31,789 - pm_core - INFO - PM Core Tick (15m) completed
+2025-12-10 16:30:31,456 - pm_core - INFO - PLAN ACTIONS START: WHISTLE/solana tf=15m | state=S3 prev_state=S3 | flags: buy_signal=False buy_flag=True trim_flag=False emergency_exit=False exit_position=False reclaimed_ema333=False first_dip=False | position: qty=0.500000 status=active is_new_trade=False | scores: a_final=0.6500 e_final=0.5500
+2025-12-10 16:30:31,467 - pm_core - INFO - PLAN ACTIONS: buy_flag (S3) → add | WHISTLE/solana tf=15m | state=S3 flag=buy_flag | entry_size=0.3000 (base=0.2000 * multiplier=1.5000) | a_final=0.6500 ts_score=0.7200 dx_score=0.6800 | can_buy=True (last_buy=None state_transitioned=False)
+2025-12-10 16:30:31,468 - pm_core - INFO - PLAN ACTIONS: RETURN add | WHISTLE/solana tf=15m | size_frac=0.3000 (after overrides)
+2025-12-10 16:30:31,789 - pm_core - INFO - EXECUTION RESULT: add WHISTLE/solana | status=success | tx_hash=5K7abc12
+2025-12-10 16:30:31,790 - pm_core - INFO - NOTIFICATION ATTEMPT: add WHISTLE/solana tf=15m | exec_status=success | telegram_notifier=available
+2025-12-10 16:30:31,791 - pm_core - INFO - NOTIFICATION SCHEDULING: telegram add notification WHISTLE/solana
+2025-12-10 16:30:31,792 - pm_core - INFO - NOTIFICATION SUCCESS: telegram add notification WHISTLE/solana
+2025-12-10 16:30:31,800 - pm_core - INFO - PM Core Tick (15m) completed
 ```
+
+**Key log patterns**:
+- `PLAN ACTIONS START:` - Decision planning begins with full context
+- `PLAN ACTIONS: [decision] → [action]` - Decision made with reasoning
+- `PLAN ACTIONS: BLOCKED [decision]` - Decision blocked with reason
+- `PLAN ACTIONS: RETURN [action]` - Action returned (ready for execution)
+- `EXECUTION RESULT:` - Trade execution completed (status=success/fail)
+- `NOTIFICATION ATTEMPT:` - Notification being attempted (includes exec_status and telegram_notifier availability)
+- `NOTIFICATION DATA:` - Data being sent to Telegram (tokens, prices, values)
+- `NOTIFICATION SCHEDULING:` - Async notification task being created
+- `NOTIFICATION SUCCESS:` - Notification successfully sent
+- `NOTIFICATION FAILED:` - Notification failed (with reason)
+- `NOTIFICATION ERROR:` - Notification exception occurred
+- `NOTIFICATION SKIPPED:` - Notification skipped (telegram_notifier is None)
 
 ---
 
 ### 6. `logs/pm_executor.log`
-**Purpose**: PM Executor (Li.Fi integration) execution events and errors.
+**Purpose**: PM Executor technical execution (HOW swaps were executed, not WHY).
 
 **Contains**:
-- Li.Fi executor calls (swap/bridge actions)
+- **Execution start**: Decision type, token, chain, size, position state
+- **Jupiter swaps** (Solana): Swap execution, tx hash, tokens received, price, slippage
+- **Li.Fi swaps** (other chains): Swap/bridge execution, tx hash, tokens received
 - Execution errors and failures
 - Transaction hash capture issues
 - Subprocess stdout/stderr from Node.js executor
 - Execution retry attempts
 - Diagnostic information from Node.js executor
+- Wallet balance updates
 
 **When to check**:
 - "No transaction hash captured" errors
-- Li.Fi swap/bridge failures
+- Swap/bridge failures
 - Execution timeouts
 - Subprocess errors
 - Transaction submission issues
+- Technical execution problems (not decision-making)
 
 **Example entries**:
 ```
-2025-12-12 07:15:04,123 - intelligence.lowcap_portfolio_manager.pm.executor - WARNING - Li.Fi executor returned error output (action=swap, chain=solana, from=TOKEN, to=USDC, amount=58944751): No transaction hash captured | stdout=... | stderr=...
-2025-12-12 07:15:04,456 - intelligence.lowcap_portfolio_manager.pm.executor - ERROR - EXEC FAIL: sell TOKEN/solana tf=1m err=No transaction hash captured
+2025-12-12 07:15:04,123 - intelligence.lowcap_portfolio_manager.pm.executor - INFO - EXEC START: add WHISTLE/solana tf=15m size_frac=0.3000 | position_qty=0.500000 status=active | flag=buy_flag state=S3 | method=jupiter chain=solana
+2025-12-12 07:15:04,456 - intelligence.lowcap_portfolio_manager.pm.executor - INFO - EXEC OK: add WHISTLE/solana tf=15m | tx=5K7... | tokens=0.300000 price=0.00123456 slippage=0.50% | qty_before=0.500000 qty_after=0.800000 | pnl_impact=$0.00 (0.00%)
+2025-12-12 07:15:05,789 - intelligence.lowcap_portfolio_manager.pm.executor - ERROR - EXEC FAIL: sell TOKEN/solana tf=1m | err=No transaction hash captured | position_qty=0.500000 status=active | flag=trim_flag state=S3
 ```
 
-**Key log levels**:
-- `WARNING`: Executor returned error output, retry attempts
-- `ERROR`: Execution failures, subprocess errors, parsing failures
+**Key log patterns**:
+- `EXEC START:` - Execution begins with decision context
+- `EXEC OK:` - Execution succeeded with full results
+- `EXEC FAIL:` - Execution failed with error details
+- `EXEC SKIP:` - Execution skipped (validation failed)
+
+**Note**: This log is for **technical execution** only. For **decision-making** (why decisions were made), see `logs/pm_core.log`.
 
 ---
 
@@ -459,6 +501,64 @@ grep -i "error" logs/system.log
 
 ---
 
+### Scenario 5: Telegram Notifications Not Appearing
+
+**Symptoms**: Trade executed (visible in strand monitor) but Telegram notification not received, or notification shows empty data fields
+
+**Steps**:
+1. **Check execution status** - Verify the trade actually succeeded:
+   ```bash
+   grep "EXECUTION RESULT.*TOKEN_NAME" logs/pm_core.log | tail -n 10
+   ```
+   - Look for `status=success` (notifications only sent on success)
+   - If `status=fail` or `status=error`, check `logs/pm_executor.log` for execution errors
+
+2. **Check notification attempt** - See if notification was attempted:
+   ```bash
+   grep "NOTIFICATION ATTEMPT.*TOKEN_NAME" logs/pm_core.log | tail -n 10
+   ```
+   - If missing: Execution may have failed (see step 1)
+   - If present: Check `exec_status` and `telegram_notifier` availability
+
+3. **Check notification data** - Verify what data was sent:
+   ```bash
+   grep "NOTIFICATION DATA.*TOKEN_NAME" logs/pm_core.log | tail -n 10
+   ```
+   - Verify all required fields are present (tokens_sold, price, value, etc.)
+   - Empty fields indicate missing data in position or exec_result
+
+4. **Check notification success/failure** - See if notification was delivered:
+   ```bash
+   grep -E "NOTIFICATION (SUCCESS|FAILED|ERROR|SKIPPED).*TOKEN_NAME" logs/pm_core.log | tail -n 10
+   ```
+   - `NOTIFICATION SUCCESS` = Message sent successfully
+   - `NOTIFICATION FAILED` = Message send returned False (check Telegram API)
+   - `NOTIFICATION ERROR` = Exception occurred (check error details)
+   - `NOTIFICATION SKIPPED` = telegram_notifier is None (check initialization)
+
+5. **Check Telegram function calls** - Verify notification functions were called:
+   ```bash
+   grep "TELEGRAM NOTIFICATION.*TOKEN_NAME" logs/pm_core.log | tail -n 10
+   ```
+   - Should see function call, then success/failure
+   - Missing function call = notification not scheduled properly
+
+6. **For position summary notifications** - Check for empty token/chain/timeframe:
+   ```bash
+   grep "NOTIFICATION ATTEMPT: position_summary" logs/pm_core.log | tail -n 10
+   grep "NOTIFICATION DATA: position_summary" logs/pm_core.log | tail -n 10
+   ```
+   - Verify `token_ticker`, `token_contract`, `chain` are present
+   - Empty fields indicate missing data in `position_for_buyback` dictionary
+
+**Common issues**:
+- **Execution failed**: Check `logs/pm_executor.log` for `EXEC FAIL` messages
+- **telegram_notifier is None**: Check Telegram notifier initialization in system startup
+- **Empty data fields**: Check that position data includes required fields (token_ticker, token_contract, token_chain)
+- **Async task errors**: Check for "Cannot run the event loop" or similar async errors
+
+---
+
 ## Log Rotation
 
 Logs automatically rotate when they exceed 10MB:
@@ -500,6 +600,15 @@ grep -i "error\|exception" logs/system.log
 
 # Search across multiple logs
 grep "15m" logs/rollup.log logs/uptrend_engine.log logs/pm_core.log
+
+# Search for notification-related logs
+grep -i "NOTIFICATION\|TELEGRAM" logs/pm_core.log
+
+# Search for execution results
+grep "EXECUTION RESULT" logs/pm_core.log
+
+# Search for notification failures
+grep "NOTIFICATION FAILED\|NOTIFICATION ERROR\|NOTIFICATION SKIPPED" logs/pm_core.log
 ```
 
 ### Count Log Entries

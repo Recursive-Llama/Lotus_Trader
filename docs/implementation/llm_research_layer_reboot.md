@@ -22,6 +22,1204 @@ Level 5 comprehensive tuning copilot
 Full math feedback loop integration
 The architecture is designed to scale incrementally—start with the MVP and add capabilities as they prove valuable.
 
+---
+
+# Phase 1: System Observer (Foundation)
+
+**Goal**: Build a unified "ask the system" interface that can answer any question about the trading system. This is the foundation that evolves into the full blueprint.
+
+**Philosophy**: You are the Overseer initially. By asking questions manually, you discover what questions are valuable, what data is needed to answer them, and what patterns emerge. Recipes are learned, not designed upfront.
+
+## Phase 1 Scope
+
+### What We Build
+1. **Data Access Layer** - Functions to pull from database and logs
+2. **Log Aggregator** - Parse and search log files
+3. **Context Assembler** - Bundle relevant data for a question
+4. **System Observer** - Single `ask()` endpoint that answers questions
+5. **CLI Interface** - `lotus ask "..."` command
+6. **Proactive Digests** - Scheduled health checks and alerts
+7. **Storage** - Save all interactions to `llm_learning`
+
+### What We DON'T Build Yet
+- Formal recipes (emerge from usage)
+- Structured output schemas (add when patterns stabilize)
+- L2-L5 investigators (add when needed)
+- Math validation loop (add when we have hypotheses)
+- Automated Overseer (you are the Overseer)
+
+## Available Data Sources
+
+### Database Tables (Supabase)
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `lowcap_positions` | All positions (active, watchlist, closed) | status, state, total_pnl_usd, features, token_ticker, timeframe |
+| `ad_strands` | All strands (social, decision, pm_action, position_closed) | kind, content, signal_pack, trade_id, position_id |
+| `pattern_trade_events` | Fact table for trades | pattern_key, action_category, scope, rr, pnl_usd |
+| `learning_lessons` | Mined lessons with edge stats | pattern_key, scope_subset, stats (edge_raw, avg_rr, n) |
+| `pm_overrides` | Active runtime overrides | pattern_key, scope_subset, multiplier |
+| `llm_learning` | LLM outputs (hypotheses, reports) | kind, level, content, status |
+| `learning_configs` | System configuration | module_id, config_data |
+| `lowcap_price_data_ohlc` | OHLC price data | token_contract, chain, timeframe, ohlc |
+
+### Chart Generation (Visual)
+
+| Source | Purpose | Output |
+|--------|---------|--------|
+| `generate_position_chart(id)` | Full chart with EMAs, S/R, state | PNG image path |
+| `generate_ticker_chart(ticker, tf)` | Chart by ticker/timeframe | PNG image path |
+| `generate_state_charts(S3)` | All positions in a state | List of PNG paths |
+
+Uses existing `tools/live_charts/generate_live_chart.py` which includes:
+- OHLC candlestick data
+- EMAs (20, 30, 60, 144, 250, 333)
+- S/R levels from geometry
+- Current state marker (S0-S3)
+- EMA verification (stored vs computed)
+
+### Log Files (Local)
+
+| Log File | Purpose | Format |
+|----------|---------|--------|
+| `pm_core.log` | PM Core Tick execution | Standard: `TIMESTAMP - pm_core - LEVEL - MESSAGE` |
+| `uptrend_engine.log` | State transitions, errors | Standard |
+| `trading_executions.log` | Structured trading logs | JSON: `{ts, level, event, correlation, action, state, error}` |
+| `trading_errors.log` | Trading errors | Standard |
+| `trading_positions.log` | Position changes | Standard |
+| `decision_maker.log` | Decision maker | Standard |
+| `learning_system.log` | Learning system | Standard |
+| `pm_executor.log` | Trade execution | Standard |
+| `rollup.log` | OHLC rollup | Standard |
+| `regime_price_collector.log` | Regime data collection | Standard |
+| `schedulers.log` | Scheduler jobs | Standard |
+| `social_ingest.log` | Social ingestion | Standard |
+| `system.log` | System level | Standard |
+| `trader.log` | Trader service | Standard |
+
+### Log Format Examples
+
+**Standard log format:**
+```
+2025-12-21 12:12:04,328 - pm_core - INFO - PLAN ACTIONS: trim_flag → trim | Mappin/solana tf=1m | state=S2 qty=41991.125260
+```
+
+**Structured JSON log (trading_executions.log):**
+```json
+{
+  "ts": "2025-12-21T12:00:00Z",
+  "level": "INFO",
+  "event": "ENTRY_SUCCESS",
+  "correlation": {"position_id": "abc", "chain": "solana", "token": "PEPE"},
+  "action": {"type": "entry", "tokens_bought": 1000, "price": 0.0001},
+  "state": {"total_quantity_after": 1000, "pnl_pct": 0},
+  "performance": {"duration_ms": 1500, "venue": "jupiter"}
+}
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        INTERFACE LAYER                               │
+├─────────────────┬─────────────────┬─────────────────────────────────┤
+│  CLI            │  Scheduled      │  (Future: Web UI, Telegram)     │
+│  lotus ask      │  Digests        │                                 │
+└────────┬────────┴────────┬────────┴─────────────────────────────────┘
+         │                 │
+         └────────┬────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      SYSTEM OBSERVER                                 │
+│                                                                      │
+│  ask(question: str) → Answer                                         │
+│  • Infers what data sources are needed                               │
+│  • Assembles context                                                 │
+│  • Calls LLM with context + question                                 │
+│  • Parses response                                                   │
+│  • Stores interaction                                                │
+│  • Suggests follow-up questions                                      │
+└────────────────────────────────────┬────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      CONTEXT ASSEMBLER                               │
+│                                                                      │
+│  assemble(sources: List[str]) → Dict[str, Any]                       │
+│                                                                      │
+│  Source Registry:                                                    │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │ Database Sources │  │ Log Sources      │  │ Computed Sources │   │
+│  │ • positions      │  │ • logs_1h        │  │ • system_health  │   │
+│  │ • closed_today   │  │ • logs_24h       │  │ • pnl_summary    │   │
+│  │ • lessons        │  │ • errors         │  │ • edge_summary   │   │
+│  │ • overrides      │  │ • warnings       │  │ • position_debug │   │
+│  │ • recent_trades  │  │ • by_position    │  │                  │   │
+│  │ • strands        │  │                  │  │                  │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
+└────────────────────────────────────┬────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      DATA ACCESS LAYER                               │
+│                                                                      │
+│  Database Access (SupabaseManager):                                  │
+│  • get_active_positions()                                            │
+│  • get_closed_positions(since)                                       │
+│  • get_position_by_id(id)                                            │
+│  • get_recent_lessons()                                              │
+│  • get_active_overrides()                                            │
+│  • get_recent_strands(kind, limit)                                   │
+│  • get_pattern_events(filters)                                       │
+│                                                                      │
+│  Log Access (LogAggregator):                                         │
+│  • get_recent_logs(hours, log_names)                                 │
+│  • get_errors(hours)                                                 │
+│  • get_warnings(hours)                                               │
+│  • search_logs(pattern, hours)                                       │
+│  • get_logs_for_position(position_id)                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Implementation Details
+
+### 1. Log Aggregator (`src/intelligence/system_observer/log_aggregator.py`)
+
+```python
+class LogAggregator:
+    """Aggregates and searches log files"""
+    
+    LOG_DIR = "logs"
+    LOG_FILES = [
+        "pm_core.log", "uptrend_engine.log", "trading_executions.log",
+        "trading_errors.log", "decision_maker.log", "pm_executor.log",
+        "rollup.log", "schedulers.log", "social_ingest.log", "system.log"
+    ]
+    
+    def get_recent_logs(self, hours: int = 1, log_names: List[str] = None) -> str:
+        """Get recent log entries from specified logs"""
+        
+    def get_errors(self, hours: int = 24) -> List[Dict]:
+        """Extract ERROR level entries from all logs"""
+        
+    def get_warnings(self, hours: int = 24) -> List[Dict]:
+        """Extract WARNING level entries from all logs"""
+        
+    def search_logs(self, pattern: str, hours: int = 24) -> List[Dict]:
+        """Search logs for pattern (regex supported)"""
+        
+    def get_logs_for_position(self, position_id: str, hours: int = 24) -> str:
+        """Get all log entries mentioning a position"""
+        
+    def parse_log_line(self, line: str) -> Optional[Dict]:
+        """Parse standard log format: TIMESTAMP - LOGGER - LEVEL - MESSAGE"""
+```
+
+### 2. Data Access Layer (`src/intelligence/system_observer/data_access.py`)
+
+```python
+class DataAccess:
+    """Database access functions for the observer"""
+    
+    def __init__(self, sb_client: Client):
+        self.sb = sb_client
+    
+    # Position queries
+    def get_active_positions(self) -> List[Dict]:
+        """Get all positions with status='active'"""
+        
+    def get_watchlist_positions(self) -> List[Dict]:
+        """Get all positions with status='watchlist'"""
+        
+    def get_closed_positions(self, since: datetime = None, limit: int = 20) -> List[Dict]:
+        """Get recently closed positions"""
+        
+    def get_position_by_id(self, position_id: str) -> Optional[Dict]:
+        """Get full position details"""
+        
+    def get_positions_in_profit(self) -> List[Dict]:
+        """Get positions with positive PnL"""
+        
+    def get_positions_in_loss(self) -> List[Dict]:
+        """Get positions with negative PnL"""
+    
+    # PnL queries
+    def get_total_pnl(self, period: str = "24h") -> Dict:
+        """Get aggregate PnL for period"""
+        
+    def get_pnl_by_position(self) -> List[Dict]:
+        """Get PnL breakdown by position"""
+    
+    # Learning queries
+    def get_recent_lessons(self, limit: int = 50) -> List[Dict]:
+        """Get recent lessons with edge stats"""
+        
+    def get_lessons_for_pattern(self, pattern_key: str) -> List[Dict]:
+        """Get lessons for specific pattern"""
+        
+    def get_active_overrides(self) -> List[Dict]:
+        """Get all active pm_overrides"""
+        
+    def get_recent_overrides(self, hours: int = 24) -> List[Dict]:
+        """Get recently created/updated overrides"""
+    
+    # Strand queries
+    def get_recent_strands(self, kind: str = None, limit: int = 50) -> List[Dict]:
+        """Get recent strands, optionally filtered by kind"""
+        
+    def get_strands_for_position(self, position_id: str) -> List[Dict]:
+        """Get all strands for a position"""
+    
+    # Event queries
+    def get_pattern_events(self, pattern_key: str = None, hours: int = 24) -> List[Dict]:
+        """Get pattern_trade_events"""
+    
+    # System queries
+    def get_system_health(self) -> Dict:
+        """Run v5_learning_validator and return results"""
+```
+
+### 3. Context Assembler (`src/intelligence/system_observer/context_assembler.py`)
+
+```python
+class ContextAssembler:
+    """Assembles context bundles for questions"""
+    
+    def __init__(self, data_access: DataAccess, log_aggregator: LogAggregator):
+        self.data = data_access
+        self.logs = log_aggregator
+        
+        # Source registry: name → (function, default_kwargs)
+        self.sources = {
+            # Database sources
+            "active_positions": (self.data.get_active_positions, {}),
+            "closed_today": (self.data.get_closed_positions, {"since": "today"}),
+            "closed_24h": (self.data.get_closed_positions, {"hours": 24}),
+            "positions_in_profit": (self.data.get_positions_in_profit, {}),
+            "positions_in_loss": (self.data.get_positions_in_loss, {}),
+            "total_pnl": (self.data.get_total_pnl, {}),
+            "lessons": (self.data.get_recent_lessons, {}),
+            "overrides": (self.data.get_active_overrides, {}),
+            "recent_overrides": (self.data.get_recent_overrides, {}),
+            "recent_strands": (self.data.get_recent_strands, {}),
+            "system_health": (self.data.get_system_health, {}),
+            
+            # Log sources
+            "logs_1h": (self.logs.get_recent_logs, {"hours": 1}),
+            "logs_24h": (self.logs.get_recent_logs, {"hours": 24}),
+            "errors": (self.logs.get_errors, {"hours": 24}),
+            "warnings": (self.logs.get_warnings, {"hours": 24}),
+        }
+    
+    def assemble(self, source_names: List[str], **kwargs) -> Dict[str, Any]:
+        """Assemble context from requested sources"""
+        context = {}
+        for name in source_names:
+            if name in self.sources:
+                func, defaults = self.sources[name]
+                merged_kwargs = {**defaults, **kwargs.get(name, {})}
+                context[name] = func(**merged_kwargs)
+        return context
+    
+    def infer_sources(self, question: str) -> List[str]:
+        """Infer what sources are needed from the question"""
+        q = question.lower()
+        sources = []
+        
+        # Position questions
+        if any(w in q for w in ["position", "holding", "trade"]):
+            if "closed" in q:
+                sources.append("closed_24h")
+            elif "active" in q or "current" in q:
+                sources.append("active_positions")
+            elif "loss" in q:
+                sources.append("positions_in_loss")
+            elif "profit" in q:
+                sources.append("positions_in_profit")
+            else:
+                sources.extend(["active_positions", "closed_24h"])
+        
+        # PnL questions
+        if any(w in q for w in ["profit", "pnl", "money", "made", "lost"]):
+            sources.append("total_pnl")
+        
+        # Error questions
+        if any(w in q for w in ["error", "issue", "problem", "fail", "wrong"]):
+            sources.extend(["errors", "warnings", "logs_1h"])
+        
+        # Learning questions
+        if any(w in q for w in ["edge", "pattern", "lesson", "learn"]):
+            sources.append("lessons")
+        
+        # Override questions
+        if "override" in q:
+            sources.extend(["overrides", "recent_overrides"])
+        
+        # Health questions
+        if any(w in q for w in ["health", "status", "running", "system"]):
+            sources.append("system_health")
+        
+        # Default: give some context
+        if not sources:
+            sources = ["active_positions", "errors", "system_health"]
+        
+        return list(set(sources))
+```
+
+### 4. System Observer (`src/intelligence/system_observer/observer.py`)
+
+```python
+class SystemObserver:
+    """Main entry point for asking questions about the system"""
+    
+    SYSTEM_PROMPT = """You are a trading system assistant. You answer questions about a crypto trading system.
+
+You have access to:
+- Position data (active, closed, PnL)
+- Trading logs (actions, errors, state transitions)
+- Learning data (lessons, overrides, edge statistics)
+- System health metrics
+
+Guidelines:
+- Be concise and specific
+- Use actual numbers from the data provided
+- If you can't answer fully, say what's missing
+- Suggest relevant follow-up questions
+- For errors, explain what they mean and if they're concerning
+- For positions, include key metrics (PnL, state, quantity)
+"""
+    
+    def __init__(self, sb_client: Client, llm_client: OpenRouterClient, log_dir: str = "logs"):
+        self.data = DataAccess(sb_client)
+        self.logs = LogAggregator(log_dir)
+        self.context = ContextAssembler(self.data, self.logs)
+        self.llm = llm_client
+        self.sb = sb_client
+    
+    async def ask(self, question: str, sources: List[str] = None) -> Dict[str, Any]:
+        """Ask a question about the system"""
+        
+        # 1. Determine what sources we need
+        if sources is None:
+            sources = self.context.infer_sources(question)
+        
+        # 2. Assemble context
+        context = self.context.assemble(sources)
+        
+        # 3. Build prompt
+        prompt = self._build_prompt(question, context)
+        
+        # 4. Call LLM
+        response = await self.llm.generate_async(
+            prompt=prompt,
+            system_message=self.SYSTEM_PROMPT,
+            temperature=0.3,
+            max_tokens=2000
+        )
+        
+        # 5. Parse response
+        result = {
+            "question": question,
+            "sources_used": sources,
+            "answer": response,
+            "context_summary": self._summarize_context(context),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # 6. Store interaction
+        self._store_interaction(result)
+        
+        # 7. Add follow-up suggestions
+        result["suggested_followups"] = self._extract_followups(response)
+        
+        return result
+    
+    async def position(self, position_id: str) -> Dict[str, Any]:
+        """Deep dive into a specific position"""
+        position = self.data.get_position_by_id(position_id)
+        if not position:
+            return {"error": f"Position {position_id} not found"}
+        
+        strands = self.data.get_strands_for_position(position_id)
+        logs = self.logs.get_logs_for_position(position_id)
+        
+        context = {
+            "position": position,
+            "strands": strands,
+            "relevant_logs": logs
+        }
+        
+        question = f"Tell me about this position. What happened? What's its current state? Any issues?"
+        return await self.ask(question, sources=None)  # We provide context directly
+    
+    async def health(self) -> Dict[str, Any]:
+        """Quick health check"""
+        return await self.ask(
+            "What's the current system health? Any errors or issues I should know about?",
+            sources=["errors", "warnings", "system_health", "logs_1h"]
+        )
+    
+    async def summary(self) -> Dict[str, Any]:
+        """Daily summary"""
+        return await self.ask(
+            "Give me a summary: How many positions? Any closed today? Total PnL? Any issues?",
+            sources=["active_positions", "closed_today", "total_pnl", "errors"]
+        )
+    
+    def _build_prompt(self, question: str, context: Dict) -> str:
+        """Build the prompt with context"""
+        context_str = json.dumps(context, indent=2, default=str)
+        return f"""Question: {question}
+
+Available Data:
+```json
+{context_str}
+```
+
+Please answer the question based on this data. Be specific and use actual numbers."""
+    
+    def _store_interaction(self, result: Dict):
+        """Store interaction in llm_learning"""
+        self.sb.table("llm_learning").insert({
+            "kind": "observer_interaction",
+            "level": 1,
+            "module": "system_observer",
+            "status": "active",
+            "content": result,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
+```
+
+### 5. CLI Interface (`src/intelligence/system_observer/cli.py`)
+
+```python
+import click
+import asyncio
+from .observer import SystemObserver
+
+@click.group()
+def lotus():
+    """Lotus Trading System CLI"""
+    pass
+
+@lotus.command()
+@click.argument('question', nargs=-1)
+def ask(question):
+    """Ask a question about the system"""
+    question_str = ' '.join(question)
+    observer = get_observer()
+    result = asyncio.run(observer.ask(question_str))
+    print_result(result)
+
+@lotus.command()
+def health():
+    """Quick health check"""
+    observer = get_observer()
+    result = asyncio.run(observer.health())
+    print_result(result)
+
+@lotus.command()
+def summary():
+    """Daily summary"""
+    observer = get_observer()
+    result = asyncio.run(observer.summary())
+    print_result(result)
+
+@lotus.command()
+@click.argument('position_id')
+def position(position_id):
+    """Debug a specific position"""
+    observer = get_observer()
+    result = asyncio.run(observer.position(position_id))
+    print_result(result)
+
+@lotus.command()
+def chat():
+    """Interactive chat mode"""
+    observer = get_observer()
+    print("Lotus System Observer - Interactive Mode")
+    print("Type 'quit' to exit\n")
+    
+    while True:
+        question = input("You: ").strip()
+        if question.lower() in ['quit', 'exit', 'q']:
+            break
+        if not question:
+            continue
+        
+        result = asyncio.run(observer.ask(question))
+        print(f"\nLotus: {result['answer']}\n")
+        
+        if result.get('suggested_followups'):
+            print("Suggested follow-ups:")
+            for f in result['suggested_followups'][:3]:
+                print(f"  • {f}")
+            print()
+```
+
+### 6. Proactive Digests (`src/intelligence/system_observer/digests.py`)
+
+```python
+class ProactiveDigest:
+    """Scheduled digests and alerts - two-channel strategy"""
+    
+    def __init__(self, observer: SystemObserver, 
+                 public_notifier=None,    # Existing public TG channel
+                 private_notifier=None):  # Lotus Overseer private group
+        self.observer = observer
+        self.public = public_notifier
+        self.private = private_notifier
+    
+    async def hourly_health_check(self):
+        """Run every hour - check for errors (private channel only)"""
+        errors = self.observer.logs.get_errors(hours=1)
+        
+        if errors:
+            result = await self.observer.ask(
+                f"We have {len(errors)} errors in the last hour. Summarize what's concerning.",
+                sources=["errors", "logs_1h"]
+            )
+            
+            # Only alert on private channel
+            if self.private:
+                await self.private.send_alert(f"⚠️ {len(errors)} errors in last hour\n\n{result['answer']}")
+            
+            return result
+        
+        return {"status": "healthy", "errors": 0}
+    
+    async def daily_digest_public(self):
+        """Run daily - engaging summary for public channel"""
+        result = await self.observer.ask(
+            """Create a brief, engaging daily summary:
+            - Total PnL today (with emoji)
+            - Number of trades
+            - Best/worst trade
+            - One interesting insight
+            Keep it short and engaging for a community audience.
+            """,
+            sources=["closed_24h", "total_pnl", "active_positions"]
+        )
+        
+        if self.public:
+            await self.public.send_digest(result['answer'])
+        
+        return result
+    
+    async def daily_digest_private(self):
+        """Run daily - full technical summary for operator"""
+        result = await self.observer.ask(
+            """Full daily digest:
+            1. Positions: active vs watchlist count
+            2. Closed positions with PnL breakdown
+            3. Errors and warnings summary
+            4. System health status
+            5. Learning updates (new lessons, override changes)
+            6. Edge/pattern observations
+            7. Anything unusual or concerning
+            """,
+            sources=[
+                "active_positions", "closed_24h", "total_pnl",
+                "errors", "warnings", "system_health", "lessons",
+                "recent_overrides"
+            ]
+        )
+        
+        if self.private:
+            await self.private.send_digest(f"📊 Daily Technical Digest\n\n{result['answer']}")
+        
+        return result
+    
+    async def position_alert(self, position_id: str, event: str):
+        """Alert on specific position events (private channel)"""
+        result = await self.observer.position(position_id)
+        
+        alert = f"🔔 Position Alert: {event}\n\n{result['answer']}"
+        
+        if self.private:
+            await self.private.send_alert(alert)
+        
+        return result
+```
+
+### 7. Telegram Bot Handler (`src/intelligence/system_observer/telegram_bot.py`)
+
+```python
+class OverseerTelegramBot:
+    """Bi-directional Telegram bot for Lotus Overseer private group"""
+    
+    ALLOWED_CHAT_IDS = ["lotus_overseer_chat_id"]  # Your private group
+    
+    def __init__(self, observer: SystemObserver, bot_token: str):
+        self.observer = observer
+        self.bot_token = bot_token
+    
+    async def handle_message(self, message: str, chat_id: str) -> str:
+        """Handle incoming message - answer questions about the system"""
+        
+        # Security: only respond in allowed chats
+        if chat_id not in self.ALLOWED_CHAT_IDS:
+            return None
+        
+        # Check for specific commands
+        if message.startswith("/health"):
+            result = await self.observer.health()
+            return result['answer']
+        
+        if message.startswith("/summary"):
+            result = await self.observer.summary()
+            return result['answer']
+        
+        if message.startswith("/position "):
+            position_id = message.replace("/position ", "").strip()
+            result = await self.observer.position(position_id)
+            return result['answer']
+        
+        # Default: treat as a question
+        result = await self.observer.ask(message)
+        return result['answer']
+    
+    # Integration with python-telegram-bot or similar library
+    # Actual implementation depends on your TG bot setup
+```
+
+## File Structure
+
+```
+src/intelligence/system_observer/
+├── __init__.py
+├── observer.py           # Main SystemObserver class
+├── data_access.py        # Database access functions
+├── log_aggregator.py     # Log file parsing and search
+├── chart_generator.py    # Wrapper for live chart generation
+├── context_assembler.py  # Context bundling + question understanding
+├── cli.py               # CLI commands (lotus ask/health/summary/chat)
+├── digests.py           # Proactive digests (public + private channels)
+├── telegram_bot.py      # Bi-directional bot for Lotus Overseer group
+└── prompts.py           # Prompt templates
+```
+
+### Integration Points
+
+```
+Existing Code → System Observer:
+├── tools/live_charts/generate_live_chart.py  → chart_generator.py (wrapper)
+├── src/utils/supabase_manager.py            → data_access.py (extend)
+├── src/llm_integration/openrouter_client.py → observer.py (LLM calls)
+├── src/communication/telegram_signal_notifier.py → digests.py (reuse for sending)
+└── src/intelligence/lowcap_portfolio_manager/jobs/v5_learning_validator.py → system health
+```
+
+## Example Usage
+
+```bash
+# Ask any question
+$ lotus ask "what positions got closed today?"
+
+# Quick commands
+$ lotus health
+$ lotus summary
+$ lotus position abc123
+
+# Interactive mode
+$ lotus chat
+You: any errors in the last hour?
+Lotus: No errors in the last hour. System is healthy.
+
+You: what's our total PnL today?
+Lotus: Total PnL today: +$1,234 across 3 closed positions...
+
+You: tell me about position xyz
+Lotus: Position xyz (PEPE/solana, 1m):
+       Status: active, State: S2
+       PnL: +15% (+$450)
+       Last action: trim at 12:30...
+```
+
+## Evolution Path
+
+### Phase 1 → Phase 2
+As you use the observer, you'll notice patterns:
+- "I ask about errors every morning" → becomes `lotus morning`
+- "I always want position + strands + logs together" → becomes `position_debug` source
+- "Edge questions always need lessons + overrides" → becomes `edge` source bundle
+
+Extract these patterns into shortcuts and structured queries.
+
+### Phase 2 → Phase 3 (Full Blueprint)
+Once patterns stabilize:
+- Common questions become **recipes** with structured outputs
+- Add **zoom capability** (drill down from overview)
+- Add **L2-5 investigators** for specific research
+- Add **math validation** for hypotheses
+
+### Phase 3 → Phase 4 (Code Improvement)
+Ultimate goal: system proposes code changes based on findings.
+- Research layer identifies: "Pattern X has 30% edge decay in high-vol regimes"
+- Code layer proposes: "Add regime check to pattern X logic"
+- Human reviews and approves
+- System implements change
+
+This requires:
+- Codebase RAG (index code for LLM understanding)
+- Diff generation (propose specific changes)
+- Test execution (validate proposals)
+- PR automation (create/merge PRs)
+
+**Note**: This is a separate layer built on top of research. Focus on Phase 1-3 first.
+
+---
+
+## Notification Architecture
+
+### Two-Channel Strategy
+
+| Channel | Purpose | Content | Frequency |
+|---------|---------|---------|-----------|
+| **Public Channel** | Community engagement | Daily PnL, notable trades, interesting lessons | Daily digest |
+| **Lotus Overseer** (private TG group) | Operator intelligence | Errors, technical debug, system health | Real-time + daily |
+
+**Public Channel** (existing `telegram_signal_notifier.py`):
+- Keep it engaging, not overwhelming
+- Daily PnL summary with emoji
+- Notable trades (big wins/losses)
+- New lessons/edge insights (simplified)
+- System status (positions count)
+- NO error logs, NO technical details
+
+**Lotus Overseer** (private group: https://t.me/+G63xTKwDBGI0MDE8):
+- Full technical detail
+- Error/warning alerts (immediate)
+- System health checks
+- Position-level debugging
+- Edge decay alerts
+- Override changes
+- Interactive Q&A via bot
+
+### Interactive Access
+
+| Method | Use Case | Availability |
+|--------|----------|--------------|
+| **CLI** (`lotus chat`) | Deep debugging at computer | When at terminal |
+| **Telegram Bot** (in Overseer group) | Ask questions on mobile | Async, anywhere |
+
+The Telegram bot in Lotus Overseer is bi-directional:
+```
+You: what happened to position xyz?
+Bot: Position xyz (PEPE/solana):
+     Status: closed at 14:30
+     PnL: -5% (-$120)
+     Reason: emergency_exit triggered...
+```
+
+---
+
+## Resolved Questions
+
+1. **Log retention**: ~10MB rotation. Important data already goes to DB. Logs are for short-term error checking only.
+
+2. **Notification channels**: Two-tier (public for community, private for operator)
+
+3. **Bot token**: Same bot can serve both channels. A single Telegram bot can message multiple groups—just add the bot to both the public channel and Lotus Overseer private group. The existing `TelegramSignalNotifier` already supports this via the `channel_id` parameter. We'll extend it with a second notifier instance for the private group.
+
+4. **Rate limiting**: TBD - consider caching recent answers, batching digest calls
+
+5. **Context size**: TBD - truncate logs, summarize large datasets
+
+---
+
+## Build Plan (Implementation Order)
+
+### What Makes This Hard?
+
+The hardest parts are **question understanding** and **intelligent data collection**:
+
+1. **Question → Data Mapping**: Given a natural language question, determining which data sources to query. The `infer_sources()` function is the critical path—it must understand intent from ambiguous language.
+
+2. **Context Window Management**: Assembling enough context to answer well, without overwhelming the LLM. Logs can be huge; DB results can be verbose.
+
+3. **Log Parsing**: Logs have multiple formats (standard, JSON structured). Parsing reliably, extracting timestamps, correlating entries—this is messy.
+
+4. **Telegram Bot Integration**: Making the bot bi-directional (receive questions, send answers) with proper security.
+
+### Build Order (Prioritized)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1A: Core Infrastructure (Must Have First)                 │
+│ Estimated: 1-2 days                                            │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. log_aggregator.py        - Parse logs, search, filter       │
+│ 2. data_access.py           - DB queries (extend SupabaseManager)│
+│ 3. chart_generator.py       - Integrate live chart generator   │
+│ 4. context_assembler.py     - Bundle sources, infer_sources()  │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1B: Observer + CLI (Get It Working)                       │
+│ Estimated: 1 day                                                │
+├─────────────────────────────────────────────────────────────────┤
+│ 5. observer.py              - ask(), health(), summary()       │
+│ 6. cli.py                   - lotus ask/health/summary/chat    │
+│ 7. prompts.py               - System prompt, format templates  │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1C: Proactive + Notifications (Automated Value)           │
+│ Estimated: 1 day                                                │
+├─────────────────────────────────────────────────────────────────┤
+│ 8. digests.py               - Hourly health, daily digest      │
+│ 9. telegram_bot.py          - Bi-directional bot in Overseer   │
+│ 10. Scheduler integration   - Hook into run_trade.py or cron   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Detailed Implementation Tasks
+
+#### 1. `log_aggregator.py` (Priority: HIGHEST)
+The hardest piece. Must handle:
+- **Standard log format**: `TIMESTAMP - LOGGER - LEVEL - MESSAGE`
+- **JSON structured logs**: `trading_executions.log`
+- **Rotated logs**: `.log.1`, `.log.2`, etc.
+- **Time-based filtering**: "last hour", "last 24h"
+- **Pattern search**: regex across all logs
+- **Position correlation**: find all logs mentioning a position
+
+```python
+# Key methods to implement:
+def parse_log_line(self, line: str) -> Optional[Dict]:
+    """Parse standard format, extract timestamp/level/logger/message"""
+    
+def parse_json_log_line(self, line: str) -> Optional[Dict]:
+    """Parse JSON structured logs"""
+    
+def get_recent_logs(self, hours: int, log_names: List[str] = None) -> List[Dict]:
+    """Get logs from last N hours, optionally filtered by log file"""
+    
+def get_errors(self, hours: int = 24) -> List[Dict]:
+    """Extract ERROR level entries"""
+    
+def search_logs(self, pattern: str, hours: int = 24) -> List[Dict]:
+    """Regex search across logs"""
+    
+def get_logs_for_position(self, position_id: str) -> List[Dict]:
+    """Find all log entries mentioning a position (id, ticker, contract)"""
+```
+
+#### 2. `data_access.py` (Priority: HIGH)
+Extend `SupabaseManager` with research-focused queries:
+
+```python
+# Position queries
+def get_active_positions(self) -> List[Dict]
+def get_watchlist_positions(self) -> List[Dict]
+def get_closed_positions(self, since: datetime, limit: int) -> List[Dict]
+def get_position_by_id(self, position_id: int) -> Optional[Dict]
+def get_positions_by_state(self, state: str) -> List[Dict]  # S0, S1, S2, S3
+
+# PnL queries  
+def get_total_pnl(self, hours: int = 24) -> Dict
+def get_pnl_by_position(self, hours: int = 24) -> List[Dict]
+
+# Learning queries
+def get_recent_lessons(self, limit: int = 50) -> List[Dict]
+def get_active_overrides(self) -> List[Dict]
+
+# Strand queries
+def get_recent_strands(self, kind: str = None, limit: int = 50) -> List[Dict]
+def get_strands_for_position(self, position_id: int) -> List[Dict]
+
+# System health (reuse v5_learning_validator logic)
+def get_system_health(self) -> Dict
+```
+
+#### 3. `chart_generator.py` (Priority: HIGH)
+Integrate with existing `tools/live_charts/generate_live_chart.py`:
+
+```python
+class ChartGenerator:
+    """Wrapper around LiveChartGenerator for observer use"""
+    
+    def __init__(self):
+        self.generator = LiveChartGenerator()
+        self.output_dir = "tools/live_charts/output"
+    
+    def generate_position_chart(self, position_id: int) -> Optional[str]:
+        """Generate chart for position, return file path"""
+        paths = self.generator.generate_charts(position_id=position_id)
+        return paths[0] if paths else None
+    
+    def generate_ticker_chart(self, ticker: str, timeframe: str = "1h") -> Optional[str]:
+        """Generate chart by ticker"""
+        paths = self.generator.generate_charts(ticker=ticker, timeframe=timeframe)
+        return paths[0] if paths else None
+    
+    def generate_state_charts(self, state: str, timeframe: str = None) -> List[str]:
+        """Generate charts for all positions in a given state"""
+        return self.generator.generate_charts(
+            all_positions=True, 
+            stage=state, 
+            timeframe=timeframe
+        )
+```
+
+#### 4. `context_assembler.py` (Priority: HIGH)
+The **critical piece** - question understanding:
+
+```python
+class ContextAssembler:
+    def __init__(self, data_access, log_aggregator, chart_generator):
+        self.data = data_access
+        self.logs = log_aggregator  
+        self.charts = chart_generator
+        
+        # Source registry
+        self.sources = {
+            # Database sources
+            "active_positions": (self.data.get_active_positions, {}),
+            "watchlist": (self.data.get_watchlist_positions, {}),
+            "closed_today": (self.data.get_closed_positions, {"hours": 24}),
+            "closed_week": (self.data.get_closed_positions, {"hours": 168}),
+            "positions_in_profit": (self.data.get_positions_in_profit, {}),
+            "positions_in_loss": (self.data.get_positions_in_loss, {}),
+            "s3_positions": (self.data.get_positions_by_state, {"state": "S3"}),
+            "total_pnl": (self.data.get_total_pnl, {}),
+            "lessons": (self.data.get_recent_lessons, {}),
+            "overrides": (self.data.get_active_overrides, {}),
+            "recent_strands": (self.data.get_recent_strands, {}),
+            "system_health": (self.data.get_system_health, {}),
+            
+            # Log sources
+            "logs_1h": (self.logs.get_recent_logs, {"hours": 1}),
+            "logs_24h": (self.logs.get_recent_logs, {"hours": 24}),
+            "errors": (self.logs.get_errors, {"hours": 24}),
+            "errors_1h": (self.logs.get_errors, {"hours": 1}),
+            "warnings": (self.logs.get_warnings, {"hours": 24}),
+        }
+    
+    def infer_sources(self, question: str) -> List[str]:
+        """THE CRITICAL FUNCTION - understand what data the question needs"""
+        q = question.lower()
+        sources = []
+        
+        # Keywords → Sources mapping
+        # Position-related
+        if any(w in q for w in ["position", "holding", "trade", "ticker"]):
+            if "closed" in q:
+                sources.append("closed_today")
+            elif "active" in q or "current" in q:
+                sources.append("active_positions")
+            elif "loss" in q or "losing" in q or "underwater" in q:
+                sources.append("positions_in_loss")
+            elif "profit" in q or "winning" in q:
+                sources.append("positions_in_profit")
+            elif "s3" in q or "trending" in q:
+                sources.append("s3_positions")
+            else:
+                sources.extend(["active_positions", "closed_today"])
+        
+        # PnL/money
+        if any(w in q for w in ["pnl", "profit", "money", "made", "lost", "performance"]):
+            sources.append("total_pnl")
+            if "position" in q:
+                sources.append("active_positions")
+        
+        # Errors/issues
+        if any(w in q for w in ["error", "issue", "problem", "fail", "wrong", "bug", "crash"]):
+            sources.extend(["errors", "warnings", "logs_1h"])
+        
+        # Learning/edge
+        if any(w in q for w in ["edge", "pattern", "lesson", "learn", "override"]):
+            sources.extend(["lessons", "overrides"])
+        
+        # System health
+        if any(w in q for w in ["health", "status", "running", "system", "ok", "good"]):
+            sources.append("system_health")
+        
+        # Watchlist
+        if "watchlist" in q or "watching" in q:
+            sources.append("watchlist")
+        
+        # Default: give some context
+        if not sources:
+            sources = ["active_positions", "system_health", "errors"]
+        
+        return list(set(sources))
+    
+    def assemble(self, source_names: List[str], **kwargs) -> Dict[str, Any]:
+        """Fetch and bundle all requested sources"""
+        context = {}
+        for name in source_names:
+            if name in self.sources:
+                func, defaults = self.sources[name]
+                merged_kwargs = {**defaults, **kwargs.get(name, {})}
+                try:
+                    context[name] = func(**merged_kwargs)
+                except Exception as e:
+                    context[name] = {"error": str(e)}
+        return context
+```
+
+#### 5-7. Observer + CLI + Prompts (See existing spec)
+
+#### 8-10. Digests + Telegram Bot
+
+**Telegram Integration Details:**
+
+```python
+# In digests.py
+class ProactiveDigest:
+    def __init__(self, observer: SystemObserver):
+        self.observer = observer
+        
+        # Reuse existing TelegramSignalNotifier for both channels
+        # Just different channel_id for each
+        self.public_notifier = TelegramSignalNotifier(
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
+            channel_id=os.getenv("TELEGRAM_PUBLIC_CHANNEL_ID"),  # @your_public_channel
+            api_id=int(os.getenv("TELEGRAM_API_ID")),
+            api_hash=os.getenv("TELEGRAM_API_HASH")
+        )
+        
+        self.private_notifier = TelegramSignalNotifier(
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),  # SAME BOT TOKEN
+            channel_id=os.getenv("TELEGRAM_OVERSEER_CHANNEL_ID"),  # -100xxxxx (group ID)
+            api_id=int(os.getenv("TELEGRAM_API_ID")),
+            api_hash=os.getenv("TELEGRAM_API_HASH")
+        )
+```
+
+**Bi-directional bot (telegram_bot.py):**
+```python
+# Uses python-telegram-bot library (not Telethon) for receiving messages
+# Telethon is already used by TelegramSignalNotifier for sending
+
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+
+class OverseerTelegramBot:
+    ALLOWED_CHAT_IDS = [int(os.getenv("TELEGRAM_OVERSEER_CHANNEL_ID"))]
+    
+    async def handle_message(self, update: Update, context):
+        if update.effective_chat.id not in self.ALLOWED_CHAT_IDS:
+            return  # Ignore messages from other chats
+        
+        question = update.message.text
+        result = await self.observer.ask(question)
+        await update.message.reply_text(result['answer'])
+```
+
+### Live Chart Integration
+
+The observer can generate and send charts:
+
+```python
+# In observer.py
+async def position(self, position_id: int) -> Dict[str, Any]:
+    """Deep dive into a specific position WITH CHART"""
+    position = self.data.get_position_by_id(position_id)
+    if not position:
+        return {"error": f"Position {position_id} not found"}
+    
+    # Generate chart
+    chart_path = self.charts.generate_position_chart(position_id)
+    
+    strands = self.data.get_strands_for_position(position_id)
+    logs = self.logs.get_logs_for_position(str(position_id))
+    
+    result = await self.ask(
+        f"Tell me about this position. What happened? Current state? Any issues?",
+        context_override={
+            "position": position,
+            "strands": strands[:20],  # Limit strands
+            "relevant_logs": logs[:50]  # Limit logs
+        }
+    )
+    
+    result["chart_path"] = chart_path  # Include chart for TG to send as image
+    return result
+
+# In telegram_bot.py - send chart as image
+async def send_position_analysis(self, chat_id: int, position_id: int):
+    result = await self.observer.position(position_id)
+    
+    # Send chart image first
+    if result.get("chart_path"):
+        await self.bot.send_photo(
+            chat_id=chat_id,
+            photo=open(result["chart_path"], "rb"),
+            caption=f"Chart for position {position_id}"
+        )
+    
+    # Then send text analysis
+    await self.bot.send_message(chat_id=chat_id, text=result["answer"])
+```
+
+### Environment Variables Needed
+
+```bash
+# Add to .env
+TELEGRAM_BOT_TOKEN=xxx          # Existing bot token (same for both channels)
+TELEGRAM_PUBLIC_CHANNEL_ID=@lotus_trader  # Public channel
+TELEGRAM_OVERSEER_CHANNEL_ID=-100xxxxx    # Private Lotus Overseer group ID
+TELEGRAM_API_ID=xxx             # Existing
+TELEGRAM_API_HASH=xxx           # Existing
+
+OPENROUTER_API_KEY=xxx          # For LLM calls
+```
+
+### Scheduling Options
+
+**Option A: Integrate with run_trade.py**
+Add digest calls to existing scheduler:
+```python
+# In run_trade.py or appropriate scheduler
+async def run_hourly_health():
+    digest = ProactiveDigest(get_observer())
+    await digest.hourly_health_check()
+
+async def run_daily_digest():
+    digest = ProactiveDigest(get_observer())
+    await digest.daily_digest_public()
+    await digest.daily_digest_private()
+```
+
+**Option B: Separate cron process**
+```bash
+# crontab
+0 * * * * cd /path/to/lotus && .venv/bin/python -c "from src.intelligence.system_observer.digests import hourly_health; asyncio.run(hourly_health())"
+0 20 * * * cd /path/to/lotus && .venv/bin/python -c "from src.intelligence.system_observer.digests import daily_digest; asyncio.run(daily_digest())"
+```
+
+### Testing Plan
+
+```bash
+# 1. Test log aggregator
+lotus ask "any errors in the last hour?"
+
+# 2. Test position queries  
+lotus ask "what positions are active?"
+lotus ask "show me closed positions today"
+
+# 3. Test position deep dive with chart
+lotus position 123
+
+# 4. Test health
+lotus health
+
+# 5. Test summary
+lotus summary
+
+# 6. Test interactive
+lotus chat
+> what's our total pnl?
+> tell me about position xyz
+> any issues with the uptrend engine?
+```
+
+---
+
 0. Layer Hierarchy (Who does what?)
 Overseer (active intelligence - asks questions, interprets, routes)
     ↓

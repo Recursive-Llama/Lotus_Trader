@@ -317,6 +317,41 @@ def plan_actions_v4(
     prev_state = exec_history.get("prev_state", "")
     actions = []
     
+    # Setup logger for decision-making logs (goes to pm_core.log)
+    pm_logger = logging.getLogger("pm_core")
+    
+    # Extract position context for logging
+    token_ticker = position.get("token_ticker") or position.get("token_contract", "?")[:20]
+    token_chain = position.get("token_chain", "?")
+    timeframe = position.get("timeframe", "?")
+    total_quantity = float(position.get("total_quantity") or 0.0)
+    status = position.get("status", "unknown")
+    current_trade_id = position.get("current_trade_id")
+    is_new_trade = not current_trade_id
+    
+    # Extract engine flags for logging
+    buy_signal = uptrend.get("buy_signal", False)
+    buy_flag = uptrend.get("buy_flag", False)
+    trim_flag = uptrend.get("trim_flag", False)
+    emergency_exit = uptrend.get("emergency_exit", False)
+    exit_position = uptrend.get("exit_position", False)
+    reclaimed_ema333 = uptrend.get("reclaimed_ema333", False)
+    first_dip_buy_flag = uptrend.get("first_dip_buy_flag", False)
+    
+    # Log decision planning start with full context
+    pm_logger.info(
+        "PLAN ACTIONS START: %s/%s tf=%s | "
+        "state=%s prev_state=%s | "
+        "flags: buy_signal=%s buy_flag=%s trim_flag=%s emergency_exit=%s exit_position=%s reclaimed_ema333=%s first_dip=%s | "
+        "position: qty=%.6f status=%s is_new_trade=%s | "
+        "scores: a_final=%.4f e_final=%.4f",
+        token_ticker, position.get("token_chain", "?"), timeframe,
+        state, prev_state,
+        buy_signal, buy_flag, trim_flag, emergency_exit, exit_position, reclaimed_ema333, first_dip_buy_flag,
+        total_quantity, status, is_new_trade,
+        a_final, e_final
+    )
+    
     # Compute position_size_frac for override application (from A value)
     # This is a simplified version - in practice it comes from compute_levers()
     # For override purposes, we'll use a default or compute from a_final
@@ -357,12 +392,19 @@ def plan_actions_v4(
     if uptrend.get("exit_position"):
         # Full exit - emergency or structural invalidation
         # No lesson matching for full exits (always 100%)
+        exit_reason = uptrend.get("exit_reason", "unknown")
+        pm_logger.info(
+            "PLAN ACTIONS: exit_position → emergency_exit | %s/%s tf=%s | "
+            "exit_reason=%s state=%s qty=%.6f",
+            token_ticker, position.get("token_chain", "?"), timeframe,
+            exit_reason, state, total_quantity
+        )
         action = {
             "decision_type": "emergency_exit",
             "size_frac": 1.0,
             "reasons": {
                 "flag": "exit_position",
-                "exit_reason": uptrend.get("exit_reason", "unknown"),
+                "exit_reason": exit_reason,
                 "state": state,
             }
         }
@@ -372,6 +414,12 @@ def plan_actions_v4(
             regime_context, token_bucket, sb_client, feature_flags,
             exposure_lookup=exposure_lookup,
             regime_states=regime_states,
+        )
+        pm_logger.info(
+            "PLAN ACTIONS: RETURN emergency_exit | %s/%s tf=%s | "
+            "size_frac=%.4f (after overrides)",
+            token_ticker, position.get("token_chain", "?"), timeframe,
+            action.get("size_frac", 1.0)
         )
         return [action]
     
@@ -388,17 +436,23 @@ def plan_actions_v4(
         already_executed_this_episode = bool(last_em_exit_ts)
 
         if already_executed_this_episode:
-            logging.getLogger("pm_core").info(
-                "PM BLOCKED emergency_exit for %s (%s): already executed in current episode (last_emergency_exit_ts=%s)",
-                position.get("token_ticker") or position.get("token_contract") or "?", position.get("timeframe", "?"),
-                last_em_exit_ts,
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED emergency_exit | %s/%s tf=%s | "
+                "reason: already_executed_this_episode | "
+                "last_emergency_exit_ts=%s",
+                token_ticker, token_chain, timeframe,
+                last_em_exit_ts
             )
             return []
 
         if total_quantity <= 0:
-            logging.getLogger("pm_core").info(
-                "PM BLOCKED emergency_exit for %s (%s): no tokens to sell (total_quantity=0)",
-                position.get("token_ticker") or position.get("token_contract") or "?", position.get("timeframe", "?"),
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED emergency_exit | %s/%s tf=%s | "
+                "reason: no_tokens_to_sell | "
+                "total_quantity=%.6f | "
+                "recording attempt to prevent re-spam",
+                token_ticker, token_chain, timeframe,
+                total_quantity
             )
             # Record the attempt to prevent immediate re-spam; still allow next episode after flag clears
             exec_history["last_emergency_exit_ts"] = _now_iso()
@@ -406,6 +460,12 @@ def plan_actions_v4(
             return []
 
         # No lesson matching for full exits (always 100%)
+        pm_logger.info(
+            "PLAN ACTIONS: emergency_exit flag → emergency_exit | %s/%s tf=%s | "
+            "state=%s qty=%.6f e_score=%.4f",
+            token_ticker, token_chain, timeframe,
+            state, total_quantity, e_final
+        )
         action = {
             "decision_type": "emergency_exit",
             "size_frac": 1.0,
@@ -425,6 +485,13 @@ def plan_actions_v4(
         # Stamp execution history to gate further exits in this episode
         exec_history["last_emergency_exit_ts"] = _now_iso()
         features["pm_execution_history"] = exec_history
+        pm_logger.info(
+            "PLAN ACTIONS: RETURN emergency_exit | %s/%s tf=%s | "
+            "size_frac=%.4f (after overrides) | "
+            "stamped last_emergency_exit_ts",
+            token_ticker, token_chain, timeframe,
+            action.get("size_frac", 1.0)
+        )
         return [action]
     
     # Trim Flags (S2/S3) - Check cooldown and S/R level
@@ -484,13 +551,29 @@ def plan_actions_v4(
         
         # Emit actionable trim only when SR level changed vs last signal and we hold tokens
         if can_trim and sr_level_changed_signal and total_quantity > 0:
-            trim_size = _e_to_trim_size(e_final) * trim_multiplier
+            base_trim_size = _e_to_trim_size(e_final)
+            trim_size = base_trim_size * trim_multiplier
             # Hard cap trims to avoid full exits masquerading as trims
             max_trim_frac = float(os.getenv("PM_MAX_TRIM_FRAC", "0.5"))
             trim_size = min(trim_size, max_trim_frac)
             
-            # Build context for lesson matching
             scores = uptrend.get("scores") or {}
+            ox_score = scores.get("ox", 0.0)
+            
+            pm_logger.info(
+                "PLAN ACTIONS: trim_flag → trim | %s/%s tf=%s | "
+                "state=%s qty=%.6f | "
+                "trim_size=%.4f (base=%.4f * multiplier=%.4f, capped_at=%.4f) | "
+                "e_final=%.4f ox_score=%.4f | "
+                "cooldown_expired=%s sr_level_changed=%s sr_level=%.8f",
+                token_ticker, token_chain, timeframe,
+                state, total_quantity,
+                trim_size, base_trim_size, trim_multiplier, max_trim_frac,
+                e_final, ox_score,
+                cooldown_expired, sr_level_changed, current_sr_level or 0.0
+            )
+            
+            # Build context for lesson matching
             context = {
                 'state': state,
                 'a_bucket': bucket_a_e(a_final),
@@ -498,7 +581,7 @@ def plan_actions_v4(
                 'action_type': 'trim',
                 'trim_flag': True,
                 'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
-                'ox_score_bucket': bucket_score(scores.get('ox', 0.0)),
+                'ox_score_bucket': bucket_score(ox_score),
             }
             
             action = {
@@ -508,7 +591,7 @@ def plan_actions_v4(
                     "flag": "trim_flag",
                     "state": state,
                     "e_score": e_final,
-                    "ox_score": scores.get("ox", 0.0),
+                    "ox_score": ox_score,
                     "trim_multiplier": trim_multiplier,
                     "cooldown_expired": cooldown_expired,
                     "sr_level_changed": sr_level_changed,
@@ -522,7 +605,37 @@ def plan_actions_v4(
                 exposure_lookup=exposure_lookup,
                 regime_states=regime_states,
             )
+            pm_logger.info(
+                "PLAN ACTIONS: RETURN trim | %s/%s tf=%s | "
+                "size_frac=%.4f (after overrides)",
+                token_ticker, token_chain, timeframe,
+                action.get("size_frac", trim_size)
+            )
             return [action]
+        else:
+            if not can_trim:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED trim | %s/%s tf=%s | "
+                    "reason: cannot_trim | "
+                    "cooldown_expired=%s sr_level_changed=%s",
+                    token_ticker, token_chain, timeframe,
+                    cooldown_expired, sr_level_changed
+                )
+            elif not sr_level_changed_signal:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED trim | %s/%s tf=%s | "
+                    "reason: sr_level_not_changed | "
+                    "current_sr=%.8f last_signal_sr=%.8f",
+                    token_ticker, token_chain, timeframe,
+                    current_sr_level or 0.0, last_trim_signal_sr_level or 0.0
+                )
+            elif total_quantity <= 0:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED trim | %s/%s tf=%s | "
+                    "reason: no_tokens_to_trim | qty=%.6f",
+                    token_ticker, token_chain, timeframe,
+                    total_quantity
+                )
     
     # Entry Gates (S1, S2, S3) - Check execution history
     base_buy_signal = uptrend.get("buy_signal", False)  # S1
@@ -610,9 +723,23 @@ def plan_actions_v4(
         if not last_s1_buy:
             # Never bought in S1, and we're in S1 (transitioned from S0)
             entry_size = _a_to_entry_size(a_final, state, buy_signal=True, buy_flag=False, first_dip_buy_flag=False)
+            scores = uptrend.get("scores") or {}
+            
+            pm_logger.info(
+                "PLAN ACTIONS: buy_signal (S1) → %s | %s/%s tf=%s | "
+                "state=%s | "
+                "entry_size=%.4f | "
+                "a_final=%.4f ts_score=%.4f | "
+                "no_last_s1_buy",
+                "entry" if is_new_trade else "add",
+                token_ticker, token_chain, timeframe,
+                state,
+                entry_size,
+                a_final, scores.get("ts", 0.0)
+            )
+            
             if entry_size > 0:
                 # Build context for lesson matching
-                scores = uptrend.get("scores") or {}
                 context = {
                     'state': state,
                     'a_bucket': bucket_a_e(a_final),
@@ -641,7 +768,36 @@ def plan_actions_v4(
                     exposure_lookup=exposure_lookup,
                     regime_states=regime_states,
                 )
+                pm_logger.info(
+                    "PLAN ACTIONS: RETURN %s (S1) | %s/%s tf=%s | "
+                    "size_frac=%.4f (after overrides)",
+                    decision_type, token_ticker, token_chain, timeframe,
+                    action.get("size_frac", entry_size)
+                )
                 return [action]
+            else:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED %s (S1) | %s/%s tf=%s | "
+                    "reason: entry_size=0",
+                    "entry" if is_new_trade else "add",
+                    token_ticker, token_chain, timeframe
+                )
+        else:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED buy_signal (S1) | %s/%s tf=%s | "
+                "reason: already_bought_in_s1 | "
+                "last_s1_buy=%s",
+                token_ticker, token_chain, timeframe,
+                last_s1_buy
+            )
+    elif effective_buy_signal and state != "S1":
+        pm_logger.info(
+            "PLAN ACTIONS: BLOCKED buy_signal | %s/%s tf=%s | "
+            "reason: wrong_state | "
+            "state=%s (expected S1)",
+            token_ticker, token_chain, timeframe,
+            state
+        )
     
     # S2/S3: Reset on trim or state transition
     # ------------------------------------------------------------------------
@@ -716,6 +872,17 @@ def plan_actions_v4(
             logging.getLogger(__name__).warning(f"Error applying S3 tuning overrides: {e}")
 
     if (effective_buy_flag or first_dip_buy_flag) and state in ["S2", "S3"]:
+        # Defensive check: Never buy when in emergency exit zone (price < EMA333)
+        # The engine should block flags from being set, but this ensures we don't buy below EMA333
+        emergency_exit_active = uptrend.get("emergency_exit", False)
+        if emergency_exit_active:
+            ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
+            logging.getLogger("pm_core").info(
+                "PM BLOCKED buy (S2/S3) for %s (%s): emergency_exit=True (price < EMA333) - buy_flag=%s, first_dip_buy_flag=%s, state=%s",
+                ticker, position.get("timeframe", "?"), effective_buy_flag, first_dip_buy_flag, state
+            )
+            return []  # Block all buys below EMA333 - wait for reclaim via reclaimed_ema333 path
+        
         last_buy = exec_history.get(f"last_{state.lower()}_buy", {})
         last_trim_ts = exec_history.get("last_trim", {}).get("timestamp")
         state_transitioned = (prev_state != state)  # State changed (S2 → S3 or S3 → S2)
@@ -743,24 +910,37 @@ def plan_actions_v4(
         
         # Log why first-dip buy is blocked
         if first_dip_buy_flag and not can_buy:
-            ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
-            logging.getLogger("pm_core").info("PM BLOCKED first_dip_buy for %s (%s): has_last_buy=%s, state_transitioned=%s, last_trim_ts=%s", 
-                                            ticker, position.get("timeframe", "?"), bool(last_buy), state_transitioned, last_trim_ts)
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED first_dip_buy | %s/%s tf=%s | "
+                "reason: cannot_buy | "
+                "has_last_buy=%s state_transitioned=%s last_trim_ts=%s",
+                token_ticker, token_chain, timeframe,
+                bool(last_buy), state_transitioned, last_trim_ts
+            )
         
         if can_buy:
-            entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=effective_buy_flag, first_dip_buy_flag=first_dip_buy_flag)
-            entry_size = entry_size * entry_multiplier  # Apply profit/allocation multiplier
+            base_entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=effective_buy_flag, first_dip_buy_flag=first_dip_buy_flag)
+            entry_size = base_entry_size * entry_multiplier  # Apply profit/allocation multiplier
             
-            # Log entry_size calculation
-            if first_dip_buy_flag:
-                ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
-                logging.getLogger("pm_core").info("PM first_dip_buy entry_size calculation for %s (%s): a_final=%.4f, entry_size=%.6f, entry_multiplier=%.4f", 
-                                                  ticker, position.get("timeframe", "?"), a_final, entry_size, entry_multiplier)
+            scores = uptrend.get("scores") or {}
+            flag_type = "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
+            
+            pm_logger.info(
+                "PLAN ACTIONS: %s/%s → %s | %s/%s tf=%s | "
+                "state=%s flag=%s | "
+                "entry_size=%.4f (base=%.4f * multiplier=%.4f) | "
+                "a_final=%.4f ts_score=%.4f dx_score=%.4f | "
+                "can_buy=True (last_buy=%s state_transitioned=%s)",
+                flag_type, state, "entry" if is_new_trade else "add",
+                token_ticker, token_chain, timeframe,
+                state, flag_type,
+                entry_size, base_entry_size, entry_multiplier,
+                a_final, scores.get("ts", 0.0), scores.get("dx", 0.0),
+                bool(last_buy), state_transitioned
+            )
             
             if entry_size > 0:
                 # Build context for lesson matching
-                scores = uptrend.get("scores") or {}
-                flag_type = "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
                 context = {
                     'state': state,
                     'a_bucket': bucket_a_e(a_final),
@@ -792,14 +972,51 @@ def plan_actions_v4(
                     exposure_lookup=exposure_lookup,
                     regime_states=regime_states,
                 )
+                pm_logger.info(
+                    "PLAN ACTIONS: RETURN %s | %s/%s tf=%s | "
+                    "size_frac=%.4f (after overrides)",
+                    decision_type, token_ticker, token_chain, timeframe,
+                    action.get("size_frac", entry_size)
+                )
                 return [action]
+            else:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED %s | %s/%s tf=%s | "
+                    "reason: entry_size=0 | "
+                    "base_entry_size=%.4f entry_multiplier=%.4f",
+                    "entry" if is_new_trade else "add",
+                    token_ticker, token_chain, timeframe,
+                    base_entry_size, entry_multiplier
+                )
+        else:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED buy (S2/S3) | %s/%s tf=%s | "
+                "reason: cannot_buy | "
+                "flag=%s state=%s | "
+                "has_last_buy=%s state_transitioned=%s last_trim_ts=%s",
+                token_ticker, token_chain, timeframe,
+                "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown"),
+                state,
+                bool(last_buy), state_transitioned, last_trim_ts
+            )
     
     # Reclaimed EMA333 (S3 auto-rebuy)
     if state == "S3" and uptrend.get("reclaimed_ema333"):
         # Check if we already rebought on this reclaim
         last_reclaim_buy = exec_history.get("last_reclaim_buy", {})
         reclaimed_at = uptrend.get("ts")  # Timestamp when EMA333 was reclaimed
-        if not last_reclaim_buy or last_reclaim_buy.get("reclaimed_at") != reclaimed_at:
+        last_reclaim_at = last_reclaim_buy.get("reclaimed_at") if last_reclaim_buy else None
+        
+        pm_logger.info(
+            "PLAN ACTIONS: reclaimed_ema333 detected | %s/%s tf=%s | "
+            "state=%s qty=%.6f is_new_trade=%s | "
+            "reclaimed_at=%s last_reclaim_at=%s",
+            token_ticker, token_chain, timeframe,
+            state, total_quantity, is_new_trade,
+            reclaimed_at, last_reclaim_at
+        )
+        
+        if not last_reclaim_buy or last_reclaim_at != reclaimed_at:
             rebuy_size = _a_to_entry_size(a_final, state, False, False, False) * entry_multiplier
             if rebuy_size > 0:
                 # Build context for lesson matching
@@ -814,6 +1031,14 @@ def plan_actions_v4(
                 }
                 
                 decision_type = "entry" if is_new_trade else "add"
+                pm_logger.info(
+                    "PLAN ACTIONS: reclaimed_ema333 → %s | %s/%s tf=%s | "
+                    "rebuy_size=%.4f (base=%.4f * multiplier=%.4f) | "
+                    "a_final=%.4f entry_multiplier=%.4f",
+                    decision_type, token_ticker, token_chain, timeframe,
+                    rebuy_size, _a_to_entry_size(a_final, state, False, False, False), entry_multiplier,
+                    a_final, entry_multiplier
+                )
                 action = {
                     "decision_type": decision_type,
                     "size_frac": rebuy_size,
@@ -829,9 +1054,39 @@ def plan_actions_v4(
                     action, position, a_final, e_final, position_size_frac,
                     regime_context, token_bucket, sb_client, feature_flags
                 )
+                pm_logger.info(
+                    "PLAN ACTIONS: RETURN reclaimed_ema333 %s | %s/%s tf=%s | "
+                    "size_frac=%.4f (after overrides)",
+                    decision_type, token_ticker, token_chain, timeframe,
+                    action.get("size_frac", rebuy_size)
+                )
                 return [action]
+            else:
+                pm_logger.info(
+                    "PLAN ACTIONS: BLOCKED reclaimed_ema333 buy | %s/%s tf=%s | "
+                    "reason: rebuy_size=0 (a_final=%.4f entry_multiplier=%.4f)",
+                    token_ticker, token_chain, timeframe,
+                    a_final, entry_multiplier
+                )
+        else:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED reclaimed_ema333 buy | %s/%s tf=%s | "
+                "reason: already_rebought_on_this_reclaim | "
+                "last_reclaim_buy=%s reclaimed_at=%s",
+                token_ticker, token_chain, timeframe,
+                last_reclaim_buy, reclaimed_at
+            )
     
     # Default: No action (don't emit strand for holds)
+    if not actions:
+        pm_logger.info(
+            "PLAN ACTIONS: RETURN [] (no action) | %s/%s tf=%s | "
+            "state=%s flags: buy_signal=%s buy_flag=%s trim_flag=%s | "
+            "qty=%.6f status=%s",
+            token_ticker, position.get("token_chain", "?"), timeframe,
+            state, buy_signal, buy_flag, trim_flag,
+            total_quantity, status
+        )
     return actions  # Empty list = no action, no strand
 
 

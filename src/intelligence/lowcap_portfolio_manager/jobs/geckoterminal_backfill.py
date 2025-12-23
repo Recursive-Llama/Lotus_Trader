@@ -181,8 +181,11 @@ def _select_canonical_pool_from_gt(chain: str, token_mint: str) -> Optional[Tupl
     return (pool_address, dex_id, quote_symbol)
 
 
-def _get_canonical_pool_from_features(features: Optional[Dict[str, Any]]) -> Optional[Tuple[str, str]]:
-    """Extract canonical pool from position features"""
+def _get_canonical_pool_from_features(features: Optional[Dict[str, Any]]) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
+    """
+    Extract canonical pool from position features.
+    Returns (pair_address, dex_id, quote_symbol, last_pool_check) or None
+    """
     if not features:
         return None
     cp = features.get('canonical_pool') if isinstance(features, dict) else None
@@ -190,12 +193,24 @@ def _get_canonical_pool_from_features(features: Optional[Dict[str, Any]]) -> Opt
         pair = cp.get('pair_address')
         dex_id = cp.get('dex_id')
         if pair and dex_id:
-            return (pair, dex_id)
+            quote_symbol = cp.get('quote_symbol')
+            last_pool_check = cp.get('last_pool_check')  # ISO timestamp string
+            return (pair, dex_id, quote_symbol, last_pool_check)
     return None
 
 
-def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: str, chain: str, pool_addr: str, dex_id: str):
-    """Update position features with canonical pool info"""
+def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: str, chain: str, pool_addr: str, dex_id: str, quote_symbol: Optional[str] = None):
+    """
+    Update position features with canonical pool info.
+    
+    Args:
+        supabase: Supabase manager
+        token_contract: Token contract address
+        chain: Chain name
+        pool_addr: Pool address
+        dex_id: DEX ID
+        quote_symbol: Quote symbol (e.g., 'SOL', 'USDC') - optional, will be stored if provided
+    """
     try:
         # Find latest position for this token/chain
         res = (
@@ -231,7 +246,21 @@ def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: s
         features = row.get('features') or {}
         if not isinstance(features, dict):
             features = {}
-        features['canonical_pool'] = {'pair_address': pool_addr, 'dex_id': dex_id}
+        
+        # Build canonical_pool dict
+        canonical_pool = {
+            'pair_address': pool_addr,
+            'dex_id': dex_id
+        }
+        
+        # Add quote_symbol if provided
+        if quote_symbol:
+            canonical_pool['quote_symbol'] = quote_symbol
+        
+        # Update last_pool_check timestamp (when we last fetched/verified pool info)
+        canonical_pool['last_pool_check'] = _now_utc().isoformat()
+        
+        features['canonical_pool'] = canonical_pool
         supabase.client.table('lowcap_positions').update({'features': features}).eq('id', row['id']).execute()
     except Exception as e:
         logger.warning(f"Failed to persist canonical_pool for {token_contract} on {chain}: {e}")
@@ -439,17 +468,56 @@ def backfill_token_timeframe(
     dex_id: str = ''
     quote_symbol: str = ''
     
+    # Pool refresh interval: 7 days (604800 seconds)
+    POOL_REFRESH_INTERVAL_SECONDS = 7 * 24 * 60 * 60
+    
     if canonical:
-        pool_addr, dex_id = canonical
-        try:
-            data = _fetch_gt_pools_by_token(network, token_contract)
-            for p in data.get('data', []) or []:
-                if (p.get('attributes', {}) or {}).get('address') == pool_addr:
-                    quote_symbol = (p.get('attributes', {}).get('name') or '').split('/')[-1].strip().upper()
-                    break
-        except Exception:
-            quote_symbol = NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+        pool_addr, dex_id, stored_quote_symbol, last_pool_check = canonical
+        
+        # Check if we need to refresh pool info
+        needs_refresh = False
+        if not stored_quote_symbol:
+            # Missing quote_symbol - need to fetch
+            needs_refresh = True
+            logger.debug(f"Missing quote_symbol for {token_contract[:8]}..., fetching pools")
+        elif last_pool_check:
+            # Check if last_pool_check is older than refresh interval
+            try:
+                last_check_dt = datetime.fromisoformat(last_pool_check.replace('Z', '+00:00'))
+                age_seconds = (_now_utc() - last_check_dt).total_seconds()
+                if age_seconds > POOL_REFRESH_INTERVAL_SECONDS:
+                    needs_refresh = True
+                    logger.debug(f"Pool info for {token_contract[:8]}... is {age_seconds/86400:.1f} days old, refreshing")
+            except (ValueError, TypeError):
+                # Invalid timestamp, refresh to fix it
+                needs_refresh = True
+        else:
+            # No last_pool_check timestamp, refresh to add it
+            needs_refresh = True
+        
+        if needs_refresh:
+            # Fetch pools to get/verify quote_symbol
+            try:
+                data = _fetch_gt_pools_by_token(network, token_contract)
+                for p in data.get('data', []) or []:
+                    if (p.get('attributes', {}) or {}).get('address') == pool_addr:
+                        quote_symbol = (p.get('attributes', {}).get('name') or '').split('/')[-1].strip().upper()
+                        break
+                if quote_symbol:
+                    # Update features with quote_symbol and timestamp
+                    _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id, quote_symbol)
+                else:
+                    # Fallback if we couldn't find the pool
+                    quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+            except Exception as e:
+                logger.warning(f"Failed to refresh pool info for {token_contract[:8]}...: {e}, using stored quote_symbol")
+                quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+        else:
+            # Use stored quote_symbol - no API call needed!
+            quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+            logger.debug(f"Using cached pool info for {token_contract[:8]}... (quote_symbol={quote_symbol})")
     else:
+        # No canonical pool - need to fetch and select one
         picked = _select_canonical_pool_from_gt(chain, token_contract)
         if not picked:
             # Token not found on GeckoTerminal - return gracefully
@@ -464,7 +532,8 @@ def backfill_token_timeframe(
                 'error': 'token_not_found'
             }
         pool_addr, dex_id, quote_symbol = picked
-        _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id)
+        # Store canonical pool with quote_symbol
+        _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id, quote_symbol)
     
     timeframe_minutes_map = {'1m': 1, '15m': 15, '1h': 60, '4h': 240}
     timeframe_minutes = timeframe_minutes_map[timeframe]

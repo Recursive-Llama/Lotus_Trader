@@ -26,6 +26,7 @@ Volume: Sum of 1m volumes for timeframe
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass
@@ -98,6 +99,9 @@ class OHLCBar:
 class GenericOHLCRollup:
     """Generic OHLC rollup system for both majors and lowcaps"""
     
+    # Rate limit for price collection (matching scheduled_price_collector)
+    MAX_CALLS_PER_MINUTE = 250
+    
     def __init__(self):
         """Initialize the rollup system"""
         # Load environment variables from the correct path
@@ -117,6 +121,76 @@ class GenericOHLCRollup:
         self.gt_budget_per_minute = int(os.getenv("GT_CALL_BUDGET", "20"))
         self.gt_calls_remaining = self.gt_budget_per_minute
         self.last_gt_budget_reset: Optional[datetime] = None
+        
+        # Cache for dynamic threshold calculation
+        self._cached_token_count: Optional[int] = None
+        self._cached_token_count_time: Optional[datetime] = None
+    
+    def _get_total_token_count(self) -> int:
+        """Get total unique token count for dynamic threshold calculation"""
+        # Cache for 5 minutes to avoid repeated queries
+        now = datetime.now(timezone.utc)
+        if (self._cached_token_count is not None and 
+            self._cached_token_count_time is not None and
+            (now - self._cached_token_count_time).total_seconds() < 300):
+            return self._cached_token_count
+        
+        try:
+            result = (
+                self.sb.table('lowcap_positions')
+                .select('token_contract', 'token_chain')
+                .in_('status', ['active', 'watchlist', 'dormant'])
+                .execute()
+            )
+            
+            # Count unique (token_contract, chain) pairs
+            unique_tokens = set()
+            for row in (result.data or []):
+                token = row.get('token_contract')
+                chain = row.get('token_chain', '').lower()
+                if token and chain:
+                    unique_tokens.add((token, chain))
+            
+            self._cached_token_count = len(unique_tokens)
+            self._cached_token_count_time = now
+            return self._cached_token_count
+        except Exception as e:
+            self.logger.warning(f"Error getting token count: {e}")
+            return self._cached_token_count or 100  # Default fallback
+    
+    def _get_collection_interval(self) -> int:
+        """
+        Calculate collection interval based on total token count.
+        
+        Returns interval in minutes (1, 2, 3, etc.)
+        - 0-250 tokens: Every 1 min
+        - 250-500 tokens: Every 2 min
+        - 500-750 tokens: Every 3 min
+        - etc.
+        """
+        total_tokens = self._get_total_token_count()
+        if total_tokens <= 0:
+            return 1
+        return max(1, math.ceil(total_tokens / self.MAX_CALLS_PER_MINUTE))
+    
+    def _get_dynamic_coverage_threshold(self) -> float:
+        """
+        Calculate coverage threshold based on collection interval.
+        
+        Returns threshold as decimal (0.60, 0.45, 0.33, etc.)
+        - Interval 1: 60%
+        - Interval 2: 45%
+        - Interval 3: 33%
+        - etc.
+        """
+        interval = self._get_collection_interval()
+        if interval <= 1:
+            return 0.60  # 60% for every-minute collection
+        elif interval == 2:
+            return 0.45  # 45% for every-2-minute collection
+        else:
+            # Dynamic: slightly below (60 / interval) / 60 to give buffer
+            return max(0.20, (60 / interval - 2) / 60)
 
     def _reset_gt_budget_if_needed(self):
         now = datetime.now(timezone.utc)
@@ -352,9 +426,10 @@ class GenericOHLCRollup:
         if len(bars_by_token) > 10:
             self.logger.info(f"  ... (+{len(bars_by_token) - 10} more tokens)")
         
-        # Check if we have enough bars (now 60% tolerance for partial data)
+        # Check if we have enough bars (dynamic threshold based on collection interval)
         required_bars = self._get_required_bars_count(timeframe)
-        min_required_bars = max(1, int(required_bars * 0.6))  # Allow 60% of required bars
+        coverage_threshold = self._get_dynamic_coverage_threshold()
+        min_required_bars = max(1, int(required_bars * coverage_threshold))  # Dynamic threshold
         
         # Calculate per-token coverage
         token_coverage = defaultdict(lambda: {"bars": 0, "tokens": set()})
@@ -1168,8 +1243,9 @@ class GenericOHLCRollup:
                 if not period_bars:
                     continue
                 
-                # Validate with 60% tolerance; create partial bars when below the threshold
-                min_required_bars = max(1, int(timeframe_minutes * 0.6))
+                # Validate with dynamic threshold based on collection interval
+                coverage_threshold = self._get_dynamic_coverage_threshold()
+                min_required_bars = max(1, int(timeframe_minutes * coverage_threshold))
                 partial = False
                 coverage_pct = (len(period_bars) / timeframe_minutes * 100) if timeframe_minutes > 0 else 0
                 if len(period_bars) < min_required_bars:

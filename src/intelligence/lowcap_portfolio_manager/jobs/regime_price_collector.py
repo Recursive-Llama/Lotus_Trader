@@ -178,12 +178,7 @@ class RegimePriceCollector:
         }
         
         # Write BTC to regime_price_data_ohlc, SOL/ETH/BNB to majors_price_data_ohlc
-        symbol_contracts = {
-            "SOL": "solana",
-            "ETH": "ethereum",
-            "BNB": "bnb",
-        }
-        
+        # Use uppercase symbols to match Hyperliquid naming convention
         for symbol_key, binance_symbol in MAJOR_SYMBOLS.items():
             for tf in timeframes:
                 try:
@@ -193,10 +188,10 @@ class RegimePriceCollector:
                         self._write_major_bars(symbol_key, tf, bars)
                         results["bars_written"] += len(bars)
                         logger.info(f"Backfilled {len(bars)} BTC bars for {tf}")
-                    elif symbol_key in symbol_contracts:
+                    else:
                         # Write SOL/ETH/BNB to majors_price_data_ohlc (for ALT composite)
-                        contract = symbol_contracts[symbol_key]
-                        self._write_majors_ohlc(contract, tf, bars)
+                        # Use uppercase symbol to match Hyperliquid naming (SOL, ETH, BNB)
+                        self._write_majors_ohlc(symbol_key, tf, bars)
                         logger.info(f"Backfilled {len(bars)} {symbol_key} bars to majors_price_data_ohlc for {tf}")
                 except Exception as e:
                     logger.error(f"Failed to backfill {symbol_key}/{tf}: {e}", exc_info=True)
@@ -418,11 +413,18 @@ class RegimePriceCollector:
             bar = self._get_latest_major_bar("BTC", timeframe, bucket_start)
             if bar:
                 self._write_major_bars("BTC", timeframe, [bar])
+                logger.info(f"Wrote BTC bar to regime_price_data_ohlc for {timeframe} at {bar.timestamp.isoformat()}")
+            else:
+                logger.warning(f"No BTC bar found in majors_price_data_ohlc for {timeframe} (checked from {bucket_start.isoformat()})")
         except Exception as e:
-            logger.warning(f"Failed to get BTC from majors: {e}")
+            logger.error(f"Failed to get BTC from majors: {e}", exc_info=True)
         
         # Compute ALT composite (reads from majors_price_data_ohlc, not regime_price_data_ohlc)
-        self._compute_alt_composite(timeframe, days=1)
+        try:
+            self._compute_alt_composite(timeframe, days=1)
+            logger.info(f"ALT composite computed and written to regime_price_data_ohlc for {timeframe}")
+        except Exception as e:
+            logger.error(f"Failed to compute ALT composite for {timeframe}: {e}", exc_info=True)
     
     def _get_latest_major_bar(
         self, 
@@ -430,22 +432,18 @@ class RegimePriceCollector:
         timeframe: str,
         bucket_start: datetime
     ) -> Optional[OHLCBar]:
-        """Get latest bar from majors_price_data_ohlc"""
-        # Map symbol to contract
-        symbol_contracts = {
-            "BTC": "bitcoin",
-            "SOL": "solana",
-            "ETH": "ethereum",
-            "BNB": "bnb",
-        }
-        contract = symbol_contracts.get(symbol)
-        if not contract:
-            return None
-            
+        """Get latest bar from majors_price_data_ohlc
+        
+        Uses uppercase symbols (BTC, SOL, ETH, BNB) to match Hyperliquid naming.
+        Doesn't filter by chain - gets latest bar which will naturally be from Hyperliquid
+        (ongoing) or Binance (backfill data from startup).
+        """
+        # Query for latest bar with uppercase symbol (no chain filter)
+        # Latest will naturally be from Hyperliquid (ongoing) or Binance (startup backfill)
         result = (
             self.sb.table("majors_price_data_ohlc")
             .select("*")
-            .eq("token_contract", contract)
+            .eq("token_contract", symbol)  # Uppercase: BTC, SOL, ETH, BNB
             .eq("timeframe", timeframe)
             .gte("timestamp", bucket_start.isoformat())
             .order("timestamp", desc=True)
@@ -453,18 +451,49 @@ class RegimePriceCollector:
             .execute()
         )
         
-        if not result.data:
-            return None
+        if result.data:
+            row = result.data[0]
+            return OHLCBar(
+                timestamp=datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
+                open=float(row["open_usd"]),
+                high=float(row["high_usd"]),
+                low=float(row["low_usd"]),
+                close=float(row["close_usd"]),
+                volume=float(row.get("volume", 0)),
+            )
+        
+        # Fallback to legacy lowercase names (for old Binance backfill data before normalization)
+        legacy_names = {
+            "BTC": "bitcoin",
+            "SOL": "solana",
+            "ETH": "ethereum",
+            "BNB": "bnb",
+        }
+        legacy_name = legacy_names.get(symbol)
+        if legacy_name:
+            result_legacy = (
+                self.sb.table("majors_price_data_ohlc")
+                .select("*")
+                .eq("token_contract", legacy_name)  # Legacy: bitcoin, solana, ethereum, bnb
+                .eq("timeframe", timeframe)
+                .gte("timestamp", bucket_start.isoformat())
+                .order("timestamp", desc=True)
+                .limit(1)
+                .execute()
+            )
             
-        row = result.data[0]
-        return OHLCBar(
-            timestamp=datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
-            open=float(row["open_usd"]),
-            high=float(row["high_usd"]),
-            low=float(row["low_usd"]),
-            close=float(row["close_usd"]),
-            volume=float(row.get("volume", 0)),
-        )
+            if result_legacy.data:
+                row = result_legacy.data[0]
+                return OHLCBar(
+                    timestamp=datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
+                    open=float(row["open_usd"]),
+                    high=float(row["high_usd"]),
+                    low=float(row["low_usd"]),
+                    close=float(row["close_usd"]),
+                    volume=float(row.get("volume", 0)),
+                )
+        
+        return None
     
     def _compute_alt_composite(self, timeframe: str, days: int = 1) -> None:
         """
@@ -484,34 +513,48 @@ class RegimePriceCollector:
         start = now - timedelta(days=days)
         
         # Fetch all component bars from majors_price_data_ohlc (not regime_price_data_ohlc)
-        symbol_contracts = {
-            "SOL": "solana",
-            "ETH": "ethereum",
-            "BNB": "bnb",
-            "HYPE": "hype",  # HYPE is only available from Hyperliquid WS, not Binance
-        }
+        # Both Binance and Hyperliquid now use uppercase symbols (SOL, ETH, BNB, HYPE)
+        # Note: HYPE is only available from Hyperliquid, not Binance
         component_bars: Dict[str, List[Dict]] = {}
         for component in ALT_COMPONENTS:
-            contract = symbol_contracts.get(component)
-            if not contract:
-                logger.warning(f"ALT component {component} has no contract mapping")
-                continue
             # Query for ALT components from both Binance (backfill) and Hyperliquid (live)
             # Chain field represents SOURCE (binance/hyperliquid), not blockchain
-            result_binance = (
-                self.sb.table("majors_price_data_ohlc")
-                .select("*")
-                .eq("token_contract", contract)
-                .eq("chain", "binance")  # Binance backfill data
-                .eq("timeframe", timeframe)
-                .gte("timestamp", start.isoformat())
-                .order("timestamp", desc=False)
-                .execute()
-            )
+            # Both sources now use uppercase symbols (SOL, ETH, BNB), but check old lowercase names too
+            result_binance = None
+            if component != "HYPE":  # HYPE not available from Binance
+                # Try new uppercase naming first (going forward)
+                result_binance = (
+                    self.sb.table("majors_price_data_ohlc")
+                    .select("*")
+                    .eq("token_contract", component)  # Uppercase: SOL, ETH, BNB
+                    .eq("chain", "binance")
+                    .eq("timeframe", timeframe)
+                    .gte("timestamp", start.isoformat())
+                    .order("timestamp", desc=False)
+                    .execute()
+                )
+                # Fallback to old lowercase names for historical data (legacy support)
+                if not result_binance.data:
+                    old_names = {"SOL": "solana", "ETH": "ethereum", "BNB": "bnb"}
+                    old_name = old_names.get(component)
+                    if old_name:
+                        result_binance_legacy = (
+                            self.sb.table("majors_price_data_ohlc")
+                            .select("*")
+                            .eq("token_contract", old_name)  # Legacy: solana, ethereum, bnb
+                            .eq("chain", "binance")
+                            .eq("timeframe", timeframe)
+                            .gte("timestamp", start.isoformat())
+                            .order("timestamp", desc=False)
+                            .execute()
+                        )
+                        if result_binance_legacy.data:
+                            result_binance = result_binance_legacy
+            
             result_hyperliquid = (
                 self.sb.table("majors_price_data_ohlc")
                 .select("*")
-                .eq("token_contract", contract)
+                .eq("token_contract", component)  # Use uppercase symbol directly
                 .eq("chain", "hyperliquid")  # Hyperliquid WS data
                 .eq("timeframe", timeframe)
                 .gte("timestamp", start.isoformat())
@@ -521,9 +564,9 @@ class RegimePriceCollector:
             
             # Combine results (prefer Hyperliquid if both exist, as it's more recent)
             result_data = []
-            if result_hyperliquid.data:
+            if result_hyperliquid and result_hyperliquid.data:
                 result_data.extend(result_hyperliquid.data)
-            if result_binance.data:
+            if result_binance and result_binance.data:
                 result_data.extend(result_binance.data)
             
             # Create a mock result object with combined data
@@ -543,11 +586,11 @@ class RegimePriceCollector:
             # Try to diagnose: check if any data exists for these contracts
             for component in missing:
                 if component != "HYPE":  # HYPE is expected to be missing
-                    # Check both binance and hyperliquid sources
+                    # Check both binance and hyperliquid sources (both use uppercase symbols now)
                     test_binance = (
                         self.sb.table("majors_price_data_ohlc")
                         .select("token_contract, chain, timeframe, timestamp")
-                        .eq("token_contract", symbol_contracts.get(component, ""))
+                        .eq("token_contract", component)
                         .eq("chain", "binance")
                         .limit(1)
                         .execute()
@@ -555,20 +598,20 @@ class RegimePriceCollector:
                     test_hyperliquid = (
                         self.sb.table("majors_price_data_ohlc")
                         .select("token_contract, chain, timeframe, timestamp")
-                        .eq("token_contract", symbol_contracts.get(component, ""))
+                        .eq("token_contract", component)
                         .eq("chain", "hyperliquid")
                         .limit(1)
                         .execute()
                     )
-                    if test_binance.data or test_hyperliquid.data:
+                    if (test_binance and test_binance.data) or (test_hyperliquid and test_hyperliquid.data):
                         sources = []
-                        if test_binance.data:
+                        if test_binance and test_binance.data:
                             sources.append("binance")
-                        if test_hyperliquid.data:
+                        if test_hyperliquid and test_hyperliquid.data:
                             sources.append("hyperliquid")
                         logger.warning(f"  {component} data exists ({', '.join(sources)}) but not for timeframe {timeframe}")
                     else:
-                        logger.warning(f"  {component} data not found in majors_price_data_ohlc (contract: {symbol_contracts.get(component, 'unknown')})")
+                        logger.warning(f"  {component} data not found in majors_price_data_ohlc (contract: {component})")
             # Log details about what we found
             for component, bars in component_bars.items():
                 logger.debug(f"  {component}: {len(bars)} bars")
