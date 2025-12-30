@@ -64,14 +64,32 @@ def _unix(ts: datetime) -> int:
 
 
 def _fetch_gt_pools_by_token(network: str, token_mint: str) -> Dict[str, Any]:
-    """Fetch pools for a token from GeckoTerminal"""
+    """Fetch pools for a token from GeckoTerminal with retry logic"""
     url = f"{GT_BASE}/networks/{network}/tokens/{token_mint}/pools?include=dex,base_token,quote_token&per_page=50"
-    resp = requests.get(url, headers=GT_HEADERS, timeout=15)
-    if resp.status_code == 404:
-        # Token not found on GeckoTerminal - return empty result
-        return {"data": None}
-    resp.raise_for_status()
-    return resp.json()
+    
+    # Retry with exponential backoff
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers=GT_HEADERS, timeout=15)
+            if resp.status_code == 404:
+                # Token not found on GeckoTerminal - return empty result
+                return {"data": None}
+            if resp.status_code == 429:
+                # Rate limited - wait longer
+                wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
+                logger.warning(f"Rate limited on pool discovery, waiting {wait_time}s (attempt {attempt + 1})")
+                time.sleep(wait_time)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            if attempt == 2:  # Last attempt
+                raise e
+            wait_time = (2 ** attempt) * 1  # 1, 2, 4 seconds
+            logger.warning(f"Pool discovery request failed, retrying in {wait_time}s: {e}")
+            time.sleep(wait_time)
+    
+    raise Exception("All retry attempts failed")
 
 
 def _fetch_gt_ohlcv_by_pool(network: str, pool_address: str, limit: int = 1000, to_ts: Optional[int] = None, timeframe: str = 'hour', aggregate: Optional[int] = None) -> Dict[str, Any]:
@@ -201,7 +219,10 @@ def _get_canonical_pool_from_features(features: Optional[Dict[str, Any]]) -> Opt
 
 def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: str, chain: str, pool_addr: str, dex_id: str, quote_symbol: Optional[str] = None):
     """
-    Update position features with canonical pool info.
+    Update position features with canonical pool info for ALL timeframes.
+    
+    Since we have 4 positions per token (one per timeframe), we need to update all of them
+    so they all share the same canonical pool and avoid redundant pool discovery calls.
     
     Args:
         supabase: Supabase manager
@@ -212,41 +233,6 @@ def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: s
         quote_symbol: Quote symbol (e.g., 'SOL', 'USDC') - optional, will be stored if provided
     """
     try:
-        # Find latest position for this token/chain
-        res = (
-            supabase.client
-            .table('lowcap_positions')
-            .select('id,features,created_at')
-            .eq('token_contract', token_contract)
-            .eq('token_chain', chain)
-            .eq('status', 'active')
-            .order('created_at', desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
-            # Fallback: latest row regardless of status
-            res = (
-                supabase.client
-                .table('lowcap_positions')
-                .select('id,features,created_at')
-                .eq('token_contract', token_contract)
-                .eq('token_chain', chain)
-                .order('created_at', desc=True)
-                .limit(1)
-                .execute()
-            )
-            rows = res.data or []
-        
-        if not rows:
-            return
-            
-        row = rows[0]
-        features = row.get('features') or {}
-        if not isinstance(features, dict):
-            features = {}
-        
         # Build canonical_pool dict
         canonical_pool = {
             'pair_address': pool_addr,
@@ -260,8 +246,34 @@ def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: s
         # Update last_pool_check timestamp (when we last fetched/verified pool info)
         canonical_pool['last_pool_check'] = _now_utc().isoformat()
         
-        features['canonical_pool'] = canonical_pool
-        supabase.client.table('lowcap_positions').update({'features': features}).eq('id', row['id']).execute()
+        # Get ALL positions for this token/chain (all timeframes)
+        res = (
+            supabase.client
+            .table('lowcap_positions')
+            .select('id,features')
+            .eq('token_contract', token_contract)
+            .eq('token_chain', chain)
+            .execute()
+        )
+        rows = res.data or []
+        
+        if not rows:
+            logger.debug(f"No positions found for {token_contract} on {chain} to update canonical pool")
+            return
+        
+        # Update each position's features with canonical pool
+        for row in rows:
+            try:
+                features = row.get('features') or {}
+                if not isinstance(features, dict):
+                    features = {}
+                
+                features['canonical_pool'] = canonical_pool
+                supabase.client.table('lowcap_positions').update({'features': features}).eq('id', row['id']).execute()
+            except Exception as e:
+                logger.warning(f"Failed to update canonical_pool for position {row.get('id')}: {e}")
+        
+        logger.debug(f"Updated canonical_pool for {len(rows)} positions ({token_contract[:8]}.../{chain})")
     except Exception as e:
         logger.warning(f"Failed to persist canonical_pool for {token_contract} on {chain}: {e}")
 
@@ -496,22 +508,11 @@ def backfill_token_timeframe(
             needs_refresh = True
         
         if needs_refresh:
-            # Fetch pools to get/verify quote_symbol
-            try:
-                data = _fetch_gt_pools_by_token(network, token_contract)
-                for p in data.get('data', []) or []:
-                    if (p.get('attributes', {}) or {}).get('address') == pool_addr:
-                        quote_symbol = (p.get('attributes', {}).get('name') or '').split('/')[-1].strip().upper()
-                        break
-                if quote_symbol:
-                    # Update features with quote_symbol and timestamp
-                    _update_canonical_pool_features(supabase, token_contract, chain, pool_addr, dex_id, quote_symbol)
-                else:
-                    # Fallback if we couldn't find the pool
-                    quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
-            except Exception as e:
-                logger.warning(f"Failed to refresh pool info for {token_contract[:8]}...: {e}, using stored quote_symbol")
-                quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+            # Defer pool refresh to avoid extra API calls during backfill.
+            # If we have pool_addr (which we should if canonical exists), we can use it for OHLCV fetching.
+            # The quote_symbol refresh is nice to have but not critical - we can refresh it later.
+            quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')
+            logger.debug(f"Deferring pool refresh for {token_contract[:8]}... (quote_symbol={quote_symbol}, will refresh later)")
         else:
             # Use stored quote_symbol - no API call needed!
             quote_symbol = stored_quote_symbol or NATIVE_SYMBOL_BY_CHAIN.get(chain, '')

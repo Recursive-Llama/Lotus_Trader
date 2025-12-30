@@ -9,8 +9,20 @@ from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 
 from supabase import create_client, Client  # type: ignore
-from src.intelligence.lowcap_portfolio_manager.pm.actions import plan_actions_v4
+from src.intelligence.lowcap_portfolio_manager.pm.actions import (
+    plan_actions_v4,
+    _get_pool,
+    _on_trim,
+    _on_s2_dip_buy,
+    _on_dx_buy,
+)
 from src.intelligence.lowcap_portfolio_manager.pm.levers import compute_levers
+from src.intelligence.lowcap_portfolio_manager.pm.ae_calculator_v2 import (
+    compute_ae_v2,
+    apply_strength_to_ae,
+    extract_regime_flags,
+    AEConfig,
+)
 from src.intelligence.lowcap_portfolio_manager.pm.executor import PMExecutor
 from src.intelligence.lowcap_portfolio_manager.pm.config import load_pm_config, fetch_and_merge_db_config
 from src.intelligence.lowcap_portfolio_manager.pm.exposure import ExposureLookup, ExposureConfig
@@ -26,6 +38,10 @@ from src.intelligence.lowcap_portfolio_manager.pm.bucketing_helpers import (
     classify_outcome, classify_hold_time
 )
 from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import BUCKET_DRIVERS
+from src.intelligence.lowcap_portfolio_manager.pm.episode_blocking import (
+    record_attempt_failure,
+    record_episode_success,
+)
 
 
 logger = logging.getLogger("pm_core")
@@ -81,7 +97,8 @@ class PMCoreTick:
                         bot_token=bot_token,
                         channel_id=channel_id,
                         api_id=api_id,
-                        api_hash=api_hash
+                        api_hash=api_hash,
+                        session_id=self.timeframe  # Unique session per timeframe to avoid database locks
                     )
                     logger.info("Telegram notifications enabled")
                 else:
@@ -90,45 +107,50 @@ class PMCoreTick:
                 logger.warning(f"Failed to initialize Telegram notifier: {e}")
 
     def _fire_and_forget(self, coro, description: str = "notification") -> bool:
-        """Run async notification without blocking the trading path."""
+        """Run async notification without blocking the trading path.
+        
+        Uses threading to avoid event loop conflicts with Telethon client.
+        Similar pattern to executor's event loop fix.
+        """
+        import threading
+        
         logger.info(f"NOTIFICATION SCHEDULING: {description}")
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop: execute synchronously
-            logger.info(f"NOTIFICATION EXECUTING SYNC: {description} (no running loop)")
+        
+        # Use thread with new event loop to avoid conflicts
+        result_container = {"result": False, "exception": None}
+        
+        def _run_in_thread():
+            """Run coroutine in new thread with fresh event loop."""
             try:
-                result = asyncio.run(coro)
-                if result:
-                    logger.info(f"NOTIFICATION SUCCESS: {description}")
-                else:
-                    logger.warning(f"NOTIFICATION FAILED: {description} (returned False)")
-                return result
+                # Create new event loop for this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    result = new_loop.run_until_complete(coro)
+                    result_container["result"] = result
+                finally:
+                    new_loop.close()
             except Exception as e:
-                logger.error(f"NOTIFICATION ERROR: {description} - {e}", exc_info=True)
-                return False
-
-        try:
-            task = loop.create_task(coro)
-            logger.info(f"NOTIFICATION SCHEDULED: {description} (async task created)")
-        except Exception as e:
-            logger.error(f"NOTIFICATION SCHEDULING ERROR: {description} - {e}", exc_info=True)
+                result_container["exception"] = e
+        
+        thread = threading.Thread(target=_run_in_thread, daemon=True)
+        thread.start()
+        thread.join(timeout=10)  # 10 second timeout for notifications
+        
+        if thread.is_alive():
+            logger.error(f"NOTIFICATION TIMEOUT: {description} (took >10s)")
             return False
-
-        def _log_result(task: asyncio.Task) -> None:
-            if task.cancelled():
-                logger.warning(f"NOTIFICATION CANCELLED: {description}")
-            elif task.exception():
-                logger.error(f"NOTIFICATION TASK ERROR: {description} - {task.exception()}", exc_info=True)
-            else:
-                result = task.result()
-                if result:
-                    logger.info(f"NOTIFICATION SUCCESS: {description}")
-                else:
-                    logger.warning(f"NOTIFICATION FAILED: {description} (returned False)")
-
-        task.add_done_callback(_log_result)
-        return True
+        
+        if result_container["exception"]:
+            logger.error(f"NOTIFICATION ERROR: {description} - {result_container['exception']}", exc_info=True)
+            return False
+        
+        result = result_container["result"]
+        if result:
+            logger.info(f"NOTIFICATION SUCCESS: {description}")
+        else:
+            logger.warning(f"NOTIFICATION FAILED: {description} (returned False)")
+        return result
 
     def _get_regime_driver_states(self, driver: str | None) -> Dict[str, str]:
         """
@@ -519,10 +541,13 @@ class PMCoreTick:
         if not isinstance(meta, dict):
             meta = {}
         meta.setdefault("s1_episode", None)
+        meta.setdefault("s2_episode", None)  # Phase 7: S2 episode tracking
         meta.setdefault("s3_episode", None)
         meta.setdefault("last_consumed_s1_buy_ts", None)
+        meta.setdefault("last_consumed_s2_buy_ts", None)  # Phase 7: S2 tracking
         meta.setdefault("last_consumed_s3_buy_ts", None)
         meta.setdefault("last_consumed_trim_ts", None)
+        meta.setdefault("dx_episode_ids", [])  # Phase 7: Track DX episode IDs for outcome updates
         features["uptrend_episode_meta"] = meta
         return meta
 
@@ -613,6 +638,67 @@ class PMCoreTick:
             "halo_distance": halo_dist,
             "price": price,
             "ema60": ema60,
+        }
+        
+        if levers:
+            sample["a_value"] = float(levers.get("A_value", 0.0))
+            sample["position_size_frac"] = float(levers.get("position_size_frac", 0.0))
+            
+        return sample
+
+    def _capture_s2_window_sample(self, uptrend: Dict[str, Any], now: datetime, levers: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Capture S2 window sample for tuning learning.
+        
+        S2 is the "danger zone" between S1 and S3 where price is above EMA333
+        but full alignment hasn't been achieved yet. S2 buy opportunities happen
+        when buy_flag is set during S2 state.
+        
+        Phase 7: S2 episode tracking for tuning.
+        """
+        diagnostics = (uptrend.get("diagnostics") or {}).get("buy_check") or {}
+        ema_vals = uptrend.get("ema") or {}
+        scores = uptrend.get("scores") or {}
+        price = float(uptrend.get("price", 0.0))
+        ema60 = float(ema_vals.get("ema60", 0.0))
+        ema144 = float(ema_vals.get("ema144", 0.0))
+        ema333 = float(ema_vals.get("ema333", 0.0))
+        atr = float(diagnostics.get("atr", 0.0))
+        halo = float(diagnostics.get("halo", 0.0))
+        
+        # S2 halo distance: how far from EMA60 in ATR units
+        halo_dist = None
+        if atr > 0 and ema60 > 0:
+            halo_dist = abs(price - ema60) / atr
+        
+        # Price position between EMA333 and EMA144 (for S2, EMA144 may be below EMA333)
+        price_pos = None
+        if ema333 > 0 and ema144 > 0:
+            band_width = abs(ema144 - ema333)
+            if band_width > 0:
+                price_pos = (price - min(ema333, ema144)) / band_width
+                price_pos = max(0.0, min(1.0, price_pos))
+
+        sample = {
+            "ts": now.isoformat(),
+            "ts_score": float(diagnostics.get("ts_score", 0.0)),
+            "ts_with_boost": float(diagnostics.get("ts_with_boost", 0.0)),
+            "sr_boost": float(diagnostics.get("sr_boost", 0.0)),
+            "entry_zone_ok": bool(diagnostics.get("entry_zone_ok")),
+            "slope_ok": bool(diagnostics.get("slope_ok")),
+            "ts_ok": bool(diagnostics.get("ts_ok")),
+            "ema60_slope": float(diagnostics.get("ema60_slope", 0.0)),
+            "ema144_slope": float(diagnostics.get("ema144_slope", 0.0)),
+            "ema250_slope": float(diagnostics.get("ema250_slope", 0.0)),
+            "ema333_slope": float(diagnostics.get("ema333_slope", 0.0)),
+            "halo": halo,
+            "halo_distance": halo_dist,
+            "price": price,
+            "price_pos": price_pos,
+            "ema60": ema60,
+            "ema144": ema144,
+            "ema333": ema333,
+            "dx_score": float(scores.get("dx", 0.0)),  # Include DX for S2 context
         }
         
         if levers:
@@ -1018,6 +1104,24 @@ class PMCoreTick:
                         active_window["entry_timestamp"] = last_ts
                     meta["last_consumed_s1_buy_ts"] = last_ts
                     changed = True
+        # Phase 7: S2 entry flag tracking
+        last_s2_buy = execution_history.get("last_s2_buy") or {}
+        last_s2_ts = last_s2_buy.get("timestamp")
+        if last_s2_ts:
+            s2_episode = meta.get("s2_episode")
+            consumed = meta.get("last_consumed_s2_buy_ts")
+            if s2_episode and consumed != last_s2_ts:
+                started_at = s2_episode.get("started_at")
+                started_dt = self._iso_to_datetime(started_at)
+                ts_dt = self._iso_to_datetime(last_s2_ts)
+                if started_dt and ts_dt and ts_dt >= started_dt:
+                    s2_episode["entered"] = True
+                    active_window = s2_episode.get("active_window")
+                    if active_window:
+                        active_window["entered"] = True
+                        active_window["entry_timestamp"] = last_s2_ts
+                    meta["last_consumed_s2_buy_ts"] = last_s2_ts
+                    changed = True
         s3_episode = meta.get("s3_episode")
         last_s3_buy = execution_history.get("last_s3_buy") or {}
         last_s3_ts = last_s3_buy.get("timestamp")
@@ -1097,6 +1201,18 @@ class PMCoreTick:
                     "active_window": None,
                 }
                 changed = True
+            # Phase 7: S2 episode starts when transitioning to S2 from S1 (first time in attempt)
+            elif state == "S2" and prev_state == "S1" and not meta.get("s2_episode"):
+                episode_id = self._generate_episode_id("s2")
+                meta["s2_episode"] = {
+                    "episode_id": episode_id,
+                    "started_at": now.isoformat(),
+                    "entered": False,
+                    "windows": [],
+                    "active_window": None,
+                }
+                changed = True
+                logger.debug("PHASE7: Started S2 episode %s for position", episode_id)
             elif state == "S3" and prev_state != "S3":
                 episode_id = self._generate_episode_id("s3")
                 meta["s3_episode"] = {
@@ -1128,6 +1244,18 @@ class PMCoreTick:
                     # Update DB outcomes for all windows in this episode
                     self._update_episode_outcomes_from_meta(s1_episode, outcome)
                     
+                    # Record episode success to unblock (if blocked)
+                    try:
+                        record_episode_success(
+                            sb_client=self.sb,
+                            token_contract=position.get("token_contract", ""),
+                            token_chain=position.get("token_chain", ""),
+                            timeframe=position.get("timeframe", ""),
+                            book_id=position.get("book_id", "onchain_crypto")
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record episode success for blocking: {e}")
+                    
                     s1_episode.pop("active_window", None)
                     strands.append(
                         self._build_episode_summary_strand(
@@ -1148,6 +1276,25 @@ class PMCoreTick:
                     # Update DB outcomes for all windows in this episode
                     self._update_episode_outcomes_from_meta(s1_episode, outcome)
 
+                    # Record blocking failure if we entered S1
+                    if s1_episode.get("entered"):
+                        try:
+                            # Check if S2 also entered in this attempt (need to check s2_episode before it's cleared)
+                            s2_episode = meta.get("s2_episode")
+                            entered_s2 = s2_episode.get("entered", False) if s2_episode else False
+                            
+                            record_attempt_failure(
+                                sb_client=self.sb,
+                                token_contract=position.get("token_contract", ""),
+                                token_chain=position.get("token_chain", ""),
+                                timeframe=position.get("timeframe", ""),
+                                entered_s1=True,
+                                entered_s2=entered_s2,
+                                book_id=position.get("book_id", "onchain_crypto")
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to record attempt failure for blocking: {e}")
+
                     s1_episode.pop("active_window", None)
                     strands.append(
                         self._build_episode_summary_strand(
@@ -1163,6 +1310,104 @@ class PMCoreTick:
                     )
                     meta["s1_episode"] = None
                     changed = True
+
+            # Phase 7: S2 episode outcome handling
+            s2_episode = meta.get("s2_episode")
+            if s2_episode:
+                if state == "S3":
+                    # S2 episode succeeded - attempt reached S3
+                    outcome = "success"
+                    self._update_episode_outcomes_from_meta(s2_episode, outcome)
+                    
+                    # Record episode success to unblock (if blocked)
+                    try:
+                        record_episode_success(
+                            sb_client=self.sb,
+                            token_contract=position.get("token_contract", ""),
+                            token_chain=position.get("token_chain", ""),
+                            timeframe=position.get("timeframe", ""),
+                            book_id=position.get("book_id", "onchain_crypto")
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record episode success for blocking: {e}")
+                    
+                    s2_episode.pop("active_window", None)
+                    strands.append(
+                        self._build_episode_summary_strand(
+                            position=position,
+                            episode=s2_episode,
+                            outcome="missed" if not s2_episode.get("entered") else "success",
+                            regime_context=regime_context,
+                            token_bucket=token_bucket,
+                            now=now,
+                            episode_type="s2_entry",
+                            levers=levers,
+                        )
+                    )
+                    meta["s2_episode"] = None
+                    changed = True
+                    logger.debug("PHASE7: S2 episode success for position")
+                elif state == "S0":
+                    # S2 episode failed - attempt ended at S0
+                    outcome = "failure"
+                    self._update_episode_outcomes_from_meta(s2_episode, outcome)
+                    
+                    # Record blocking failure if we entered S2
+                    # Note: If S1 also failed in this attempt, it was already recorded above.
+                    # Since record_attempt_failure uses upsert, calling it again is safe.
+                    if s2_episode.get("entered"):
+                        try:
+                            # Check if S1 also entered in this attempt
+                            # s1_episode may have been cleared above (set to None), so check safely
+                            s1_episode = meta.get("s1_episode")
+                            entered_s1 = False
+                            if s1_episode:  # Check if it exists (not None)
+                                entered_s1 = s1_episode.get("entered", False)
+                            
+                            record_attempt_failure(
+                                sb_client=self.sb,
+                                token_contract=position.get("token_contract", ""),
+                                token_chain=position.get("token_chain", ""),
+                                timeframe=position.get("timeframe", ""),
+                                entered_s1=entered_s1,
+                                entered_s2=True,
+                                book_id=position.get("book_id", "onchain_crypto")
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to record attempt failure for blocking: {e}")
+                    
+                    s2_episode.pop("active_window", None)
+                    strands.append(
+                        self._build_episode_summary_strand(
+                            position=position,
+                            episode=s2_episode,
+                            outcome="correct_skip" if not s2_episode.get("entered") else "failure",
+                            regime_context=regime_context,
+                            token_bucket=token_bucket,
+                            now=now,
+                            episode_type="s2_entry",
+                            levers=levers,
+                        )
+                    )
+                    meta["s2_episode"] = None
+                    changed = True
+                    logger.debug("PHASE7: S2 episode failure for position")
+
+            # Phase 7: Update DX episode outcomes on terminal state transitions
+            dx_episode_ids = meta.get("dx_episode_ids", [])
+            if dx_episode_ids:
+                if state == "S3":
+                    # DX episodes succeeded - recovery worked
+                    self._update_episode_outcome(dx_episode_ids, "success")
+                    meta["dx_episode_ids"] = []
+                    changed = True
+                    logger.debug("PHASE7: Updated %d DX episodes to success", len(dx_episode_ids))
+                elif state == "S0":
+                    # DX episodes failed - attempt ended at S0
+                    self._update_episode_outcome(dx_episode_ids, "failure")
+                    meta["dx_episode_ids"] = []
+                    changed = True
+                    logger.debug("PHASE7: Updated %d DX episodes to failure", len(dx_episode_ids))
 
             s3_episode = meta.get("s3_episode")
             if s3_episode and state == "S0":
@@ -1225,6 +1470,37 @@ class PMCoreTick:
             else:
                 changed |= self._finalize_active_window(s1_episode, now, position, regime_context, token_bucket, uptrend, levers)
 
+        # Phase 7: Handle S2 windows (Trigger: buy_flag in S2 state)
+        # S2 windows open when there's a buy opportunity in S2 (the "danger zone")
+        buy_flag = bool(uptrend.get("buy_flag"))
+        s2_episode = meta.get("s2_episode")
+        if s2_episode:
+            if state == "S2":
+                active_window = s2_episode.get("active_window")
+                # S2 window triggers on buy_flag (opportunity to add in S2)
+                s2_opportunity = buy_flag and entry_zone_ok
+                if s2_opportunity:
+                    if not active_window:
+                        active_window = {
+                            "window_id": self._generate_episode_id("s2win"),
+                            "window_type": "s2_buy_flag",
+                            "started_at": now.isoformat(),
+                            "samples": [],
+                            "entered": False,
+                        }
+                        s2_episode["active_window"] = active_window
+                        changed = True
+                        logger.debug("PHASE7: Opened S2 window for position")
+                    sample = self._capture_s2_window_sample(uptrend, now, levers)
+                    if sample:
+                        self._append_window_sample(active_window, sample)
+                        changed = True
+                elif active_window:
+                    changed |= self._finalize_active_window(s2_episode, now, position, regime_context, token_bucket, uptrend, levers)
+            else:
+                # Finalize S2 window if we left S2 state
+                changed |= self._finalize_active_window(s2_episode, now, position, regime_context, token_bucket, uptrend, levers)
+
         # Handle S3 retest windows (Trigger: Price < EMA144)
         s3_episode = meta.get("s3_episode")
         
@@ -1276,14 +1552,23 @@ class PMCoreTick:
     ) -> Dict[str, Any]:
         features = position.get("features") or {}
         uptrend_signals = features.get("uptrend_engine_v4") or {}
-        action_type = "entry" if episode_type == "s1_entry" else "add"
+        # Phase 7: Handle S2 episode type for tuning
+        if episode_type == "s1_entry":
+            action_type = "entry"
+            state = "S1"
+        elif episode_type == "s2_entry":
+            action_type = "add"  # S2 is an add, not initial entry
+            state = "S2"
+        else:  # s3_retest
+            action_type = "add"
+            state = "S3"
         pattern_key, action_category, scope = self._build_pattern_scope(
             position=position,
             uptrend_signals=uptrend_signals,
             action_type=action_type,
             regime_context=regime_context,
             token_bucket=token_bucket,
-            state="S1" if episode_type == "s1_entry" else "S3",
+            state=state,
             levers=levers,
         )
         position_id = position.get("id")
@@ -1658,26 +1943,39 @@ class PMCoreTick:
             # Update execution history based on decision type
             if decision_type in ["add", "entry"]:
                 # Determine which buy signal (S1, S2, S3, reclaimed_ema333)
-                if "s1" in signal.lower() or "buy_signal" in signal.lower():
+                # FIX: Use reasons["state"] not signal parsing - signal is "buy_flag" not "s2"/"s3"
+                state = (reasons.get("state") or "").upper()
+                
+                # Log warning if state is missing (so we catch it early)
+                if not state and "buy_signal" not in signal.lower() and "reclaimed" not in signal.lower():
+                    logger.warning(
+                        "BUY_HISTORY_NO_STATE: position=%s signal=%s reasons=%s (fallback to signal parsing)",
+                        position_id, signal, reasons
+                    )
+                
+                if "buy_signal" in signal.lower() or state == "S1":
                     execution_history["last_s1_buy"] = {
                         "timestamp": now_iso,
                         "price": price,
                         "size_frac": size_frac,
-                        "signal": signal
+                        "signal": signal,
+                        "state": state or "S1"
                     }
-                elif "s2" in signal.lower():
+                elif state == "S2":
                     execution_history["last_s2_buy"] = {
                         "timestamp": now_iso,
                         "price": price,
                         "size_frac": size_frac,
-                        "signal": signal
+                        "signal": signal,
+                        "state": state
                     }
-                elif "s3" in signal.lower():
+                elif state == "S3":
                     execution_history["last_s3_buy"] = {
                         "timestamp": now_iso,
                         "price": price,
                         "size_frac": size_frac,
-                        "signal": signal
+                        "signal": signal,
+                        "state": state
                     }
                 elif "reclaimed" in signal.lower() or "ema333" in signal.lower():
                     execution_history["last_reclaim_buy"] = {
@@ -1686,6 +1984,94 @@ class PMCoreTick:
                         "size_frac": size_frac,
                         "signal": signal
                     }
+                
+                # Update trim pool for S2/DX buys (if using pool)
+                pool = _get_pool(execution_history)
+                pool_basis = pool.get("usd_basis", 0)
+                recovery_started = pool.get("recovery_started", False)
+                
+                if pool_basis > 0:
+                    if state == "S2" and not recovery_started:
+                        # S2 dip buy from pool - clears pool
+                        notional = float(action.get("notional", 0) or execution_result.get("tokens_received", 0) * price)
+                        locked = _on_s2_dip_buy(execution_history, notional)
+                        logger.info(
+                            "TRIM_POOL: S2 dip buy $%.2f from pool, locked $%.2f profit | position=%s",
+                            notional, locked, position_id
+                        )
+                    elif state == "S3" and "reclaimed" not in signal.lower():
+                        # DX buy from pool - updates ladder
+                        atr = float((action.get("reasons") or {}).get("atr", 0) or 
+                                   features.get("uptrend_engine_v4", {}).get("atr", 0))
+                        dx_atr_mult = float((action.get("reasons") or {}).get("dx_atr_mult", 6.0))
+                        _on_dx_buy(execution_history, price, atr, dx_atr_mult)
+                        
+                        pool_after = _get_pool(execution_history)
+                        dx_count = pool_after.get("dx_count", 0)
+                        
+                        logger.info(
+                            "TRIM_POOL: DX buy #%d at $%.8f, next arm at $%.8f | position=%s",
+                            dx_count,
+                            price,
+                            pool_after.get("dx_next_arm", 0),
+                            position_id
+                        )
+                        
+                        # Log DX episode event for tuning (Phase 7)
+                        try:
+                            # Get position for scope
+                            pos_result = self.sb.table("lowcap_positions").select(
+                                "token_chain, timeframe, features"
+                            ).eq("id", position_id).limit(1).execute()
+                            
+                            if pos_result.data:
+                                pos = pos_result.data[0]
+                                token_chain = pos.get("token_chain", "").lower()
+                                timeframe = pos.get("timeframe", "1h")
+                                
+                                # Get token_bucket from features or position
+                                pos_features = pos.get("features", {})
+                                token_bucket = pos_features.get("token_bucket") or "unknown"
+                                
+                                # Build tuning scope
+                                scope = {
+                                    "chain": token_chain,
+                                    "bucket": token_bucket,
+                                    "timeframe": timeframe,
+                                }
+                                
+                                # Log DX episode event and track ID for outcome updates
+                                dx_episode_db_id = self._log_episode_event(
+                                    window={},  # DX is point-in-time, not window-based
+                                    scope=scope,
+                                    pattern_key="pm.uptrend.S3.dx",
+                                    decision="acted",  # Always 'acted' for DX since we only log on execution
+                                    factors={
+                                        "dx_count": dx_count,
+                                        "dx_atr_mult_used": dx_atr_mult,
+                                        "pool_basis": pool_after.get("usd_basis", 0),
+                                        "fill_price": price,
+                                        "atr": atr,
+                                    },
+                                    episode_id=f"dx_{position_id}_{dx_count}_{int(datetime.now().timestamp())}",
+                                    trade_id=pos_features.get("current_trade_id"),
+                                )
+                                
+                                # Track DX episode ID for later outcome updates
+                                if dx_episode_db_id:
+                                    episode_meta = pos_features.get("uptrend_episode_meta", {})
+                                    dx_episode_ids = episode_meta.get("dx_episode_ids", [])
+                                    dx_episode_ids.append(dx_episode_db_id)
+                                    episode_meta["dx_episode_ids"] = dx_episode_ids
+                                    pos_features["uptrend_episode_meta"] = episode_meta
+                                    # Note: features will be saved in the main update below
+                                    
+                                logger.debug(
+                                    "PHASE7: Logged DX episode event (db_id=%s) | position=%s dx_count=%d dx_atr_mult=%.1f",
+                                    dx_episode_db_id, position_id, dx_count, dx_atr_mult
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to log DX episode event for position {position_id}: {e}")
             
             elif decision_type in ["trim", "emergency_exit"]:
                 execution_history["last_trim"] = {
@@ -1695,6 +2081,15 @@ class PMCoreTick:
                     "signal": signal,
                     "sr_level_price": (action.get("reasons") or {}).get("sr_level_price"),
                 }
+                
+                # Update trim pool - use USDC received from execution
+                usdc_received = float(execution_result.get("usdc_received", 0.0))
+                if usdc_received > 0:
+                    _on_trim(execution_history, usdc_received)
+                    logger.info(
+                        "TRIM_POOL: Updated pool with $%.2f trim | position=%s",
+                        usdc_received, position_id
+                    )
             
             # Update prev_state if we have state info
             uptrend_engine = features.get("uptrend_engine_v4") or {}
@@ -1870,6 +2265,26 @@ class PMCoreTick:
                 
                 amount_usd = float(exec_result.get("notional_usd", 0.0))
                 entry_price_usd = float(exec_result.get("price", 0.0))
+                
+                # FIX: If price is 0 or missing, calculate from notional_usd / tokens_bought
+                # This handles cases where Jupiter execution doesn't return price correctly
+                if entry_price_usd <= 0:
+                    tokens_bought = float(exec_result.get("tokens_bought", 0.0))
+                    if tokens_bought > 0 and amount_usd > 0:
+                        entry_price_usd = amount_usd / tokens_bought
+                        logger.info(
+                            f"PRICE FALLBACK: Calculated entry price from execution | "
+                            f"{token_ticker}/{chain} | "
+                            f"price={entry_price_usd:.8f} (from ${amount_usd:.2f} / {tokens_bought:.6f} tokens)"
+                        )
+                    elif avg_entry_price_usd and avg_entry_price_usd > 0:
+                        # Last resort: use position's average entry price
+                        entry_price_usd = avg_entry_price_usd
+                        logger.warning(
+                            f"PRICE FALLBACK: Using position avg_entry_price | "
+                            f"{token_ticker}/{chain} | "
+                            f"price={entry_price_usd:.8f}"
+                        )
                 
                 if is_entry:
                     # Entry notification
@@ -3037,17 +3452,44 @@ class PMCoreTick:
             # Full regime bundle across drivers/horizons for scope/learning
             regime_state_bundle = self._get_regime_states_bundle(token_bucket)
 
-            # Compute levers first so we can log A/E values in episode events
-            le = compute_levers(
-                features,
-                bucket_context=regime_context,
-                position_bucket=token_bucket,
-                bucket_config=bucket_cfg,
-                exec_timeframe=self.timeframe,  # Trading timeframe for regime A/E
-            )
-            a_final = float(le["A_value"])  # regime-driven A + intent deltas + bucket multiplier
-            e_final = float(le["E_value"])  # regime-driven E + intent deltas + bucket multiplier
-            position_size_frac = float(le.get("position_size_frac", 0.33))  # continuous sizing
+            # Compute A/E - use v2 if enabled, otherwise legacy compute_levers
+            use_ae_v2 = pm_cfg.get("feature_flags", {}).get("ae_v2_enabled", False)
+            
+            if use_ae_v2:
+                # A/E v2: Flag-driven, strength is first-class
+                regime_flags = extract_regime_flags(self.sb, token_bucket, book_id)
+                a_base, e_base, ae_diag = compute_ae_v2(regime_flags, token_bucket)
+                
+                # Log A/E v2 computation
+                logger.info(
+                    "AE_V2: %s bucket=%s | flags → A=%.3f E=%.3f | diag=%s",
+                    token_ticker, token_bucket, a_base, e_base, ae_diag.get("after_flags", {})
+                )
+                
+                # Note: Strength is applied later in plan_actions_v4 when pattern is known
+                a_final = a_base
+                e_final = e_base
+                position_size_frac = 0.33  # Default, will be overridden by A-score sizing
+                
+                # Build minimal levers dict for backward compatibility
+                le = {
+                    "A_value": a_final,
+                    "E_value": e_final,
+                    "position_size_frac": position_size_frac,
+                    "ae_v2_diagnostics": ae_diag,
+                }
+            else:
+                # Legacy: compute_levers (regime-driven A + intent deltas + bucket multiplier)
+                le = compute_levers(
+                    features,
+                    bucket_context=regime_context,
+                    position_bucket=token_bucket,
+                    bucket_config=bucket_cfg,
+                    exec_timeframe=self.timeframe,
+                )
+                a_final = float(le["A_value"])
+                e_final = float(le["E_value"])
+                position_size_frac = float(le.get("position_size_frac", 0.33))
 
             episode_strands: List[Dict[str, Any]] = []
             meta_changed = False

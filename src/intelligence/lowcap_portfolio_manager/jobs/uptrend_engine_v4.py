@@ -1639,15 +1639,19 @@ class UptrendEngineV4:
                 elif prev_state == "S2":
                     logger.debug("Position in S2: %s/%s (timeframe=%s, checking retest buys and trims)", 
                                 contract, chain, self.timeframe)
+                    # Get previous retest_check from metadata if available (for transitions)
+                    meta = features.get("uptrend_engine_v4_meta") or {}
+                    prev_retest_check = meta.get("last_s2_retest_check", {})
+                    prev_retest_diagnostics = prev_retest_check.get("diagnostics", {}) if isinstance(prev_retest_check, dict) else {}
+                    
                     # S2 → S1: Price < EMA333 (flip-flop back, not an exit)
                     if price < ema_vals.get("ema333", 0.0):
                         logger.info("S2→S1 TRANSITION: %s/%s (timeframe=%s, price < EMA333, S2 retest/trim checks stopped)", 
                                    contract, chain, self.timeframe)
-                        # Persist last S2 retest diagnostics for audit
-                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        # Persist last S2 retest diagnostics for audit (use previous if available)
                         meta["last_s2_retest_check"] = {
                             "ts": current_ts,
-                            **(retest_check.get("diagnostics") or {})
+                            **prev_retest_diagnostics
                         }
                         features["uptrend_engine_v4_meta"] = meta
                         payload = self._build_payload(
@@ -1670,11 +1674,10 @@ class UptrendEngineV4:
                     elif self._check_s3_order(ema_vals):
                         logger.info("S2→S3 TRANSITION: %s/%s (timeframe=%s, full bullish alignment, S2 retest/trim checks stopped)", 
                                    contract, chain, self.timeframe)
-                        # Persist last S2 retest diagnostics for audit
-                        meta = features.get("uptrend_engine_v4_meta") or {}
+                        # Persist last S2 retest diagnostics for audit (use previous if available)
                         meta["last_s2_retest_check"] = {
                             "ts": current_ts,
-                            **(retest_check.get("diagnostics") or {})
+                            **prev_retest_diagnostics
                         }
                         features["uptrend_engine_v4_meta"] = meta
                         # Record S3 start timestamp
@@ -1732,6 +1735,13 @@ class UptrendEngineV4:
                         retest_check = self._check_buy_signal_conditions(
                             price, ema_vals.get("ema333", 0.0), ema_slopes, ta, sr_levels, anchor_is_333=True
                         )
+                        
+                        # Store retest_check in metadata for next transition
+                        meta["last_s2_retest_check"] = {
+                            "ts": current_ts,
+                            "diagnostics": retest_check.get("diagnostics", {})
+                        }
+                        features["uptrend_engine_v4_meta"] = meta
                         
                         extra_data = {
                             "trim_flag": trim_flag,
@@ -1865,18 +1875,10 @@ class UptrendEngineV4:
                         bars_since = self._calculate_bars_since_s3_entry(s3_start_ts, current_ts, self.timeframe) if s3_start_ts else None
                         logger.info("S3 processing: %s/%s (timeframe=%s, bars_since_s3=%s, s3_start=%s, current_ts=%s)", 
                                    contract, chain, self.timeframe, bars_since, s3_start_ts, current_ts)
-                        logger.debug("Checking first dip buy for %s/%s (timeframe=%s, prev_state=S3)", 
-                                    contract, chain, self.timeframe)
-                        first_dip_check = self._check_first_dip_buy(
-                            contract, chain, price, ema_vals, ta, features, current_ts
-                        )
-                        first_dip_buy_flag = first_dip_check.get("first_dip_buy_flag", False)
                         
-                        # Set flag if first dip buy triggered
-                        if first_dip_buy_flag:
-                            if "uptrend_engine_v4_meta" not in features:
-                                features["uptrend_engine_v4_meta"] = {}
-                            features["uptrend_engine_v4_meta"]["first_dip_buy_taken"] = True
+                        # DEPRECATED: first_dip_buy_flag removed in v2 - DX ladder handles S3 recovery
+                        # Keeping the method but not calling it
+                        first_dip_buy_flag = False
                         
                         # Emergency exit: price < EMA333 (flag only, no state change)
                         # Always set flag for learning system, even if no tokens held

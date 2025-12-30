@@ -37,17 +37,21 @@ def apply_pattern_strength_overrides(
     base_levers: Dict[str, float],
     sb_client: Optional[Client] = None,
     feature_flags: Optional[Dict[str, Any]] = None
-) -> Dict[str, float]:
+) -> Tuple[Dict[str, float], float]:
     """
     Apply capital lever overrides (size_mult) from pm_overrides.
+    
+    Returns:
+        Tuple of (adjusted_levers, strength_mult)
+        strength_mult is the learned multiplier (1.0 = neutral, >1 = good pattern, <1 = bad pattern)
     """
     # Check feature flags
     feature_flags = feature_flags or {}
     if not feature_flags.get('learning_overrides_enabled', True):
-        return base_levers
+        return base_levers, 1.0
 
     if sb_client is None:
-        return base_levers
+        return base_levers, 1.0
 
     try:
         scope_json = json.dumps(scope)
@@ -61,7 +65,7 @@ def apply_pattern_strength_overrides(
         )
         matches = res.data or []
         if not matches:
-            return base_levers
+            return base_levers, 1.0
 
         weighted_mults = []
         total_weight = 0.0
@@ -75,7 +79,7 @@ def apply_pattern_strength_overrides(
             total_weight += weight
 
         if total_weight == 0:
-            return base_levers
+            return base_levers, 1.0
 
         final_mult = sum(weighted_mults) / total_weight
         final_mult = _clamp(final_mult, 0.3, 3.0)
@@ -92,16 +96,16 @@ def apply_pattern_strength_overrides(
         )
 
         logger.info(
-            "Applied V5 Override: %s matches=%d mult=%.2f",
+            "STRENGTH_OVERRIDE: %s matches=%d strength_mult=%.2f",
             pattern_key,
             len(matches),
             final_mult,
         )
-        return adjusted
+        return adjusted, final_mult
 
     except Exception as e:
         logger.error(f"Error applying V5 overrides: {e}")
-        return base_levers
+        return base_levers, 1.0
 
 def apply_pattern_execution_overrides(
     pattern_key: str,

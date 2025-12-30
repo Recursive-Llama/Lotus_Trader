@@ -11,11 +11,89 @@ from .bucketing_helpers import bucket_a_e, bucket_score
 from .overrides import apply_pattern_strength_overrides, apply_pattern_execution_overrides
 from .pattern_keys_v5 import generate_canonical_pattern_key, extract_scope_from_context
 from .exposure import ExposureLookup
+from .episode_blocking import is_entry_blocked
 
 
 def _now_iso() -> str:
     """UTC timestamp helper."""
     return datetime.now(timezone.utc).isoformat()
+
+
+# =============================================================================
+# TRIM POOL LIFECYCLE FUNCTIONS
+# =============================================================================
+# Pool model: { "usd_basis": float, "recovery_started": bool, "dx_count": int,
+#               "dx_last_price": float|None, "dx_next_arm": float|None }
+# Rule: Once recovery_started=True, next trim wipes remainder (locked profit).
+
+def _empty_pool() -> Dict[str, Any]:
+    """Return empty pool structure."""
+    return {
+        "usd_basis": 0.0,
+        "recovery_started": False,
+        "dx_count": 0,
+        "dx_last_price": None,
+        "dx_next_arm": None,
+    }
+
+
+def _get_pool(exec_history: Dict[str, Any]) -> Dict[str, Any]:
+    """Get trim pool from execution history, ensuring valid structure."""
+    pool = exec_history.get("trim_pool")
+    if not pool or not isinstance(pool, dict):
+        return _empty_pool()
+    return pool
+
+
+def _on_trim(exec_history: Dict[str, Any], trim_usd: float) -> None:
+    """Called when a trim happens. Accumulates or resets pool based on recovery state."""
+    pool = _get_pool(exec_history)
+    
+    if pool.get("recovery_started", False):
+        # Recovery already started - new trim creates FRESH pool
+        # Old pool remainder becomes locked profit (done, gone)
+        exec_history["trim_pool"] = {
+            "usd_basis": trim_usd,
+            "recovery_started": False,
+            "dx_count": 0,
+            "dx_last_price": None,
+            "dx_next_arm": None,
+        }
+    else:
+        # No recovery yet - ACCUMULATE into usd_basis
+        pool["usd_basis"] = pool.get("usd_basis", 0) + trim_usd
+        exec_history["trim_pool"] = pool
+
+
+def _on_s2_dip_buy(exec_history: Dict[str, Any], rebuy_usd: float) -> float:
+    """Called when S2 dip buy happens. Clears pool immediately. Returns locked profit."""
+    pool = _get_pool(exec_history)
+    pool_basis = pool.get("usd_basis", 0)
+    
+    # Unused portion becomes locked profit
+    locked_profit = max(0.0, pool_basis - rebuy_usd)
+    
+    # Clear pool entirely (S2 is one-shot)
+    exec_history["trim_pool"] = _empty_pool()
+    
+    return locked_profit
+
+
+def _on_dx_buy(exec_history: Dict[str, Any], fill_price: float, atr: float, dx_atr_mult: float = 6.0) -> None:
+    """Called when DX buy happens. Uses STEP LADDER (each arm anchored to last fill)."""
+    pool = _get_pool(exec_history)
+    
+    pool["recovery_started"] = True
+    pool["dx_count"] = pool.get("dx_count", 0) + 1
+    pool["dx_last_price"] = fill_price
+    # STEP LADDER: next arm is N×ATR below THIS fill (arms walk down with fills)
+    pool["dx_next_arm"] = fill_price - (dx_atr_mult * atr) if atr > 0 else None
+    
+    # If 3 DX buys done, clear pool (remainder is locked profit)
+    if pool["dx_count"] >= 3:
+        exec_history["trim_pool"] = _empty_pool()
+    else:
+        exec_history["trim_pool"] = pool
 
 
 def _apply_v5_overrides_to_action(
@@ -137,7 +215,7 @@ def _apply_v5_overrides_to_action(
                 "E_value": e_final,
                 "position_size_frac": position_size_frac
             }
-            adjusted_levers = apply_pattern_strength_overrides(
+            adjusted_levers, strength_mult = apply_pattern_strength_overrides(
                 pattern_key=pattern_key,
                 action_category=action_category,
                 scope=scope,
@@ -146,10 +224,8 @@ def _apply_v5_overrides_to_action(
                 feature_flags=feature_flags
             )
             
-            if adjusted_levers != base_levers:
-                size_mult = adjusted_levers.get("position_size_frac", position_size_frac) / position_size_frac if position_size_frac > 0 else 1.0
-            else:
-                size_mult = 1.0
+            # strength_mult is now explicitly returned (1.0 = neutral)
+            size_mult = strength_mult
             
             # Apply exposure_skew to entries
             final_mult = size_mult * exposure_skew
@@ -194,26 +270,31 @@ def _a_to_entry_size(a_final: float, state: str, buy_signal: bool = False, buy_f
     """
     Calculate entry size based on A score and state.
     
-    S1 Entries (Initial entries):
-    - A >= 0.7 (Aggressive): 50% initial allocation
-    - A >= 0.3 (Normal): 30% initial allocation
-    - A < 0.3 (Patient): 10% initial allocation
+    S1 Entries (Initial entries) - v2 sizing (more aggressive):
+    - A >= 0.7 (Aggressive): 90% of remaining allocation
+    - A >= 0.3 (Normal): 60% of remaining allocation
+    - A < 0.3 (Patient): 30% of remaining allocation
     
-    S2/S3 Entries (Add-on entries):
+    S2/S3 Entries (Add-on entries) - Pool-based, handled separately:
+    - S2 dip buy: 60%/30%/10% of pool_basis
+    - S3 DX buy: 20%/10%/3.33% of pool_basis per buy (max 3)
+    
+    Legacy S2/S3 sizing (for first_dip_buy_flag until Phase 5 cleanup):
     - A >= 0.7 (Aggressive): 25% initial allocation
     - A >= 0.3 (Normal): 15% initial allocation
     - A < 0.3 (Patient): 5% initial allocation
     """
     if state == "S1" and buy_signal:
-        # S1 initial entry
+        # S1 initial entry - v2 sizing (more aggressive)
         if a_final >= 0.7:
-            return 0.50
+            return 0.90
         elif a_final >= 0.3:
-            return 0.30
+            return 0.60
         else:
-            return 0.10
+            return 0.30
     elif state in ["S2", "S3"] and (buy_flag or first_dip_buy_flag):
-        # S2/S3 add-on entry
+        # Legacy S2/S3 add-on entry (for first_dip_buy_flag compatibility)
+        # Pool-based sizing is handled directly in plan_actions_v4()
         if a_final >= 0.7:
             return 0.25
         elif a_final >= 0.3:
@@ -227,17 +308,22 @@ def _e_to_trim_size(e_final: float) -> float:
     """
     Calculate trim size based on E score.
     
-    Base Trim Sizes:
-    - E >= 0.7 (Aggressive): 10% trim
-    - E >= 0.3 (Normal): 5% trim
-    - E < 0.3 (Patient): 3% trim
+    v2 Trim Sizes (more aggressive):
+    - E >= 0.7 (Aggressive): 60% trim
+    - E >= 0.3 (Normal): 30% trim
+    - E < 0.3 (Patient): 15% trim
+    
+    Note: Actual trim is base * trim_multiplier (extraction-based).
+    Combined with extraction dampening, this allows:
+    - Early: 60% * 1.5 = 90% max (capped)
+    - Late: 60% * 0.3 = 18% (ride the trend)
     """
     if e_final >= 0.7:
-        return 0.10
+        return 0.60
     elif e_final >= 0.3:
-        return 0.05
+        return 0.30
     else:
-        return 0.03
+        return 0.15
 
 
 def _count_bars_since(timestamp_iso: str, token_contract: str, chain: str, timeframe: str, sb_client: Optional[Client] = None) -> int:
@@ -376,17 +462,24 @@ def plan_actions_v4(
     else:
         entry_multiplier = 1.5  # In loss: larger buys to average down
     
-    # Trim multiplier
-    # Allocation deployed ratio: current position value vs total allocated
-    allocation_deployed_ratio = current_position_value / total_allocation_usd if total_allocation_usd > 0 else 0.0
-    if allocation_deployed_ratio >= 0.8:
-        trim_multiplier = 3.0  # Nearly maxed out: take more profit
-    elif profit_ratio >= 1.0:
-        trim_multiplier = 0.3  # 100%+ profit: take less profit
-    elif profit_ratio >= 0.0:
-        trim_multiplier = 1.0  # Breakeven: normal trims
+    # Trim multiplier (extraction-based)
+    # Key insight: E should care more about what we've taken out than position size
+    # This lets us "ride the trend" once we've de-risked
+    extraction_ratio = total_extracted_usd / total_allocation_usd if total_allocation_usd > 0 else 0.0
+    
+    if extraction_ratio >= 3.0:
+        trim_multiplier = 0.1   # Big winner - very selective trims
+    elif extraction_ratio >= 1.0:
+        trim_multiplier = 0.3   # House money - ride the trend
+    elif extraction_ratio >= 0.5:
+        trim_multiplier = 1.0   # Half extracted - moderate
     else:
-        trim_multiplier = 0.5  # In loss: smaller trims, preserve capital
+        trim_multiplier = 1.5   # Full risk - trim aggressively
+    
+    pm_logger.debug(
+        "TRIM_MULT: %s extraction_ratio=%.2f → multiplier=%.2f",
+        token_ticker, extraction_ratio, trim_multiplier
+    )
     
     # Exit Precedence (highest priority)
     if uptrend.get("exit_position"):
@@ -459,12 +552,15 @@ def plan_actions_v4(
             features["pm_execution_history"] = exec_history
             return []
 
+        # Calculate exit value BEFORE the sell (for reclaim rebuy sizing)
+        exit_value_usd = total_quantity * current_price
+        
         # No lesson matching for full exits (always 100%)
         pm_logger.info(
             "PLAN ACTIONS: emergency_exit flag → emergency_exit | %s/%s tf=%s | "
-            "state=%s qty=%.6f e_score=%.4f",
+            "state=%s qty=%.6f e_score=%.4f exit_value=$%.2f",
             token_ticker, token_chain, timeframe,
-            state, total_quantity, e_final
+            state, total_quantity, e_final, exit_value_usd
         )
         action = {
             "decision_type": "emergency_exit",
@@ -472,7 +568,8 @@ def plan_actions_v4(
             "reasons": {
                 "flag": "emergency_exit",
                 "e_score": e_final,
-                "state": state
+                "state": state,
+                "exit_value_usd": exit_value_usd,  # For reclaim rebuy sizing
             }
         }
         # Apply v5 overrides
@@ -483,7 +580,13 @@ def plan_actions_v4(
             regime_states=regime_states,
         )
         # Stamp execution history to gate further exits in this episode
+        # Also record exit_value_usd for reclaim rebuy sizing
         exec_history["last_emergency_exit_ts"] = _now_iso()
+        exec_history["last_emergency_exit"] = {
+            "timestamp": _now_iso(),
+            "exit_value_usd": exit_value_usd,
+            "rebuy_used": False,  # One-time reclaim gate
+        }
         features["pm_execution_history"] = exec_history
         pm_logger.info(
             "PLAN ACTIONS: RETURN emergency_exit | %s/%s tf=%s | "
@@ -554,7 +657,7 @@ def plan_actions_v4(
             base_trim_size = _e_to_trim_size(e_final)
             trim_size = base_trim_size * trim_multiplier
             # Hard cap trims to avoid full exits masquerading as trims
-            max_trim_frac = float(os.getenv("PM_MAX_TRIM_FRAC", "0.5"))
+            max_trim_frac = float(os.getenv("PM_MAX_TRIM_FRAC", "0.9"))  # v2: 90% cap
             trim_size = min(trim_size, max_trim_frac)
             
             scores = uptrend.get("scores") or {}
@@ -719,6 +822,16 @@ def plan_actions_v4(
     
     # S1: One-time initial entry (only on S0 → S1 transition)
     if effective_buy_signal and state == "S1":
+        # Check episode blocking first
+        token_contract = position.get("token_contract", "")
+        if sb_client and is_entry_blocked(sb_client, token_contract, token_chain, timeframe, "S1"):
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED S1 entry (episode block) | %s/%s tf=%s | "
+                "reason: token blocked until success observed",
+                token_ticker, token_chain, timeframe
+            )
+            return []
+        
         last_s1_buy = exec_history.get("last_s1_buy")
         if not last_s1_buy:
             # Never bought in S1, and we're in S1 (transitioned from S0)
@@ -871,98 +984,81 @@ def plan_actions_v4(
         except Exception as e:
             logging.getLogger(__name__).warning(f"Error applying S3 tuning overrides: {e}")
 
-    if (effective_buy_flag or first_dip_buy_flag) and state in ["S2", "S3"]:
-        # Defensive check: Never buy when in emergency exit zone (price < EMA333)
-        # The engine should block flags from being set, but this ensures we don't buy below EMA333
-        emergency_exit_active = uptrend.get("emergency_exit", False)
-        if emergency_exit_active:
-            ticker = position.get("token_ticker", position.get("token_contract", "?")[:20])
-            logging.getLogger("pm_core").info(
-                "PM BLOCKED buy (S2/S3) for %s (%s): emergency_exit=True (price < EMA333) - buy_flag=%s, first_dip_buy_flag=%s, state=%s",
-                ticker, position.get("timeframe", "?"), effective_buy_flag, first_dip_buy_flag, state
-            )
-            return []  # Block all buys below EMA333 - wait for reclaim via reclaimed_ema333 path
-        
-        last_buy = exec_history.get(f"last_{state.lower()}_buy", {})
-        last_trim_ts = exec_history.get("last_trim", {}).get("timestamp")
-        state_transitioned = (prev_state != state)  # State changed (S2 → S3 or S3 → S2)
-        
-        # Reset conditions: trim happened OR state transitioned
-        can_buy = False
-        if not last_buy:
-            # Never bought in this state
-            can_buy = True
-        elif state_transitioned:
-            # State transitioned (S2 → S3 or S3 → S2) - reset buy eligibility
-            can_buy = True
-        elif last_trim_ts:
-            # Check if trim happened after last buy
-            last_buy_ts = last_buy.get("timestamp")
-            if last_buy_ts:
-                try:
-                    trim_dt = datetime.fromisoformat(last_trim_ts.replace("Z", "+00:00"))
-                    buy_dt = datetime.fromisoformat(last_buy_ts.replace("Z", "+00:00"))
-                    if trim_dt > buy_dt:
-                        # Trim happened after last buy - reset buy eligibility
-                        can_buy = True
-                except Exception:
-                    pass
-        
-        # Log why first-dip buy is blocked
-        if first_dip_buy_flag and not can_buy:
+    # ==========================================================================
+    # S2 DIP BUY (from trim pool only if not flat)
+    # ==========================================================================
+    if effective_buy_flag and state == "S2":
+        # Check episode blocking first
+        token_contract = position.get("token_contract", "")
+        if sb_client and is_entry_blocked(sb_client, token_contract, token_chain, timeframe, "S2"):
             pm_logger.info(
-                "PLAN ACTIONS: BLOCKED first_dip_buy | %s/%s tf=%s | "
-                "reason: cannot_buy | "
-                "has_last_buy=%s state_transitioned=%s last_trim_ts=%s",
-                token_ticker, token_chain, timeframe,
-                bool(last_buy), state_transitioned, last_trim_ts
+                "PLAN ACTIONS: BLOCKED S2 entry (episode block) | %s/%s tf=%s | "
+                "reason: token blocked until success observed",
+                token_ticker, token_chain, timeframe
             )
+            return []
         
-        if can_buy:
-            base_entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=effective_buy_flag, first_dip_buy_flag=first_dip_buy_flag)
-            entry_size = base_entry_size * entry_multiplier  # Apply profit/allocation multiplier
-            
+        is_flat = total_quantity <= 0
+        pool = _get_pool(exec_history)
+        pool_basis = pool.get("usd_basis", 0)
+        has_pool = pool_basis > 0
+        recovery_started = pool.get("recovery_started", False)
+        
+        # S2 dip allowed if: flat OR (has pool AND DX not started)
+        can_s2_dip = is_flat or (has_pool and not recovery_started)
+        
+        pm_logger.info(
+            "PLAN ACTIONS: S2 buy_flag | %s/%s tf=%s | "
+            "is_flat=%s has_pool=%s (basis=$%.2f) recovery_started=%s → can_s2_dip=%s",
+            token_ticker, token_chain, timeframe,
+            is_flat, has_pool, pool_basis, recovery_started, can_s2_dip
+        )
+        
+        if can_s2_dip:
             scores = uptrend.get("scores") or {}
-            flag_type = "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown")
+            
+            if is_flat:
+                # Case 1: Flat - use remaining allocation (standard sizing)
+                base_entry_size = _a_to_entry_size(a_final, state, buy_signal=False, buy_flag=True, first_dip_buy_flag=False)
+                entry_size = base_entry_size * entry_multiplier
+                notional = usd_alloc_remaining * entry_size
+            else:
+                # Case 2: Post-trim - size from pool_basis
+                if a_final >= 0.7:
+                    rebuy_frac = 0.60
+                elif a_final >= 0.3:
+                    rebuy_frac = 0.30
+                else:
+                    rebuy_frac = 0.10
+                
+                notional = pool_basis * rebuy_frac
+                notional = min(notional, usd_alloc_remaining)  # Safety cap
+                entry_size = notional / usd_alloc_remaining if usd_alloc_remaining > 0 else 0
             
             pm_logger.info(
-                "PLAN ACTIONS: %s/%s → %s | %s/%s tf=%s | "
-                "state=%s flag=%s | "
-                "entry_size=%.4f (base=%.4f * multiplier=%.4f) | "
-                "a_final=%.4f ts_score=%.4f dx_score=%.4f | "
-                "can_buy=True (last_buy=%s state_transitioned=%s)",
-                flag_type, state, "entry" if is_new_trade else "add",
+                "PLAN ACTIONS: S2 dip buy | %s/%s tf=%s | "
+                "notional=$%.2f entry_size=%.4f a_final=%.4f | "
+                "pool_basis=$%.2f is_flat=%s",
                 token_ticker, token_chain, timeframe,
-                state, flag_type,
-                entry_size, base_entry_size, entry_multiplier,
-                a_final, scores.get("ts", 0.0), scores.get("dx", 0.0),
-                bool(last_buy), state_transitioned
+                notional, entry_size, a_final,
+                pool_basis, is_flat
             )
             
             if entry_size > 0:
-                # Build context for lesson matching
-                context = {
-                    'state': state,
-                    'a_bucket': bucket_a_e(a_final),
-                    'e_bucket': bucket_a_e(e_final),
-                    'action_type': 'entry' if is_new_trade else 'add',
-                    'buy_flag': effective_buy_flag,
-                    'first_dip_buy_flag': first_dip_buy_flag,
-                    'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
-                    'dx_score_bucket': bucket_score(scores.get('dx', 0.0)),
-                }
-                
                 decision_type = "entry" if is_new_trade else "add"
                 action = {
                     "decision_type": decision_type,
                     "size_frac": entry_size,
+                    "notional": notional,  # For pool tracking
                     "reasons": {
-                        "flag": flag_type,
+                        "flag": "buy_flag",
                         "state": state,
                         "a_score": a_final,
                         "ts_score": scores.get("ts", 0.0),
                         "dx_score": scores.get("dx", 0.0),
                         "entry_multiplier": entry_multiplier,
+                        "from_pool": not is_flat,
+                        "pool_basis": pool_basis,
                     }
                 }
                 # Apply v5 overrides
@@ -973,80 +1069,201 @@ def plan_actions_v4(
                     regime_states=regime_states,
                 )
                 pm_logger.info(
-                    "PLAN ACTIONS: RETURN %s | %s/%s tf=%s | "
+                    "PLAN ACTIONS: RETURN S2 dip %s | %s/%s tf=%s | "
                     "size_frac=%.4f (after overrides)",
                     decision_type, token_ticker, token_chain, timeframe,
                     action.get("size_frac", entry_size)
                 )
                 return [action]
-            else:
-                pm_logger.info(
-                    "PLAN ACTIONS: BLOCKED %s | %s/%s tf=%s | "
-                    "reason: entry_size=0 | "
-                    "base_entry_size=%.4f entry_multiplier=%.4f",
-                    "entry" if is_new_trade else "add",
-                    token_ticker, token_chain, timeframe,
-                    base_entry_size, entry_multiplier
-                )
         else:
             pm_logger.info(
-                "PLAN ACTIONS: BLOCKED buy (S2/S3) | %s/%s tf=%s | "
-                "reason: cannot_buy | "
-                "flag=%s state=%s | "
-                "has_last_buy=%s state_transitioned=%s last_trim_ts=%s",
+                "PLAN ACTIONS: BLOCKED S2 dip buy | %s/%s tf=%s | "
+                "reason: no_pool_or_recovery_started | "
+                "has_pool=%s recovery_started=%s",
                 token_ticker, token_chain, timeframe,
-                "buy_flag" if effective_buy_flag else ("first_dip_buy_flag" if first_dip_buy_flag else "unknown"),
-                state,
-                bool(last_buy), state_transitioned, last_trim_ts
+                has_pool, recovery_started
             )
     
-    # Reclaimed EMA333 (S3 auto-rebuy)
+    # ==========================================================================
+    # S3 DX BUY (from trim pool, 6×ATR ladder, max 3)
+    # ==========================================================================
+    if effective_buy_flag and state == "S3":
+        # Defensive check: Never buy when in emergency exit zone (price < EMA333)
+        emergency_exit_active = uptrend.get("emergency_exit", False)
+        if emergency_exit_active:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED S3 DX buy | %s/%s tf=%s | "
+                "reason: emergency_exit=True (price < EMA333)",
+                token_ticker, token_chain, timeframe
+            )
+            return []  # Block all buys below EMA333 - wait for reclaim via reclaimed_ema333 path
+        
+        # DX zone check: EMA144 < price < EMA333
+        ema_data = uptrend.get("ema", {})
+        ema144 = ema_data.get("ema144", 0)
+        ema333 = ema_data.get("ema333", 0)
+        in_dx_zone = ema144 > 0 and ema333 > 0 and ema144 < current_price < ema333
+        
+        pool = _get_pool(exec_history)
+        pool_basis = pool.get("usd_basis", 0)
+        has_pool = pool_basis > 0
+        dx_count = pool.get("dx_count", 0)
+        dx_next_arm = pool.get("dx_next_arm")
+        
+        # DX gating: in zone, has pool, < 3 DX, price at or below arm (or first buy)
+        price_at_arm = dx_next_arm is None or current_price <= dx_next_arm
+        can_dx = in_dx_zone and has_pool and dx_count < 3 and price_at_arm
+        
+        pm_logger.info(
+            "PLAN ACTIONS: S3 buy_flag (DX check) | %s/%s tf=%s | "
+            "in_dx_zone=%s (ema144=%.8f < price=%.8f < ema333=%.8f) | "
+            "has_pool=%s (basis=$%.2f) dx_count=%d dx_next_arm=%s | "
+            "price_at_arm=%s → can_dx=%s",
+            token_ticker, token_chain, timeframe,
+            in_dx_zone, ema144, current_price, ema333,
+            has_pool, pool_basis, dx_count, dx_next_arm,
+            price_at_arm, can_dx
+        )
+        
+        if can_dx:
+            scores = uptrend.get("scores") or {}
+            atr = uptrend.get("atr", 0)
+            
+            # Get tunable ATR multiplier (default 6.0)
+            dx_atr_mult = tuned_controls.get("dx_atr_mult", 6.0) if tuned_controls else 6.0
+            
+            # Per-buy sizing from pool_basis
+            if a_final >= 0.7:
+                dx_frac = 0.20  # 3 buys × 20% ≈ 60% total
+            elif a_final >= 0.3:
+                dx_frac = 0.10  # 3 buys × 10% ≈ 30% total
+            else:
+                dx_frac = 0.0333  # 3 buys × 3.33% ≈ 10% total
+            
+            notional = pool_basis * dx_frac
+            notional = min(notional, usd_alloc_remaining)  # Safety cap
+            entry_size = notional / usd_alloc_remaining if usd_alloc_remaining > 0 else 0
+            
+            pm_logger.info(
+                "PLAN ACTIONS: S3 DX buy #%d | %s/%s tf=%s | "
+                "notional=$%.2f (pool_basis=$%.2f × frac=%.4f) | "
+                "entry_size=%.4f a_final=%.4f | "
+                "dx_atr_mult=%.1f atr=%.8f",
+                dx_count + 1, token_ticker, token_chain, timeframe,
+                notional, pool_basis, dx_frac,
+                entry_size, a_final,
+                dx_atr_mult, atr
+            )
+            
+            if entry_size > 0:
+                decision_type = "add"
+                action = {
+                    "decision_type": decision_type,
+                    "size_frac": entry_size,
+                    "notional": notional,  # For pool tracking
+                    "reasons": {
+                        "flag": "buy_flag",
+                        "state": state,
+                        "a_score": a_final,
+                        "ts_score": scores.get("ts", 0.0),
+                        "dx_score": scores.get("dx", 0.0),
+                        "entry_multiplier": entry_multiplier,
+                        "dx_buy_number": dx_count + 1,
+                        "pool_basis": pool_basis,
+                        "atr": atr,
+                        "dx_atr_mult": dx_atr_mult,
+                    }
+                }
+                # Apply v5 overrides
+                action = _apply_v5_overrides_to_action(
+                    action, position, a_final, e_final, position_size_frac,
+                    regime_context, token_bucket, sb_client, feature_flags,
+                    exposure_lookup=exposure_lookup,
+                    regime_states=regime_states,
+                )
+                pm_logger.info(
+                    "PLAN ACTIONS: RETURN S3 DX #%d add | %s/%s tf=%s | "
+                    "size_frac=%.4f (after overrides)",
+                    dx_count + 1, token_ticker, token_chain, timeframe,
+                    action.get("size_frac", entry_size)
+                )
+                return [action]
+        else:
+            if not in_dx_zone:
+                pm_logger.debug(
+                    "PLAN ACTIONS: S3 DX skipped | %s/%s | reason: not_in_dx_zone",
+                    token_ticker, token_chain
+                )
+            elif not has_pool:
+                pm_logger.debug(
+                    "PLAN ACTIONS: S3 DX skipped | %s/%s | reason: no_pool",
+                    token_ticker, token_chain
+                )
+            elif dx_count >= 3:
+                pm_logger.debug(
+                    "PLAN ACTIONS: S3 DX skipped | %s/%s | reason: max_dx_reached",
+                    token_ticker, token_chain
+                )
+            elif not price_at_arm:
+                pm_logger.debug(
+                    "PLAN ACTIONS: S3 DX skipped | %s/%s | reason: price_above_arm (%.8f > %.8f)",
+                    token_ticker, token_chain, current_price, dx_next_arm
+                )
+    
+    # NOTE: first_dip_buy_flag removed in v2 - DX ladder handles S3 recovery
+    
+    # Reclaimed EMA333 (S3 auto-rebuy based on exit value)
     if state == "S3" and uptrend.get("reclaimed_ema333"):
-        # Check if we already rebought on this reclaim
-        last_reclaim_buy = exec_history.get("last_reclaim_buy", {})
-        reclaimed_at = uptrend.get("ts")  # Timestamp when EMA333 was reclaimed
-        last_reclaim_at = last_reclaim_buy.get("reclaimed_at") if last_reclaim_buy else None
+        # Check if we have an emergency exit to rebuy from and haven't used it yet
+        last_emergency = exec_history.get("last_emergency_exit", {})
+        exit_value_usd = last_emergency.get("exit_value_usd", 0)
+        rebuy_used = last_emergency.get("rebuy_used", False)
         
         pm_logger.info(
             "PLAN ACTIONS: reclaimed_ema333 detected | %s/%s tf=%s | "
             "state=%s qty=%.6f is_new_trade=%s | "
-            "reclaimed_at=%s last_reclaim_at=%s",
+            "exit_value_usd=$%.2f rebuy_used=%s",
             token_ticker, token_chain, timeframe,
             state, total_quantity, is_new_trade,
-            reclaimed_at, last_reclaim_at
+            exit_value_usd, rebuy_used
         )
         
-        if not last_reclaim_buy or last_reclaim_at != reclaimed_at:
-            rebuy_size = _a_to_entry_size(a_final, state, False, False, False) * entry_multiplier
+        if exit_value_usd > 0 and not rebuy_used:
+            # Fractional rebuy sizing based on exit value (not remaining allocation)
+            if a_final >= 0.7:
+                rebuy_frac = 0.60
+            elif a_final >= 0.3:
+                rebuy_frac = 0.30
+            else:
+                rebuy_frac = 0.10
+            
+            rebuy_notional = exit_value_usd * rebuy_frac
+            rebuy_notional = min(rebuy_notional, usd_alloc_remaining)  # Safety cap
+            rebuy_size = rebuy_notional / usd_alloc_remaining if usd_alloc_remaining > 0 else 0
+            
             if rebuy_size > 0:
-                # Build context for lesson matching
                 scores = uptrend.get("scores") or {}
-                context = {
-                    'state': state,
-                    'a_bucket': bucket_a_e(a_final),
-                    'e_bucket': bucket_a_e(e_final),
-                    'action_type': 'entry' if is_new_trade else 'add',
-                    'reclaimed_ema333': True,
-                    'ts_score_bucket': bucket_score(scores.get('ts', 0.0)),
-                }
-                
                 decision_type = "entry" if is_new_trade else "add"
+                
                 pm_logger.info(
                     "PLAN ACTIONS: reclaimed_ema333 → %s | %s/%s tf=%s | "
-                    "rebuy_size=%.4f (base=%.4f * multiplier=%.4f) | "
-                    "a_final=%.4f entry_multiplier=%.4f",
+                    "rebuy_notional=$%.2f (exit_value=$%.2f × frac=%.2f) | "
+                    "rebuy_size=%.4f a_final=%.4f",
                     decision_type, token_ticker, token_chain, timeframe,
-                    rebuy_size, _a_to_entry_size(a_final, state, False, False, False), entry_multiplier,
-                    a_final, entry_multiplier
+                    rebuy_notional, exit_value_usd, rebuy_frac,
+                    rebuy_size, a_final
                 )
+                
                 action = {
                     "decision_type": decision_type,
                     "size_frac": rebuy_size,
+                    "notional": rebuy_notional,
                     "reasons": {
                         "flag": "reclaimed_ema333",
                         "state": state,
                         "a_score": a_final,
-                        "entry_multiplier": entry_multiplier,
+                        "exit_value_usd": exit_value_usd,
+                        "rebuy_frac": rebuy_frac,
                     }
                 }
                 # Apply v5 overrides
@@ -1054,9 +1271,14 @@ def plan_actions_v4(
                     action, position, a_final, e_final, position_size_frac,
                     regime_context, token_bucket, sb_client, feature_flags
                 )
+                
+                # Mark rebuy as used (one-time gate)
+                exec_history["last_emergency_exit"]["rebuy_used"] = True
+                features["pm_execution_history"] = exec_history
+                
                 pm_logger.info(
                     "PLAN ACTIONS: RETURN reclaimed_ema333 %s | %s/%s tf=%s | "
-                    "size_frac=%.4f (after overrides)",
+                    "size_frac=%.4f (after overrides) | marked rebuy_used=True",
                     decision_type, token_ticker, token_chain, timeframe,
                     action.get("size_frac", rebuy_size)
                 )
@@ -1064,17 +1286,20 @@ def plan_actions_v4(
             else:
                 pm_logger.info(
                     "PLAN ACTIONS: BLOCKED reclaimed_ema333 buy | %s/%s tf=%s | "
-                    "reason: rebuy_size=0 (a_final=%.4f entry_multiplier=%.4f)",
-                    token_ticker, token_chain, timeframe,
-                    a_final, entry_multiplier
+                    "reason: rebuy_size=0",
+                    token_ticker, token_chain, timeframe
                 )
+        elif rebuy_used:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED reclaimed_ema333 buy | %s/%s tf=%s | "
+                "reason: rebuy_already_used",
+                token_ticker, token_chain, timeframe
+            )
         else:
             pm_logger.info(
                 "PLAN ACTIONS: BLOCKED reclaimed_ema333 buy | %s/%s tf=%s | "
-                "reason: already_rebought_on_this_reclaim | "
-                "last_reclaim_buy=%s reclaimed_at=%s",
-                token_ticker, token_chain, timeframe,
-                last_reclaim_buy, reclaimed_at
+                "reason: no_emergency_exit_value (exit_value_usd=$%.2f)",
+                token_ticker, token_chain, timeframe, exit_value_usd
             )
     
     # Default: No action (don't emit strand for holds)

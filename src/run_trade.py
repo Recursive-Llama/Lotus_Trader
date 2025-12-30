@@ -46,6 +46,7 @@ from intelligence.lowcap_portfolio_manager.jobs.lesson_builder_v5 import build_l
 from intelligence.lowcap_portfolio_manager.jobs.override_materializer import run_override_materializer
 from intelligence.lowcap_portfolio_manager.ingest.rollup_ohlc import GenericOHLCRollup, DataSource, Timeframe
 from intelligence.lowcap_portfolio_manager.ingest.rollup import OneMinuteRollup
+from intelligence.system_observer.jobs.balance_snapshot import BalanceSnapshotJob
 
 # --- Logging Configuration ---
 def setup_logging():
@@ -669,6 +670,16 @@ class TradingSystem:
             print("   ❦ Bootstrap Failed (see logs/system.log)")
             # Continue anyway - bootstrap failures are non-fatal
         
+        # 0.25. Capture initial balance snapshot (if none exists)
+        try:
+            sb_client = self._create_service_client()
+            balance_snapshot_job = BalanceSnapshotJob(sb_client)
+            await balance_snapshot_job.ensure_initial_snapshot()
+            scheduler_logger.info("Initial balance snapshot ensured")
+        except Exception as e:
+            scheduler_logger.error(f"Initial balance snapshot error: {e}", exc_info=True)
+            # Non-fatal, continue
+        
         # 0.5. Start Hyperliquid WS early so we can verify it's working
         hl_ingester = None
         hl_task = None
@@ -804,6 +815,27 @@ class TradingSystem:
         # Run TA → Uptrend → PM sequentially to ensure correct ordering
         tasks.append(asyncio.create_task(self._schedule_4h(0, lambda: self._wrap_ta_then_uptrend_then_pm("4h"), "TA→Uptrend→PM 4h")))
         
+        # Balance snapshots - hierarchical system
+        # 1. Hourly snapshot (every hour)
+        def _wrap_hourly_snapshot():
+            try:
+                sb_client = self._create_service_client()
+                job = BalanceSnapshotJob(sb_client)
+                asyncio.run(job.capture_snapshot("hourly"))
+            except Exception as e:
+                logger.error(f"Hourly balance snapshot error: {e}", exc_info=True)
+        tasks.append(asyncio.create_task(self._schedule_hourly(0, _wrap_hourly_snapshot, "Hourly Balance Snapshot")))
+        
+        # 2. 4-hour rollup (every 4 hours, at :00)
+        def _wrap_4hour_rollup():
+            try:
+                sb_client = self._create_service_client()
+                job = BalanceSnapshotJob(sb_client)
+                asyncio.run(job.rollup_4hour_snapshots())
+            except Exception as e:
+                logger.error(f"4-hour rollup error: {e}", exc_info=True)
+        tasks.append(asyncio.create_task(self._schedule_4h(0, _wrap_4hour_rollup, "4-Hour Snapshot Rollup")))
+        
         # Catch-up Jobs (run hourly to fill any missed rollup boundaries)
         # Run at :02 to run after normal rollups at :00/:01
         # Lookback: 2 hours (since we run hourly, max gap should be ~1 hour, but 2h gives safety margin)
@@ -831,6 +863,86 @@ class TradingSystem:
                     scheduler_logger.error(f"{name} failed: {e}", exc_info=True)
         
         tasks.append(asyncio.create_task(schedule_daily(0, lambda: run_regime_pipeline(timeframe="1d"), "Regime 1d")))
+        
+        # Daily snapshot rollup (every day at 1 AM UTC)
+        def _wrap_daily_rollup():
+            try:
+                sb_client = self._create_service_client()
+                job = BalanceSnapshotJob(sb_client)
+                asyncio.run(job.rollup_daily_snapshots())
+            except Exception as e:
+                logger.error(f"Daily rollup error: {e}", exc_info=True)
+        tasks.append(asyncio.create_task(schedule_daily(1, _wrap_daily_rollup, "Daily Snapshot Rollup")))
+        
+        # Weekly Jobs (run on Sunday at 1 AM UTC)
+        async def schedule_weekly(offset_hour: int, func, name: str):
+            """Schedule to run weekly on Sunday at specific hour."""
+            scheduler_logger = logging.getLogger('schedulers')
+            while self.running:
+                now = datetime.now(timezone.utc)
+                # Find next Sunday
+                days_until_sunday = (6 - now.weekday()) % 7
+                if days_until_sunday == 0 and now.hour >= offset_hour:
+                    days_until_sunday = 7  # Already passed this week
+                next_run = now.replace(hour=offset_hour, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
+                wait_s = (next_run - now).total_seconds()
+                scheduler_logger.info(f"{name} scheduled for {next_run.isoformat()}")
+                await asyncio.sleep(wait_s)
+                try:
+                    scheduler_logger.info(f"Starting {name}")
+                    await asyncio.to_thread(func)
+                    scheduler_logger.info(f"{name} completed")
+                except Exception as e:
+                    scheduler_logger.error(f"{name} failed: {e}", exc_info=True)
+        
+        # Weekly snapshot rollup (Sunday 1 AM UTC)
+        def _wrap_weekly_rollup():
+            try:
+                sb_client = self._create_service_client()
+                job = BalanceSnapshotJob(sb_client)
+                asyncio.run(job.rollup_weekly_snapshots())
+            except Exception as e:
+                logger.error(f"Weekly rollup error: {e}", exc_info=True)
+        tasks.append(asyncio.create_task(schedule_weekly(1, _wrap_weekly_rollup, "Weekly Snapshot Rollup")))
+        
+        # Monthly Jobs (run on 1st of month at 2 AM UTC)
+        async def schedule_monthly(offset_hour: int, func, name: str):
+            """Schedule to run monthly on 1st at specific hour."""
+            scheduler_logger = logging.getLogger('schedulers')
+            while self.running:
+                now = datetime.now(timezone.utc)
+                # Find next 1st of month
+                if now.day == 1 and now.hour >= offset_hour:
+                    # Already passed this month, go to next month
+                    if now.month == 12:
+                        next_run = now.replace(year=now.year + 1, month=1, day=1, hour=offset_hour, minute=0, second=0, microsecond=0)
+                    else:
+                        next_run = now.replace(month=now.month + 1, day=1, hour=offset_hour, minute=0, second=0, microsecond=0)
+                else:
+                    # This month's 1st hasn't passed, or we're past it
+                    if now.month == 12:
+                        next_run = now.replace(year=now.year + 1, month=1, day=1, hour=offset_hour, minute=0, second=0, microsecond=0)
+                    else:
+                        next_run = now.replace(month=now.month + 1, day=1, hour=offset_hour, minute=0, second=0, microsecond=0)
+                wait_s = (next_run - now).total_seconds()
+                scheduler_logger.info(f"{name} scheduled for {next_run.isoformat()}")
+                await asyncio.sleep(wait_s)
+                try:
+                    scheduler_logger.info(f"Starting {name}")
+                    await asyncio.to_thread(func)
+                    scheduler_logger.info(f"{name} completed")
+                except Exception as e:
+                    scheduler_logger.error(f"{name} failed: {e}", exc_info=True)
+        
+        # Monthly snapshot rollup (1st of month at 2 AM UTC)
+        def _wrap_monthly_rollup():
+            try:
+                sb_client = self._create_service_client()
+                job = BalanceSnapshotJob(sb_client)
+                asyncio.run(job.rollup_monthly_snapshots())
+            except Exception as e:
+                logger.error(f"Monthly rollup error: {e}", exc_info=True)
+        tasks.append(asyncio.create_task(schedule_monthly(2, _wrap_monthly_rollup, "Monthly Snapshot Rollup")))
 
         # Hyperliquid WS task already added to tasks list above if it was started early
         

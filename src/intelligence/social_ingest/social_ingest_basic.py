@@ -551,21 +551,11 @@ class SocialIngestModule:
                 self.logger.info(f"No exact symbol matches found for {token_name}")
                 return None
 
-            # Step 2: Filter by allowed chains
-            allowed = set(self.allowed_chains)
-            if network:
-                allowed = {network.lower()}
-
-            allowed_matches = [p for p in exact_matches if (p.get('chainId', '') or '').lower() in allowed]
-            if not allowed_matches:
-                self.logger.info(f"No exact matches on allowed chains for {token_name}")
-                return None
-
-            # Step 3: Group by contract address and aggregate pairs
+            # Step 2: Group by contract address and aggregate pairs (across ALL chains, not just Solana)
             from collections import defaultdict
             token_groups = defaultdict(list)
             
-            for pair in allowed_matches:
+            for pair in exact_matches:
                 contract = contract_of(pair)
                 if contract:
                     token_groups[contract].append(pair)
@@ -574,7 +564,7 @@ class SocialIngestModule:
                 self.logger.info(f"No valid contract addresses found for {token_name}")
                 return None
 
-            # Step 4: Score each unique token (contract address)
+            # Step 3: Score each unique token (contract address) across all chains
             best_token = None
             best_score = -1
             best_aggregated_volume = 0
@@ -613,7 +603,15 @@ class SocialIngestModule:
                     best_aggregated_liquidity = total_liquidity
 
             if best_token:
-                self.logger.info(f"Selected {symbol_of(best_token)} with score {best_score:.3f}, aggregated volume ${best_aggregated_volume:,.0f}")
+                # Step 4: Check if the best match is on an allowed chain
+                raw_chain_id = (best_token.get('chainId', '') or '').lower()
+                mapped_chain = self._map_dexscreener_chain(raw_chain_id)
+                
+                if mapped_chain not in self.allowed_chains:
+                    self.logger.info(f"Best match for {token_name} is on {mapped_chain} (not in allowed chains: {self.allowed_chains}), skipping")
+                    return None
+                
+                self.logger.info(f"Selected {symbol_of(best_token)} on {mapped_chain} with score {best_score:.3f}, aggregated volume ${best_aggregated_volume:,.0f}")
                 # Add aggregated volume and liquidity to the returned pair for use in verification
                 best_token['_aggregated_volume'] = best_aggregated_volume
                 best_token['_aggregated_liquidity'] = best_aggregated_liquidity

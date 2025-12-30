@@ -31,7 +31,7 @@ class TelegramSignalNotifier:
         }
         return mapping.get(str(stage), str(stage))
     
-    def __init__(self, bot_token: str, channel_id: str, api_id: int, api_hash: str, session_file: str = None):
+    def __init__(self, bot_token: str, channel_id: str, api_id: int, api_hash: str, session_file: str = None, session_id: str = None):
         """
         Initialize Telegram Signal Notifier
         
@@ -40,17 +40,23 @@ class TelegramSignalNotifier:
             channel_id: Target channel/group ID (can be @username or numeric ID)
             api_id: Telegram API ID (reuse existing)
             api_hash: Telegram API Hash (reuse existing)
-            session_file: Path to existing session file
+            session_file: Path to existing session file (deprecated - use session_id instead)
+            session_id: Unique session identifier (e.g., timeframe) to avoid database locks
         """
         self.bot_token = bot_token
         self.channel_id = channel_id
         self.api_id = api_id
         self.api_hash = api_hash
-        self.session_file = session_file or "src/config/telegram_session.txt"
+        # Use unique session file per instance to avoid SQLite database locks
+        # When multiple PM Core instances run (1m, 15m, 1h, 4h), each needs its own session file
+        if session_id:
+            self.session_file = f"src/config/telegram_session_{session_id}.session"
+        else:
+            self.session_file = session_file or "src/config/telegram_session.txt"
         self.client = None
         self.supabase_manager = SupabaseManager()
         
-        logger.info(f"Telegram Signal Notifier initialized for channel: {channel_id}")
+        logger.info(f"Telegram Signal Notifier initialized for channel: {channel_id} (session: {self.session_file})")
     
     def _get_lotus_price_per_sol(self) -> Optional[float]:
         """Get current Lotus token price in SOL from wallet_balances table"""
@@ -146,17 +152,27 @@ class TelegramSignalNotifier:
         
         Uses bot token to avoid conflicts with TelegramScanner which uses user session.
         This allows both to run simultaneously without session ID conflicts.
+        
+        Creates a fresh client for each call to avoid event loop conflicts.
         """
-        if not self.client:
-            # Always use bot token (not user session) to avoid conflicts with TelegramScanner
-            self.client = TelegramClient('signal_bot', self.api_id, self.api_hash)
-            await self.client.start(bot_token=self.bot_token)
+        # Always create fresh client to avoid event loop conflicts
+        # Telethon clients are tied to specific event loops, so we create new ones
+        import os
+        session_name = os.path.basename(self.session_file).replace('.session', '')
+        client = TelegramClient(session_name, self.api_id, self.api_hash)
+        
+        try:
+            if not client.is_connected():
+                await client.start(bot_token=self.bot_token)
             logger.debug("Telegram signal notifier connected using bot token")
-        
-        if not self.client.is_connected():
-            await self.client.start(bot_token=self.bot_token)
-        
-        return self.client
+            return client
+        except Exception as e:
+            logger.error(f"Failed to connect Telegram client: {e}")
+            try:
+                await client.disconnect()
+            except:
+                pass
+            raise
     
     async def send_buy_signal(self, 
                             token_ticker: str, 
@@ -881,6 +897,7 @@ class TelegramSignalNotifier:
     
     async def _send_message(self, message: str) -> bool:
         """Send message to Telegram channel"""
+        client = None
         try:
             client = await self._get_client()
             
@@ -898,6 +915,13 @@ class TelegramSignalNotifier:
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
+        finally:
+            # Always disconnect client to free resources and avoid database locks
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception as e:
+                    logger.debug(f"Error disconnecting Telegram client: {e}")
     
     async def test_connection(self) -> bool:
         """Test connection to Telegram channel"""

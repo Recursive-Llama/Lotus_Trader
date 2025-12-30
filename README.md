@@ -22,10 +22,10 @@ Lotus Trader is a **universal trend detection and trading system** built around 
 
 ## 🎯 **Core Architecture**
 
-Lotus Trader V3 has three core components:
+Lotus Trader V3 has four core components:
 
 1. **A universal trend engine** - Uptrend Engine v4 detects trends in any market
-2. **A cross-pipeline architecture** - Multiple pipelines share one engine and learning system
+2. **A regime-driven A/E system** - Market regime detection using Uptrend Engine states from multiple drivers
 3. **An outcome-first learning system** - Learns from what worked, not what was predicted
 
 Each component is described below.
@@ -43,6 +43,34 @@ Each component is described below.
 - **Single source of truth** - `ta_utils.py` ensures production and backtesting use identical calculations
 
 **Why multi-timeframe matters**: The whole point is that all markets and timeframes are more similar than different. The same EMA state transitions (S0→S1→S2→S3) work on 1-minute crypto charts and 4-hour stock charts because they're driven by the same human behavior and market dynamics.
+
+### **The Regime Engine**
+
+*Summary:* Market regime detection using Uptrend Engine states from multiple drivers to compute A/E scores.
+
+**Regime Engine** replaces the old phase-based A/E calculation system. Instead of using string phases like "dip", "good", "euphoria", it uses **Uptrend Engine states** (S0/S1/S2/S3) from multiple market drivers to compute Aggressiveness (A) and Exit Assertiveness (E) scores.
+
+**Five Regime Drivers** (tracked across 3 timeframes):
+1. **BTC** - Bitcoin trend (affects all tokens, weight: 1.0)
+2. **ALT** - Altcoin composite (SOL/ETH/BNB/HYPE average, weight: 1.5)
+3. **BUCKET** - Market cap bucket composites (nano/small/mid/big, weight: 3.0)
+4. **BTC.d** - BTC dominance (inverted - uptrend = risk-off, weight: -1.0)
+5. **USDT.d** - USDT dominance (inverted, 3x weight - uptrend = strong risk-off, weight: -3.0)
+
+**Three Timeframes**:
+- **Macro (1d)** - Slow shifts, big picture (weight: 0.50)
+- **Meso (1h)** - Main operational timeframe (weight: 0.40)
+- **Micro (1m)** - Tactical adjustments (weight: 0.10)
+
+**How it works**:
+1. Regime Price Collector gathers OHLC data for all drivers
+2. Regime TA Tracker computes technical indicators
+3. Uptrend Engine computes states/flags for each driver
+4. Regime Mapper converts states → ΔA/ΔE deltas
+5. Driver weights and timeframe multipliers applied
+6. Final A/E scores computed for each token
+
+**Total**: 5 drivers × 3 timeframes = **15 regime channels** per token, all feeding into A/E calculation.
 
 ### **Pipeline Architecture**
 
@@ -87,34 +115,115 @@ Prediction Pipeline:
 
 ## 🧠 **The Learning System**
 
-*Summary:* Outcome-first exploration — start with what worked, discover what led to it, gently tune decision-making.
+*Summary:* Outcome-first learning — pattern × action × scope → outcome → edge → lessons → behaviour.
 
-Lotus Trader learns from outcomes, not from signals. The learning system works backwards from what actually happened to discover what led to success.
+Lotus Trader learns from outcomes, not from predictions. Every learning cycle follows the same atomic process:
 
-**Example:**
-After analyzing 24 big wins, the system discovers that 78% happened when:
-- S1 entry (primer state)
-- TS > 0.55 (trend strength threshold)
-- Market cap < $10M
-- Token age < 10 days
+**pattern × action × scope → outcome → edge → lessons → behaviour**
 
-The Portfolio Manager increases allocation for this pattern by +6% (gentle tuning, not replacement).
+The system measures what is true, not what is plausible. Math governs truth. LLM intelligence interprets meaning and evolves structure.
 
-### **Outcome-First Exploration**
+### **Outcome-First Learning**
 
-**The Key Principle**: Start with outcomes (big wins, big losses), work backwards to find patterns.
+**The Key Principle**: Start with outcomes, work backwards to discover patterns within specific scopes.
 
-**What is a big win?** A completed trade with R/R > 2.0 (risk/reward ratio - return divided by max drawdown). The system classifies all closed positions as: big_win, big_loss, small_win, small_loss, or breakeven based on their R/R outcome.
+**What is a scope?** A precise slice of reality — the contextual lens through which a pattern is measured. Scopes encode timeframe, volatility regime, liquidity state, market-cap tier, venue type, and trend maturity. The same pattern behaves differently in different scopes.
 
+**Learning Flow**:
 1. **Position closes** → PM computes R/R from OHLCV data
-2. **Outcome classified** → big_win, big_loss, small_win, small_loss, breakeven
-3. **Pattern discovery** → "What contexts/signals led to these outcomes?"
-4. **Braiding** → Similar outcomes braided together to discover common patterns
-5. **Insights applied** → Gentle tuning of decision-making (not replacement)
+2. **Event recorded** → `position_closed` strand created in `ad_strands` table
+3. **Pattern extraction** → Pattern, action, and scope extracted from trade context
+4. **Event aggregation** → `pattern_scope_aggregator` collects events into `pattern_trade_events`
+5. **Statistics computed** → `pattern_scope_stats` table stores aggregated edge metrics
+6. **Lessons mined** → `lesson_builder_v5` discovers lessons from pattern scope statistics
+7. **Overrides materialized** → `override_materializer` converts lessons to PM overrides
+8. **Behaviour updated** → PM applies overrides at runtime
 
-### **Three Layers of Learning**
+### **The Two-Layer Learning Architecture**
 
-#### **1. Coefficients (Decision Maker Learning)** ✅ Complete
+#### **Math Recursion — the structural core**
+
+The math layer evaluates behaviour within each scope using a composite edge field:
+
+**edge = ΔRR × reliability × (support + magnitude + time + stability) × decay**
+
+Each component contributes:
+- **ΔRR** — improvement over global baseline (multiplicative)
+- **reliability** — variance and consistency (multiplicative)
+- **support** — how many times pattern observed (additive)
+- **magnitude** — typical reward (additive)
+- **time** — confirmation speed (additive)
+- **stability** — how edge behaves over time (additive)
+- **decay** — penalizes degrading patterns (multiplicative)
+
+Only when this field is strong and stable within a scope does Lotus promote a pattern into a lesson.
+
+#### **LLM Recursion — the interpretive mind**
+
+The LLM layer reasons about meaning:
+- Why did edge decay?
+- What structural boundary changed?
+- Which narrative or regime shift altered behaviour?
+- What hypothesis should be tested next?
+
+Math learns **what happens**. LLMs learn **why it happens** and **how the system should evolve**.
+
+### **Three Types of Lessons**
+
+When a pattern repeatedly produces edge inside a scope, Lotus distils that lesson into three distinct behavioural channels:
+
+#### **1. PM Strength Lessons** ✅ Active
+
+**Purpose**: Encode **how aggressively to size** within a scope.
+
+**How it works**:
+- Pattern that shows strong edge in scope `{4h, micro, high-vol}` might learn PM strength multiplier of 2.5x
+- Same pattern in scope `{1m, major, low-vol}` might learn 0.6x
+- PM strength is clamped between 0.3x and 3.0x
+- Learned per pattern×scope combination
+- Applied at runtime to modulate position sizing
+
+**Example**:
+```
+Pattern: uptrend.S1.buy_flag
+Scope: {timeframe: "4h", mcap_bucket: "micro", vol_bucket: "high"}
+PM Strength: 2.5x (size at 2.5× base allocation)
+```
+
+#### **2. PM Tuning Lessons** ✅ Active
+
+**Purpose**: Encode **threshold adjustments** for Portfolio Manager's entry/exit gates.
+
+**How it works**:
+- When pattern in specific scope shows high miss rates, Lotus learns to tighten thresholds (TS, SR, halo, slope guards, DX suppression)
+- When miss rates are low, thresholds can be relaxed
+- PM tuning adjusts the *gates* that determine when signals fire
+- Allows Lotus to learn "this pattern works, but only if we're more selective in this scope"
+
+**Example**:
+```
+Pattern: uptrend.S1.buy_flag
+Scope: {timeframe: "1m", mcap_bucket: "major", vol_bucket: "low"}
+PM Tuning: TS threshold +0.05 (require higher trend strength)
+```
+
+#### **3. DM Allocation Lessons** ✅ Active
+
+**Purpose**: Encode **timeframe weight splits** for Decision Maker.
+
+**How it works**:
+- When pattern shows stronger edge on 4h than 1m within a scope, Lotus learns to allocate more capital to 4h timeframe
+- Creates dynamic allocation that adapts to where edge actually exists
+- Updates `learning_configs` table with timeframe weights
+
+**Example**:
+```
+Pattern: uptrend.S1.buy_flag
+Scope: {mcap_bucket: "micro", vol_bucket: "high"}
+DM Allocation: {1m: 0.2, 15m: 0.3, 1h: 0.3, 4h: 0.2}
+```
+
+### **Coefficients (Decision Maker Learning)** ✅ Active
 
 **Purpose**: Learn which levers (curator, chain, mcap, vol, age, intent) correlate with R/R outcomes.
 
@@ -129,36 +238,16 @@ The Portfolio Manager increases allocation for this pattern by +6% (gentle tunin
 
 **Allocation formula**: `initial_allocation = base_allocation × ∏(factor_weight[lever])`
 
-#### **2. Braiding (Portfolio Manager Learning)** ⏸️ Coming
-
-**Purpose**: Learn from action sequences (add → trim → exit), discover optimal timing, find counterfactual improvements.
-
-**How it works**:
-- **Outcome classification**: Classify all completed trades by outcome and hold time
-- **Dimension extraction**: Extract A/E scores, engine signals, scores, timing from `action_context`
-- **Pattern querying**: "Find all big wins where A=med, E=low, buy_flag=True, S1, TS>0.6"
-- **Pattern statistics**: Calculate avg_rr, win_rate, sample_size, variance for each pattern
-- **Counterfactual analysis**: "Could we have entered 6 bars later? What signals were showing then?"
-
-**Example braid lesson:**
-```
-Pattern: big_win | A=med | E=low | buy_flag=True | S1 | TS>0.6
-Stats: avg_rr=2.3, win_rate=0.85, sample_size=12
-Lesson: Increase entry size by +8% when this pattern matches
-```
-
-**Why braiding for PM**: PM has sequential actions (add → trim → exit), not just entry → exit. Coefficients can't handle sequences or counterfactuals well. Braiding can explore sequences and find "what if" patterns.
-
-#### **3. LLM Learning Layer** ⏸️ Coming (Build from Day 1, Phased Enablement)
+### **LLM Learning Layer** ⏸️ Infrastructure Ready (Phased Enablement)
 
 **Purpose**: Add qualitative intelligence parallel to the math layer - semantic interpretation, hypothesis generation, pattern recognition.
 
-**Five Levels** (phased enablement):
-1. **Commentary** (Day 1): Natural-language insights, regime summaries
-2. **Semantic Features** (Day 1): Extract narrative tags ("AI narrative", "memecoin revival") as hypotheses
-3. **Family Optimization** (50+ trades): Propose better braid groupings based on observed patterns
-4. **Semantic Compression** (100+ trades): Conceptual patterns that span multiple dimensional combinations
-5. **Hypothesis Generation** (10+ trades): Propose new tests, bucket boundaries, interaction patterns
+**Architecture** (when enabled):
+- **Overseer** — strategic mind that decides what is worth thinking about
+- **Research Manager** — turns questions into safe, controlled experiments
+- **Level 1** — perception layer (surfaces landscape, anomalies, edge zones)
+- **Levels 2–5** — targeted investigators (semantics, structure, cross-pattern rhymes, timing)
+- **Math Verification** — all hypotheses pass through statistical verification
 
 **The Golden Rule**: LLM ≠ math. LLM ≠ statistics. LLM = structure + semantic intelligence. Everything numerical stays in the math layer. LLM reshapes structure, discovers new representations, proposes new abstractions.
 
@@ -214,7 +303,7 @@ Each position has:
 
 **Portfolio Manager** combines:
 - **Uptrend Engine signals** (state, buy_signal, buy_flag, trim_flag, scores)
-- **A/E scores** (Add Appetite, Exit Assertiveness) - influenced by market phases, portfolio risk, token age, market cap, social intent
+- **A/E scores** (Add Appetite, Exit Assertiveness) - computed by Regime Engine from 5 drivers across 3 timeframes, plus token-level intent deltas
 - **Position sizing** (entry/trim multipliers, profit multipliers, allocation multipliers)
 
 **Decision flow**:
@@ -240,7 +329,147 @@ Each position has:
   - Supabase (database)
   - OpenRouter (LLM for social ingest)
   - GeckoTerminal (price data)
-  - Trading platforms (Li.Fi for multi-chain, Hyperliquid for perps, etc.)
+  - Trading platforms (Jupiter for Solana, Li.Fi for multi-chain, Hyperliquid for perps, etc.)
+
+### **Database Setup**
+
+**Step 1: Create Database**
+
+If using Supabase:
+1. Create a new project at [supabase.com](https://supabase.com)
+2. Note your project URL and service role key
+
+If using local PostgreSQL:
+```bash
+createdb lotus_trader
+```
+
+**Step 2: Set Up Schema**
+
+Run all schema files in `src/database/` in this order:
+
+```bash
+# Core tables (required)
+psql -d lotus_trader -f src/database/ad_strands_schema.sql
+psql -d lotus_trader -f src/database/lowcap_positions_v4_schema.sql
+psql -d lotus_trader -f src/database/lowcap_price_data_1m_schema.sql
+psql -d lotus_trader -f src/database/lowcap_price_data_ohlc_schema.sql
+psql -d lotus_trader -f src/database/majors_price_data_ohlc_schema.sql
+psql -d lotus_trader -f src/database/majors_trades_ticks_schema.sql
+psql -d lotus_trader -f src/database/regime_price_data_ohlc_schema.sql
+
+# Portfolio/Phase tables
+psql -d lotus_trader -f src/database/portfolio_bands_schema.sql
+psql -d lotus_trader -f src/database/phase_state_schema.sql
+psql -d lotus_trader -f src/database/phase_state_bucket_schema.sql
+psql -d lotus_trader -f src/database/token_cap_bucket_schema.sql
+
+# Learning system tables
+psql -d lotus_trader -f src/database/learning_coefficients_schema.sql
+psql -d lotus_trader -f src/database/learning_configs_schema.sql
+psql -d lotus_trader -f src/database/learning_baselines_schema.sql
+psql -d lotus_trader -f src/database/learning_lessons_schema.sql
+psql -d lotus_trader -f src/database/pattern_scope_stats_schema.sql
+psql -d lotus_trader -f src/database/pattern_trade_events_schema.sql
+psql -d lotus_trader -f src/database/pattern_episode_events_schema.sql
+
+# Other tables
+psql -d lotus_trader -f src/database/curators_schema.sql
+psql -d lotus_trader -f src/database/wallet_balances_schema.sql
+psql -d lotus_trader -f src/database/wallet_balance_snapshots_schema.sql
+psql -d lotus_trader -f src/database/token_timeframe_blocks_schema.sql
+psql -d lotus_trader -f src/database/pm_overrides_schema.sql
+psql -d lotus_trader -f src/database/pm_thresholds_schema.sql
+psql -d lotus_trader -f src/database/position_signals_schema.sql
+
+# Optional: Learning system extensions
+psql -d lotus_trader -f src/database/learning_braids_schema.sql
+psql -d lotus_trader -f src/database/learning_regime_weights_schema.sql
+psql -d lotus_trader -f src/database/learning_edge_history_schema.sql
+psql -d lotus_trader -f src/database/learning_latent_factors_schema.sql
+psql -d lotus_trader -f src/database/llm_learning_schema.sql
+```
+
+**Step 3: Run Migrations**
+
+Apply any pending migrations:
+
+```bash
+# Apply migrations in order
+psql -d lotus_trader -f src/database/migrations/2025_01_14_add_trade_id_columns.sql
+psql -d lotus_trader -f src/database/migrations/2025_12_03_add_regime_driver_status.sql
+psql -d lotus_trader -f src/database/migrations/2025_12_05_allow_1d_timeframe.sql
+psql -d lotus_trader -f src/database/migrations/2025_12_29_add_token_timeframe_blocks.sql
+```
+
+**Step 4: Set Up Row Level Security (Optional but Recommended)**
+
+```bash
+psql -d lotus_trader -f src/database/rls_policies.sql
+```
+
+**Note**: The Bootstrap System (runs on startup) will automatically:
+- Verify all tables exist
+- Create regime driver positions if missing
+- Backfill price data from Binance (up to 666 bars per timeframe)
+- Verify data collection systems are working
+
+### **Data Sources Setup**
+
+**Step 1: Configure Curators**
+
+Curators are configured in `src/config/twitter_curators.yaml`. The system automatically populates the `curators` database table from this YAML file on startup.
+
+Edit `src/config/twitter_curators.yaml` to add or modify curators:
+
+```yaml
+curators:
+  - id: "0xdetweiler"
+    name: "0xDetweiler"
+    platforms:
+      twitter:
+        handle: "@0xdetweiler"
+        active: true
+        priority: "high"
+    tags: ["defi", "alpha", "technical"]
+    notes: "Strong technical analysis and DeFi focus"
+```
+
+You can add curators for:
+- **Twitter only**: Just include `twitter` platform section
+- **Telegram only**: Just include `telegram` platform section  
+- **Both platforms**: Include both `twitter` and `telegram` sections
+
+The system will automatically sync these to the database `curators` table when it starts.
+
+**Step 2: Set Up Twitter Authentication** (Required for Twitter monitoring)
+
+Twitter monitoring uses Playwright with cookie-based authentication. You need to log in once with a headed browser, then the system runs in headless mode.
+
+1. **First-time setup** (headed browser login):
+```bash
+cd src/intelligence/social_ingest
+python twitter_auth_setup.py
+```
+
+This will:
+- Open a browser window (headed mode)
+- Navigate to Twitter login
+- Wait for you to log in manually
+- Save cookies to `src/config/twitter_cookies.json`
+- Test the connection
+
+2. **After setup**: The system automatically uses saved cookies in headless mode for monitoring.
+
+**Note**: If cookies expire, re-run `twitter_auth_setup.py` to refresh them.
+
+**Step 3: Telegram Setup** (Optional, if using Telegram curators)
+
+For Telegram monitoring, you need:
+- Telegram Bot Token (set `TELEGRAM_BOT_TOKEN` in `.env`)
+- Telegram Channel IDs (configured in `twitter_curators.yaml`)
+
+The system will automatically monitor Telegram channels listed in your curator configuration.
 
 ### **Quick Start**
 
@@ -255,11 +484,17 @@ npm install
 
 # Set up environment variables
 cp env.example .env
-# Edit .env with your API keys
+# Edit .env with your API keys:
+#   - SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_ROLE_KEY)
+#   - OPENROUTER_API_KEY
+#   - Wallet private keys (if trading enabled)
+#   - ACTIONS_ENABLED=0 (read-only) or ACTIONS_ENABLED=1 (trading enabled)
 
-# Run the lowcap pipeline
-python src/run_social_trading.py
+# Run the production system
+python src/run_trade.py
 ```
+
+**Alternative Entry Point**: `src/run_social_trading.py` is a simpler entry point for development/testing, but `src/run_trade.py` is the production system with full scheduling, bootstrap, and regime pipeline.
 
 ### **Configuration**
 
@@ -294,19 +529,23 @@ python backtest_uptrend_v4.py --token CONTRACT --chain solana --timeframe 1h --s
 ### **☼ Production Ready**
 
 - ✅ **Uptrend Engine v4** - Universal trend detection (S0→S1→S2→S3 state machine)
+- ✅ **Regime Engine** - Market regime detection using 5 drivers across 3 timeframes for A/E calculation
+- ✅ **Bootstrap System** - Comprehensive startup verification and data backfill
 - ✅ **Lowcap Pipeline** - Social ingest (Twitter/Telegram) → DM → PM → Li.Fi executor
 - ✅ **Multi-timeframe positions** - 4 independent positions per token (1m, 15m, 1h, 4h)
-- ✅ **Portfolio Manager v4** - A/E scores, signal integration, position management
-- ✅ **Learning System Phase 1 & 2** - Coefficients (single-factor + interaction patterns, EWMA, importance bleed)
+- ✅ **Portfolio Manager v4** - Regime-driven A/E scores, signal integration, position management
+- ✅ **Learning System** - Pattern × scope × action → outcome learning (PM strength, PM tuning, DM allocation lessons)
+- ✅ **Coefficients** - Decision Maker learning (single-factor + interaction patterns, EWMA, importance bleed)
+- ✅ **Balance Tracking** - Hierarchical snapshots (hourly, 4h, daily, weekly, monthly)
 - ✅ **Backtesting** - Full backtest suite using production engine
 - ✅ **Multi-chain execution** - Li.Fi SDK for unified cross-chain trading
+- ✅ **Comprehensive Scheduling** - 1m, 5m, 15m, hourly, 4h, daily, weekly, monthly jobs
 
 ### **☽ In Development**
 
-- 🔄 **Braiding System** - PM learning from action sequences (outcome-first exploration)
-- 🔄 **LLM Learning Layer** - Semantic features, hypothesis generation (infrastructure ready, phased enablement)
+- 🔄 **LLM Learning Layer** - Semantic features, hypothesis generation, structure evolution (infrastructure ready, phased enablement)
 - 🔄 **Additional Pipelines** - Perps (Hyperliquid), Prediction (Polymarket), Stocks
-- 🔄 **Enhanced Learning** - Cross-pipeline learning, regime detection improvements
+- 🔄 **Enhanced Learning** - Cross-pipeline learning, improved pattern discovery, scope evolution
 
 ---
 
@@ -331,9 +570,71 @@ Each timeframe gives independent signals. The system trades each one separately.
 
 Traditional ML starts with features and predicts outcomes. Lotus Trader starts with outcomes and discovers features:
 - **We know what we want**: High R/R, short hold time
-- **We work backwards**: "What contexts/signals led to these outcomes?"
-- **Patterns emerge from data**: Not predefined, discovered through braiding
-- **Gentle tuning**: Insights adjust decision-making by small amounts (max 10%), not replacement
+- **We work backwards**: "What pattern × action × scope combinations led to these outcomes?"
+- **Patterns emerge from data**: Not predefined, discovered through statistical measurement within scopes
+- **Scope-based modulation**: The same pattern behaves differently in different scopes — Lotus learns these differences precisely
+- **Gentle tuning**: Insights adjust decision-making through PM strength (0.3x–3.0x), PM tuning (threshold adjustments), and DM allocation (timeframe splits)
+
+### **System Scheduling**
+
+The production system (`run_trade.py`) runs a comprehensive scheduling system:
+
+**Bootstrap Phase** (on startup):
+- Database table verification
+- Wallet balance collection
+- Price data verification
+- Hyperliquid WS connection (if enabled)
+- Regime driver position creation
+- Regime price data backfill (up to 666 bars per timeframe)
+
+**High Frequency (1 minute)**:
+- OHLC conversion (1m price points → 1m OHLC bars)
+- Majors rollup (Hyperliquid ticks → 1m OHLC)
+- TA Tracker (1m)
+- Uptrend Engine (1m)
+- PM Core Tick (1m)
+- Regime Pipeline (1m)
+
+**Medium Frequency (5 minutes)**:
+- Features/Phase Tracker
+- Pattern Scope Aggregator
+- OHLC Rollup (5m)
+
+**Standard Frequency (15 minutes)**:
+- TA Tracker (15m)
+- OHLC Rollup (15m)
+- Uptrend Engine (15m)
+- PM Core Tick (15m)
+
+**Hourly Jobs**:
+- :01 - Regime Pipeline (1h)
+- :02 - NAV computation
+- :02 - Rollup catch-up (15m, 1h, 4h)
+- :04 - OHLC Rollup (1h)
+- :05 - Geometry Builder (all timeframes)
+- :06 - TA Tracker (1h), PM Core Tick (1h)
+- :07 - Bars count update
+- :08 - Lesson Builder (PM)
+- :09 - Lesson Builder (DM)
+- :10 - Override Materializer
+- :11 - Cap Bucket Tagging
+- :12 - Bucket Tracker
+- :00 - Hourly Balance Snapshot
+
+**4-Hour Jobs**:
+- :00 - OHLC Rollup (4h)
+- :00 - TA Tracker (4h), PM Core Tick (4h)
+- :00 - 4-Hour Balance Snapshot Rollup
+
+**Daily Jobs**:
+- 00:00 - Regime Pipeline (1d)
+- 01:00 - Daily Balance Snapshot Rollup
+
+**Weekly Jobs**:
+- Sunday 01:00 - Weekly Balance Snapshot Rollup
+
+**Monthly Jobs**:
+- 1st 02:00 - Monthly Balance Snapshot Rollup
 
 ---
 
@@ -342,28 +643,35 @@ Traditional ML starts with features and predicts outcomes. Lotus Trader starts w
 ### **Core Specifications**
 
 - **[Uptrend Engine v4 Spec](./docs/trencher_improvements/PM/v4_uptrend/UPTREND_ENGINE_V4_SPEC.md)** - Complete state machine specification
-- **[Learning System v4](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/LEARNING_SYSTEM_V4.md)** - Coefficients, braiding, LLM layer
-- **[Braiding System Design](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/BRAIDING_SYSTEM_DESIGN.md)** - Outcome-first exploration architecture
-- **[Braiding Implementation Guide](./docs/trencher_improvements/PM/v4_uptrend/v4_Learning/BRAIDING_IMPLEMENTATION_GUIDE.md)** - Step-by-step implementation
+- **[Lotus⚘⟁3 Whitepaper](./docs/architecture/Lotus⚘⟁3_whitepaper.md)** - Complete system philosophy and architecture
 
 ### **Architecture**
 
 - **[Complete Integration Plan](./docs/trencher_improvements/PM/v4_uptrend/COMPLETE_INTEGRATION_PLAN.md)** - Multi-timeframe, PM integration, system flow
 - **[Implementation Status](./docs/trencher_improvements/PM/v4_uptrend/IMPLEMENTATION_STATUS.md)** - What's built, what's coming
+- **[Regime Engine](./docs/inprogress/Regime_engine.md)** - Market regime detection system
+- **[Scaling A/E v2](./docs/implementation/scaling_ae_v2_implementation.md)** - Episode-based learning and scaling
+
+### **System Operations**
+
+- **[Bootstrap System](./src/intelligence/lowcap_portfolio_manager/jobs/bootstrap_system.py)** - Startup verification and data backfill
+- **[Scheduling Architecture](./docs/architecture/run_trade_plan.md)** - Job scheduling and dependencies
 
 ---
 
 ## ⚘ **The Vision**
 
-Lotus Trader is not a trading bot. It's a universal trend engine + outcome-first learner that works on anything with OHLCV data.
+Lotus Trader is not a trading bot. It's a universal trend engine + quantitative intelligence that works on anything with OHLCV data.
 
 Lotus Trader represents a fundamental shift from trading bots to **universal trend detection systems**.
 
 **The Core Innovation**: One engine that works on any market, any timeframe, any asset class - because all markets are driven by the same human behavior and market dynamics.
 
-**The Learning Innovation**: Outcome-first exploration - start with what worked, discover what led to it, gently tune decision-making. Not ML prediction, but pattern discovery from outcomes.
+**The Learning Innovation**: Pattern × action × scope → outcome → edge → lessons → behaviour. Not ML prediction, but statistical measurement within precise contextual scopes. Math measures truth. LLM intelligence evolves structure.
 
-**The Architecture Innovation**: Multiple pipelines, one engine, one learning system. Each pipeline handles its own data and execution, but they all share the universal trend detection core.
+**The Architecture Innovation**: Multiple pipelines, one engine, one learning system. Each pipeline handles its own data and execution, but they all share the universal trend detection core and outcome-first learning system.
+
+**Note**: This codebase implements **Lotus Trader⚘⟁** only. The broader Lotus⚘⟁3 system includes Lotus Seer☊ (prediction markets) and a future Meta-Agent (system-level intelligence), but those are separate implementations.
 
 ---
 

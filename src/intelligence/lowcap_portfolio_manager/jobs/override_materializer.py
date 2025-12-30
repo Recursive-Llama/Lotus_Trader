@@ -123,10 +123,22 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
         
         # Drift Parameters
         ETA = 0.005 # Learning rate
+        ETA_DX_LADDER = 0.02  # Phase 7: Separate learning rate for DX ladder tuning
         
         for lesson in lessons:
             try:
+                action_category = lesson.get('action_category', '')
+                pattern_key = lesson.get('pattern_key', '')
+                scope_subset = lesson.get('scope_subset') or {}
                 stats = lesson.get('stats', {})
+                
+                # Phase 7: Handle DX ladder tuning separately
+                if action_category == 'tuning_dx_ladder':
+                    overrides_written += _materialize_dx_ladder_override(
+                        sb_client, pattern_key, scope_subset, stats, now, ETA_DX_LADDER
+                    )
+                    continue
+                
                 n_misses = float(stats.get('n_misses', 0))
                 n_fps = float(stats.get('n_fps', 0))
                 
@@ -148,16 +160,17 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
                 mult_threshold = max(0.5, min(2.0, mult_threshold))
                 mult_halo = max(0.5, min(2.0, mult_halo))
                 
-                pattern_key = lesson.get('pattern_key', '')
-                scope_subset = lesson.get('scope_subset') or {}
-                
                 overrides_to_write = []
                 
                 if "S1" in pattern_key:
                     overrides_to_write.append(('tuning_ts_min', mult_threshold))
                     overrides_to_write.append(('tuning_halo', mult_halo))
-                elif "S3" in pattern_key:
-                    # S3 uses TS and DX
+                # Phase 7: S2 tuning uses same levers as S1 (halo, ts_min, slope guards)
+                elif "S2" in pattern_key:
+                    overrides_to_write.append(('tuning_s2_ts_min', mult_threshold))
+                    overrides_to_write.append(('tuning_s2_halo', mult_halo))
+                elif "S3" in pattern_key and "dx" not in pattern_key.lower():
+                    # S3 retest (not DX) uses TS and DX decision threshold
                     overrides_to_write.append(('tuning_ts_min', mult_threshold))
                     overrides_to_write.append(('tuning_dx_min', mult_threshold))
 
@@ -186,6 +199,69 @@ def materialize_tuning_overrides(sb_client: Client) -> int:
         
     except Exception as e:
         logger.error(f"Tuning Materializer failed: {e}")
+        return 0
+
+
+def _materialize_dx_ladder_override(
+    sb_client: Client,
+    pattern_key: str,
+    scope_subset: Dict[str, Any],
+    stats: Dict[str, Any],
+    now: datetime,
+    eta: float
+) -> int:
+    """
+    Phase 7: Materialize DX ladder tuning overrides.
+    
+    DX ladder tuning adjusts dx_atr_mult based on ladder fill distribution:
+    - ladder_pressure > 0: Arms too tight (many 3s) → increase dx_atr_mult (spread out)
+    - ladder_pressure < 0: Arms too wide (many 1s) → decrease dx_atr_mult (tighten)
+    
+    This only runs on successful recoveries. Failures are handled by dx_min decision tuning.
+    """
+    try:
+        ladder_pressure = float(stats.get('ladder_pressure', 0))
+        n_success = int(stats.get('n_success', 0))
+        
+        # Need minimum successful recoveries to learn from
+        if n_success < 10:
+            return 0
+        
+        if abs(ladder_pressure) < 0.05:
+            # Balanced distribution, no adjustment needed
+            return 0
+        
+        # Calculate multiplier for dx_atr_mult
+        # Positive pressure (too many 3s) → increase mult (spread arms)
+        # Negative pressure (too many 1s) → decrease mult (tighten arms)
+        mult = math.exp(eta * ladder_pressure * 10)  # Scale up for dx_atr_mult effect
+        
+        # Clamp to reasonable range [0.7, 1.5]
+        mult = max(0.7, min(1.5, mult))
+        
+        # Skip tiny changes
+        if abs(mult - 1.0) < 0.02:
+            return 0
+        
+        sb_client.table('pm_overrides').upsert({
+            'pattern_key': pattern_key,
+            'action_category': 'tuning_dx_atr_mult',
+            'scope_subset': scope_subset,
+            'multiplier': mult,
+            'confidence_score': min(1.0, n_success / 100),  # Confidence scales with sample size
+            'decay_state': None,
+            'last_updated_at': now.isoformat()
+        }, on_conflict='pattern_key,action_category,scope_subset').execute()
+        
+        logger.info(
+            "DX LADDER TUNING: pattern=%s scope=%s | pressure=%.3f → mult=%.3f",
+            pattern_key, scope_subset, ladder_pressure, mult
+        )
+        
+        return 1
+        
+    except Exception as e:
+        logger.warning(f"Failed to write DX ladder override: {e}")
         return 0
 
 def run_override_materializer(sb_client: Optional[Client] = None) -> Dict[str, int]:

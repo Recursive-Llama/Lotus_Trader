@@ -306,6 +306,9 @@ class PMExecutor:
         
         # SOLANA ONLY - Reject non-Solana chains
         self.allowed_chains = ['solana']
+        
+        # Cached wallet address for transaction parsing (derived from private key)
+        self.solana_wallet_address: Optional[str] = None
     
     def _setup_solana_executor(self):
         """Setup SolanaExecutor for direct Jupiter swaps (Solana-only trading)"""
@@ -331,6 +334,10 @@ class PMExecutor:
                 from intelligence.trader_lowcap.solana_executor import SolanaExecutor
                 self.solana_executor = SolanaExecutor(self.js_solana_client)
                 
+                # Derive and cache wallet address for transaction parsing
+                # This is critical for correctly identifying our token accounts in transactions
+                self._derive_wallet_address(solana_key)
+                
                 logger.info("✅ SolanaExecutor initialized for direct Jupiter swaps")
             except ImportError as e:
                 logger.warning(f"Failed to import SolanaExecutor components: {e}")
@@ -339,6 +346,51 @@ class PMExecutor:
                 
         except Exception as e:
             logger.warning(f"Error setting up SolanaExecutor: {e}")
+    
+    def _derive_wallet_address(self, private_key: str):
+        """
+        Derive wallet public address from private key.
+        This is cached at initialization to avoid repeated derivation.
+        """
+        try:
+            # Check if explicitly set in environment first
+            # Check both possible env var names
+            wallet_from_env = os.getenv('SOL_WALLET_ADDRESS') or os.getenv('SOLANA_WALLET_ADDRESS')
+            if wallet_from_env:
+                self.solana_wallet_address = wallet_from_env
+                logger.info(f"Wallet address from env: {wallet_from_env[:8]}...")
+                return
+            
+            # Derive from private key using Node.js
+            import subprocess
+            js_code = f"""
+const bs58 = require('bs58');
+const {{ Keypair }} = require('@solana/web3.js');
+try {{
+    const keyBytes = bs58.decode('{private_key}');
+    const wallet = Keypair.fromSecretKey(keyBytes);
+    console.log(wallet.publicKey.toString());
+}} catch (e) {{
+    console.error(e.message);
+    process.exit(1);
+}}
+"""
+            result = subprocess.run(
+                ['node', '-e', js_code],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                self.solana_wallet_address = result.stdout.strip()
+                logger.info(f"Derived wallet address: {self.solana_wallet_address[:8]}...")
+            else:
+                logger.warning(f"Failed to derive wallet address: {result.stderr}")
+                
+        except Exception as e:
+            logger.warning(f"Error deriving wallet address: {e}")
     
     def _get_chain_id(self, chain: str) -> str:
         """Map chain name to Li.Fi chain identifier."""
@@ -637,16 +689,15 @@ async function parseTransaction() {{
             return balances.find((entry) => entry.accountIndex === accountIndex && entry.mint === tokenMint);
         }};
         
+        // Collect ALL deltas for this token mint to select the correct one
+        const allDeltas = [];
+        
         for (const postEntry of postBalances) {{
             if (postEntry.mint !== tokenMint) {{
                 continue;
             }}
             
             const postOwner = normalizeOwner(postEntry);
-            if (walletAddress && postOwner !== walletAddress) {{
-                continue;
-            }}
-            
             const preEntry = findMatchingEntry(preBalances, postEntry.accountIndex);
             const postRaw = BigInt(postEntry.uiTokenAmount?.amount ?? postEntry.amount ?? '0');
             const preRaw = preEntry ? BigInt(preEntry.uiTokenAmount?.amount ?? preEntry.amount ?? '0') : 0n;
@@ -655,17 +706,50 @@ async function parseTransaction() {{
             if (rawDelta !== 0n) {{
                 const decimals = postEntry.uiTokenAmount?.decimals ?? postEntry.decimals ?? 9;
                 const amount = Number(rawDelta) / (10 ** decimals);
-                return {{
-                    success: true,
+                allDeltas.push({{
                     amount: amount,
                     rawAmount: rawDelta.toString(),
                     decimals: decimals,
-                    owner: postOwner
-                }};
+                    owner: postOwner,
+                    accountIndex: postEntry.accountIndex
+                }});
             }}
         }}
         
-        return {{ success: false, error: 'No token delta found' }};
+        if (allDeltas.length === 0) {{
+            return {{ success: false, error: 'No token delta found' }};
+        }}
+        
+        // Select the correct delta based on wallet address filter
+        let selectedDelta = null;
+        
+        if (walletAddress) {{
+            // Filter to wallet's accounts only
+            const walletDeltas = allDeltas.filter(d => d.owner === walletAddress);
+            
+            if (walletDeltas.length > 0) {{
+                // For wallet's accounts, prefer positive delta (receiving tokens = buy)
+                // This handles cases where wallet has multiple token accounts
+                const positiveDelta = walletDeltas.find(d => d.amount > 0);
+                selectedDelta = positiveDelta || walletDeltas[0];
+            }}
+        }}
+        
+        // Fallback: if no wallet address or no wallet-specific delta found, use first delta
+        // This is legacy behavior and may be incorrect for some transactions
+        if (!selectedDelta) {{
+            selectedDelta = allDeltas[0];
+        }}
+        
+        return {{
+            success: true,
+            amount: selectedDelta.amount,
+            rawAmount: selectedDelta.rawAmount,
+            decimals: selectedDelta.decimals,
+            owner: selectedDelta.owner,
+            totalDeltasFound: allDeltas.length,
+            walletFiltered: !!walletAddress
+        }};
         
     }} catch (error) {{
         return {{ success: false, error: error.message }};
@@ -843,28 +927,48 @@ parseTransaction().then(result => {{
                     
                     # FIX 2: Parse transaction to get ACTUAL amount (not quote estimate)
                     # This also gives us correct decimals from transaction metadata
+                    # CRITICAL: Pass wallet address to ensure we find our token account, not swap program's
                     actual_result = self._parse_solana_transaction_for_token_delta(
                         tx_hash=tx_hash,
                         token_mint=token_contract,
-                        wallet_address=None  # Will find any token delta for this mint
+                        wallet_address=self.solana_wallet_address  # Filter to our wallet's accounts
                     )
                     
+                    # Validate the result for BUY operations
+                    use_actual_result = False
                     if actual_result:
-                        # Use actual amount from transaction (source of truth)
                         tokens_received = actual_result['amount']
-                        tokens_received_raw = actual_result['rawAmount']
-                        token_decimals = actual_result['decimals']
                         
-                        logger.info(
-                            f"TRANSACTION PARSED: Got actual amount from transaction | "
-                            f"token={token_contract[:8]}... | "
-                            f"amount={tokens_received:.6f} | "
-                            f"decimals={token_decimals}"
-                        )
-                    else:
-                        # Fallback to quote amount (shouldn't happen, but safety)
+                        # CRITICAL: For BUY, delta must be POSITIVE (receiving tokens)
+                        # A negative delta means we found the wrong account (e.g., swap program sending tokens)
+                        if tokens_received > 0:
+                            use_actual_result = True
+                            tokens_received_raw = actual_result['rawAmount']
+                            token_decimals = actual_result['decimals']
+                            
+                            logger.info(
+                                f"TRANSACTION PARSED: Got actual amount from transaction | "
+                                f"token={token_contract[:8]}... | "
+                                f"amount={tokens_received:.6f} | "
+                                f"decimals={token_decimals} | "
+                                f"deltas_found={actual_result.get('totalDeltasFound', 'N/A')} | "
+                                f"wallet_filtered={actual_result.get('walletFiltered', False)}"
+                            )
+                        else:
+                            logger.error(
+                                f"TRANSACTION PARSING ERROR: Negative delta for BUY operation | "
+                                f"token={token_contract[:8]}... | "
+                                f"delta={tokens_received:.6f} | "
+                                f"tx={tx_hash[:8] if tx_hash else 'N/A'}... | "
+                                f"wallet_address={'SET' if self.solana_wallet_address else 'NOT SET'} | "
+                                f"deltas_found={actual_result.get('totalDeltasFound', 'N/A')} | "
+                                f"Falling back to quote amount"
+                            )
+                    
+                    if not use_actual_result:
+                        # Fallback to quote amount (shouldn't happen with proper wallet address, but safety)
                         logger.warning(
-                            f"TRANSACTION PARSING FAILED: Falling back to quote amount | "
+                            f"TRANSACTION PARSING FALLBACK: Using quote amount | "
                             f"token={token_contract[:8]}... | "
                             f"tx={tx_hash[:8] if tx_hash else 'N/A'}..."
                         )
@@ -1140,13 +1244,15 @@ parseTransaction().then(result => {{
                     
                     # FIX 3: Parse transaction to get ACTUAL USDC received (not quote estimate)
                     # For sells, we're receiving USDC, so we need to check USDC delta
+                    # CRITICAL: Pass wallet address to ensure we find our USDC account
                     USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
                     actual_result = self._parse_solana_transaction_for_token_delta(
                         tx_hash=tx_hash,
                         token_mint=USDC_MINT,  # We're receiving USDC
-                        wallet_address=None  # Will find any USDC delta
+                        wallet_address=self.solana_wallet_address  # Filter to our wallet's accounts
                     )
                     
+                    # For SELL, USDC delta should be POSITIVE (receiving USDC)
                     if actual_result and actual_result['amount'] > 0:
                         # Use actual USDC received from transaction (source of truth)
                         usdc_received = actual_result['amount']
@@ -1155,15 +1261,26 @@ parseTransaction().then(result => {{
                         logger.info(
                             f"TRANSACTION PARSED: Got actual USDC from transaction | "
                             f"token={token_contract[:8]}... | "
-                            f"usdc_received={usdc_received:.2f}"
+                            f"usdc_received={usdc_received:.2f} | "
+                            f"deltas_found={actual_result.get('totalDeltasFound', 'N/A')} | "
+                            f"wallet_filtered={actual_result.get('walletFiltered', False)}"
                         )
                     else:
-                        # Fallback to quote amount (shouldn't happen, but safety)
-                        logger.warning(
-                            f"TRANSACTION PARSING FAILED: Falling back to quote amount | "
-                            f"token={token_contract[:8]}... | "
-                            f"tx={tx_hash[:8] if tx_hash else 'N/A'}..."
-                        )
+                        # Fallback to quote amount
+                        if actual_result and actual_result['amount'] <= 0:
+                            logger.error(
+                                f"TRANSACTION PARSING ERROR: Non-positive USDC delta for SELL | "
+                                f"token={token_contract[:8]}... | "
+                                f"delta={actual_result.get('amount', 'N/A')} | "
+                                f"tx={tx_hash[:8] if tx_hash else 'N/A'}... | "
+                                f"Falling back to quote amount"
+                            )
+                        else:
+                            logger.warning(
+                                f"TRANSACTION PARSING FAILED: Falling back to quote amount | "
+                                f"token={token_contract[:8]}... | "
+                                f"tx={tx_hash[:8] if tx_hash else 'N/A'}..."
+                            )
                         output_amount_raw = result.get('outputAmount', 0)
                         usdc_received = float(output_amount_raw) / 1_000_000  # USDC has 6 decimals
                         usdc_received_raw = str(output_amount_raw)

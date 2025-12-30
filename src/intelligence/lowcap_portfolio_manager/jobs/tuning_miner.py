@@ -19,6 +19,12 @@ class TuningMiner:
     Mines frequent scope slices using recursive Apriori-like search.
     Calculates Tuning Rates (Win Rate, Miss Rate, False Positive Rate, Dodge Rate).
     Writes to 'learning_lessons' with lesson_type='tuning_rates'.
+    
+    Phase 7 Update: Now handles S2 and DX pattern keys for ladder tuning.
+    - pm.uptrend.S1.* - S1 entry tuning
+    - pm.uptrend.S2.* - S2 dip buy tuning (halo, ts_min, slope guards)
+    - pm.uptrend.S3.dx - DX ladder tuning (dx_atr_mult adjustment)
+    - pm.uptrend.S3.* - S3 retest tuning
     """
 
     def __init__(self):
@@ -33,6 +39,10 @@ class TuningMiner:
         # Miner Config
         self.N_MIN = 33  # Minimum samples to form a lesson
         self.LOOKBACK_DAYS = 90
+        
+        # Pattern key categories for different tuning behaviors
+        self.DX_PATTERN_KEYS = {"pm.uptrend.S3.dx"}
+        self.S2_PATTERN_KEYS = {"pm.uptrend.S2.buy_flag", "pm.uptrend.S2.entry"}
 
     def run(self):
         """Main execution entry point."""
@@ -141,6 +151,13 @@ class TuningMiner:
         for pattern_key, group in grouped:
             if len(group) < self.N_MIN:
                 continue
+            
+            # Phase 7: Special handling for DX ladder tuning
+            if pattern_key in self.DX_PATTERN_KEYS:
+                lesson = self._process_dx_slice(pattern_key, group, scope_subset)
+                if lesson:
+                    lessons.append(lesson)
+                continue
                 
             p_acted = group[group['decision'] == 'acted']
             p_skipped = group[group['decision'] == 'skipped']
@@ -180,6 +197,76 @@ class TuningMiner:
                 "updated_at": datetime.utcnow().isoformat()
             }
             lessons.append(lesson)
+    
+    def _process_dx_slice(self, pattern_key: str, group: pd.DataFrame, scope_subset: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Phase 7: Special processing for DX ladder tuning.
+        
+        DX ladder tuning is different from standard win/loss rates:
+        - Only runs on successful recoveries (failures handled by dx_min decision tuning)
+        - Uses dx_count (ladder fill level) to determine if arms are too tight/wide
+        - dx_count=3 frequently on success → arms too tight, spread out
+        - dx_count=1 frequently on success → arms too wide, tighten
+        """
+        # Only consider successful DX episodes for ladder tuning
+        successful = group[group['outcome'] == 'success']
+        
+        if len(successful) < self.N_MIN:
+            return None
+        
+        # Extract dx_count from factors
+        dx_counts = []
+        for _, row in successful.iterrows():
+            factors = row.get('factors', {})
+            if isinstance(factors, dict):
+                dx_count = factors.get('dx_count')
+                if dx_count is not None:
+                    dx_counts.append(int(dx_count))
+        
+        if not dx_counts:
+            return None
+        
+        # Calculate distribution of dx_count on success
+        dx_arr = np.array(dx_counts)
+        avg_dx_count = float(np.mean(dx_arr))
+        count_1 = int(np.sum(dx_arr == 1))
+        count_2 = int(np.sum(dx_arr == 2))
+        count_3 = int(np.sum(dx_arr == 3))
+        
+        # Calculate ladder pressure
+        # Positive = arms too tight (too many 3s) → need to spread out (increase dx_atr_mult)
+        # Negative = arms too wide (too many 1s) → need to tighten (decrease dx_atr_mult)
+        # Neutral when distribution is balanced around 2
+        ladder_pressure = (count_3 - count_1) / len(dx_counts)
+        
+        stats = {
+            "avg_dx_count": round(avg_dx_count, 2),
+            "count_1": count_1,
+            "count_2": count_2,
+            "count_3": count_3,
+            "n_success": len(successful),
+            "n_total": len(group),
+            "ladder_pressure": round(ladder_pressure, 3),
+        }
+        
+        # Also calculate standard failure rate for DX decision tuning
+        failed = group[group['outcome'] == 'failure']
+        stats["n_failure"] = len(failed)
+        stats["failure_rate"] = round(len(failed) / len(group), 3) if len(group) > 0 else 0.0
+        
+        lesson = {
+            "module": "pm",
+            "pattern_key": pattern_key,
+            "action_category": "tuning_dx_ladder",  # Distinct category for materializer
+            "scope_subset": scope_subset,
+            "n": len(group),
+            "stats": stats,
+            "lesson_type": "tuning_rates",
+            "status": "active",
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        
+        return lesson
 
     def _write_lessons(self, lessons: List[Dict[str, Any]]):
         """Upserts lessons to DB."""

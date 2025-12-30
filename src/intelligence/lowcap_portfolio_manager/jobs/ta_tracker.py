@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from supabase import create_client, Client  # type: ignore
 
@@ -21,6 +22,11 @@ from src.intelligence.lowcap_portfolio_manager.jobs.ta_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Performance thresholds for logging
+QUERY_WARN_SECONDS = 5.0
+QUERY_CRITICAL_SECONDS = 30.0
+DEFAULT_CHUNK_SIZE = 100
 
 # Re-export for backwards compatibility (if anything imports these directly)
 _ema_series = ema_series
@@ -159,29 +165,103 @@ class TATracker:
         # Map timeframe to suffix (e.g., "1m" -> "_1m", "1h" -> "_1h")
         self.ta_suffix = f"_{timeframe}"
 
-    def _active_positions(self) -> List[Dict[str, Any]]:
-        """Get positions for this timeframe (watchlist + active only)."""
-        res = (
-            self.sb.table("lowcap_positions")
-            .select("id,token_contract,token_chain,features,timeframe")
-            .eq("timeframe", self.timeframe)
-            .in_("status", ["watchlist", "active"])  # Process watchlist and active
-            .limit(2000)
-            .execute()
-        )
-        return res.data or []
+    def _active_positions_chunked(self, chunk_size: int = DEFAULT_CHUNK_SIZE) -> Generator[Dict[str, Any], None, None]:
+        """Yield positions in chunks to prevent timeout on large datasets.
+        
+        IMPORTANT: Does NOT select 'features' - that's read per-position when writing.
+        This pattern prevents bulk-reading large JSONB columns that cause timeouts.
+        See: write_features_token_geometry() for the correct pattern.
+        
+        Args:
+            chunk_size: Number of positions to fetch per query (default 100)
+            
+        Yields:
+            Position dictionaries one at a time
+        """
+        offset = 0
+        total_fetched = 0
+        start_time = time.time()
+        
+        while True:
+            query_start = time.time()
+            res = (
+                self.sb.table("lowcap_positions")
+                .select("id,token_contract,token_chain,timeframe")  # NO features!
+                .eq("timeframe", self.timeframe)
+                .in_("status", ["watchlist", "active"])
+                .range(offset, offset + chunk_size - 1)
+                .execute()
+            )
+            query_time = time.time() - query_start
+            
+            if query_time > QUERY_WARN_SECONDS:
+                logger.warning(
+                    "Slow position query: chunk %d-%d took %.2fs",
+                    offset, offset + chunk_size, query_time
+                )
+            
+            batch = res.data or []
+            if not batch:
+                break
+                
+            total_fetched += len(batch)
+            for p in batch:
+                yield p
+            
+            offset += chunk_size
+            
+            # Safety: max 2000 positions (same as old limit)
+            if total_fetched >= 2000:
+                logger.warning("Hit position limit (2000), stopping")
+                break
+        
+        total_time = time.time() - start_time
+        if total_time > QUERY_CRITICAL_SECONDS:
+            logger.error(
+                "CRITICAL: Fetching %d positions took %.2fs - investigate query performance",
+                total_fetched, total_time
+            )
+        elif total_fetched > 0:
+            logger.debug("Fetched %d positions in %.2fs", total_fetched, total_time)
+
+    def _write_features_ta(self, position_id: str, ta: Dict[str, Any]) -> None:
+        """Write TA to features using per-position read-modify-write pattern.
+        
+        This avoids bulk-reading features in _active_positions() which causes timeouts.
+        Pattern matches write_features_token_geometry() in spiral/persist.py.
+        """
+        try:
+            row = (
+                self.sb.table("lowcap_positions")
+                .select("features")
+                .eq("id", position_id)
+                .limit(1)
+                .execute()
+                .data or []
+            )
+            features = (row[0].get("features") if row else {}) or {}
+            features["ta"] = ta
+            self.sb.table("lowcap_positions").update({"features": features}).eq("id", position_id).execute()
+        except Exception as e:
+            logger.error("Failed to write TA for position %s: %s", position_id, e)
+            raise
 
     def run(self) -> int:
         now = datetime.now(timezone.utc)
         updated = 0
-        positions = self._active_positions()
-        for p in positions:
+        skipped = 0
+        errors = 0
+        
+        for p in self._active_positions_chunked():
+            pid = p.get("id")
+            contract = p.get("token_contract")
+            chain = p.get("token_chain")
+            
             try:
-                pid = p.get("id")
-                contract = p.get("token_contract")
-                chain = p.get("token_chain")
-                features = p.get("features") or {}
                 # Timeframe-specific OHLC
+                # IMPORTANT: Supabase has a default row limit of 1000 rows.
+                # We order DESC to get the NEWEST rows first, then reverse in Python.
+                # This ensures we always have the most recent data for EMA calculation.
                 rows_tf = (
                     self.sb.table("lowcap_price_data_ohlc")
                     .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
@@ -189,12 +269,14 @@ class TATracker:
                     .eq("chain", chain)
                     .eq("timeframe", self.timeframe)
                     .lte("timestamp", now.isoformat())
-                    .order("timestamp", desc=False)
-                    .limit(9999)
+                    .order("timestamp", desc=True)  # DESC to get newest first
+                    .limit(1000)  # Supabase caps at 1000 anyway
                     .execute()
                     .data
                     or []
                 )
+                # Reverse to chronological order (oldest first) for EMA calculation
+                rows_tf = list(reversed(rows_tf))
                 # Minimum bars required varies by timeframe
                 # 1m: 333 bars minimum (matches backfill minimum, ~5.5 hours)
                 # 15m: 288 bars (~3 days)
@@ -203,7 +285,8 @@ class TATracker:
                 min_bars_map = {"1m": 333, "15m": 288, "1h": 72, "4h": 18}
                 min_bars = min_bars_map.get(self.timeframe, 72)
                 if len(rows_tf) < min_bars:
-                    logger.debug(f"Skipping {self.timeframe} position: only {len(rows_tf)} bars, need {min_bars}")
+                    logger.debug(f"Skipping {self.timeframe} position {contract}: only {len(rows_tf)} bars, need {min_bars}")
+                    skipped += 1
                     continue  # require at least min_bars for this timeframe
                 bars_tf = [
                     {
@@ -360,13 +443,23 @@ class TATracker:
                     },
                 }
 
-                new_features = dict(features)
-                new_features["ta"] = ta
-                self.sb.table("lowcap_positions").update({"features": new_features}).eq("id", pid).execute()
+                # Per-position write (reads features only for this position, not bulk)
+                self._write_features_ta(pid, ta)
                 updated += 1
+                
             except Exception as e:
-                logger.debug("ta_tracker skipped position: %s", e)
-        logger.info("TA tracker updated %d positions", updated)
+                errors += 1
+                logger.error(
+                    "TA Tracker failed for %s/%s (timeframe=%s): %s",
+                    contract, chain, self.timeframe, e
+                )
+                # Continue to next position - one failure shouldn't stop the batch
+                continue
+                
+        logger.info(
+            "TA Tracker (%s) complete: updated=%d, skipped=%d, errors=%d",
+            self.timeframe, updated, skipped, errors
+        )
         return updated
 
 

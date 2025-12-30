@@ -122,13 +122,8 @@ class RegimeTATracker:
                 # Add latest price for UptrendEngine
                 ta["latest_price"] = bars[-1]["c"] if bars else 0.0
                 
-                # Update position features
-                features = position.get("features") or {}
-                features["ta"] = ta
-                
-                self.sb.table("lowcap_positions").update({
-                    "features": features
-                }).eq("id", position["id"]).execute()
+                # Update position features (per-position read-modify-write)
+                self._write_features_ta(position["id"], ta)
                 
                 updated += 1
                 logger.debug(f"Updated TA for {driver}/{self.timeframe}")
@@ -139,6 +134,24 @@ class RegimeTATracker:
         logger.info(f"Regime TA tracker updated {updated} positions for {self.timeframe}")
         return updated
     
+    def _write_features_ta(self, position_id: str, ta: Dict[str, Any]) -> None:
+        """Write TA to features using per-position read-modify-write pattern."""
+        try:
+            row = (
+                self.sb.table("lowcap_positions")
+                .select("features")
+                .eq("id", position_id)
+                .limit(1)
+                .execute()
+                .data or []
+            )
+            features = (row[0].get("features") if row else {}) or {}
+            features["ta"] = ta
+            self.sb.table("lowcap_positions").update({"features": features}).eq("id", position_id).execute()
+        except Exception as e:
+            logger.error("Failed to write TA for regime position %s: %s", position_id, e)
+            raise
+
     def _ensure_regime_position(self, driver: str) -> Optional[Dict[str, Any]]:
         """
         Get or create a regime driver position.

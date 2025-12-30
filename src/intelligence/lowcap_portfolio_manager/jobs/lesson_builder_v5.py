@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Mining Config
 N_MIN_SLICE = 33
+# Variance shrinkage prior for small-N reliability correction
+VAR_PRIOR = 0.25  # Tune based on expected RR variance (0.25 = reasonable default)
 # We'll dynamically determine dims from data, or stick to this list to be safe
 SCOPE_DIMS = [
     "curator", "chain", "mcap_bucket", "vol_bucket", "age_bucket", "intent",
@@ -237,7 +239,13 @@ def compute_lesson_stats(events: List[Dict[str, Any]], global_baseline_rr: float
     
     # Scores (0-1 normalized)
     ev_score = _sigmoid(delta_rr / 0.5)
-    reliability_score = 1.0 / (1.0 + variance)
+    
+    # Variance shrinkage prior for small-N reliability correction
+    # Prevents over-trusting tiny samples (variance=0 → reliability=1.0)
+    # Prior shrinks as n grows, becoming negligible for large samples
+    prior_variance = VAR_PRIOR / max(1, n)
+    adjusted_variance = variance + prior_variance
+    reliability_score = 1.0 / (1.0 + adjusted_variance)
     support_score = 1.0 - math.exp(-n / 50.0)
     magnitude_score = _sigmoid(avg_rr / 1.0) 
     
@@ -318,6 +326,18 @@ async def mine_lessons(sb_client: Client, module: str = 'pm') -> int:
                 if len(slice_df) < N_MIN_SLICE:
                     return
 
+                # FIX: Trade-normalized learning - deduplicate by trade_id within this slice
+                # Multiple actions from the same trade share the same outcome (final trade R/R)
+                # We must count distinct trades, not actions, to maintain statistical independence
+                if 'trade_id' in slice_df.columns:
+                    deduplicated = slice_df.drop_duplicates(subset=['trade_id'], keep='first')
+                    # Check if we still have enough after deduplication
+                    if len(deduplicated) < N_MIN_SLICE:
+                        return
+                    slice_df = deduplicated
+                else:
+                    logger.warning(f"trade_id column missing in slice_df, skipping deduplication")
+                
                 # Process Current Node
                 # Convert DF rows back to list of dicts for existing helper (or rewrite helper)
                 # Helper expects raw event dicts. We can reconstruct or just pass relevant columns.
@@ -347,6 +367,7 @@ async def mine_lessons(sb_client: Client, module: str = 'pm') -> int:
                     col = f"scope_{dim}"
                     
                     # Apriori Check: Which values for this dim are frequent in current slice?
+                    # Note: After deduplication, counts are per trade, not per action
                     counts = slice_df[col].value_counts()
                     valid_values = counts[counts >= N_MIN_SLICE].index.tolist()
                     
