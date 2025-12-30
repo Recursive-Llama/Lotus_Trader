@@ -20,7 +20,7 @@ Lotus Trader is a **universal trend detection and trading system** built around 
 
 ---
 
-## 🎯 **Core Architecture**
+## ⚘ **Core Architecture**
 
 Lotus Trader V3 has four core components:
 
@@ -113,7 +113,7 @@ Prediction Pipeline:
 
 ---
 
-## 🧠 **The Learning System**
+## 𓂀 **The Learning System**
 
 *Summary:* Outcome-first learning — pattern × action × scope → outcome → edge → lessons → behaviour.
 
@@ -253,7 +253,7 @@ DM Allocation: {1m: 0.2, 15m: 0.3, 1h: 0.3, 4h: 0.2}
 
 ---
 
-## 📊 **How It Works**
+## 🜄 **How It Works**
 
 *Summary:* Engine emits signals, Portfolio Manager makes decisions, Executor executes trades. Clean separation of concerns.
 
@@ -318,7 +318,7 @@ Each position has:
 
 ---
 
-## 🚀 **Getting Started**
+## ⚘ **Getting Started**
 
 ### **Prerequisites**
 
@@ -505,7 +505,7 @@ Key configuration files:
 
 ---
 
-## 📈 **Backtesting**
+## ⌖ **Backtesting**
 
 Lotus Trader includes a comprehensive backtesting system that uses the **exact same engine** as production.
 
@@ -524,7 +524,7 @@ python backtest_uptrend_v4.py --token CONTRACT --chain solana --timeframe 1h --s
 
 ---
 
-## 🏗️ **System Status**
+## ⧖ **System Status**
 
 ### **☼ Production Ready**
 
@@ -549,7 +549,7 @@ python backtest_uptrend_v4.py --token CONTRACT --chain solana --timeframe 1h --s
 
 ---
 
-## 🎓 **Key Concepts**
+## ∴ **Key Concepts**
 
 ### **Why Universal?**
 
@@ -638,7 +638,7 @@ The production system (`run_trade.py`) runs a comprehensive scheduling system:
 
 ---
 
-## 📚 **Documentation**
+## ⟡ **Documentation**
 
 ### **Core Specifications**
 
