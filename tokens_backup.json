@@ -1,0 +1,967 @@
+{
+  "exported_at": "2026-01-01T16:53:09.495538+00:00",
+  "count": 84,
+  "status_filter": null,
+  "tokens": [
+    {
+      "token_contract": "6cNcXWqYvK9nhD1TsjJ1ZH1KATXcaPaRJtZPHyVkJoBs",
+      "token_chain": "solana",
+      "token_ticker": "JOBS",
+      "curator": {
+        "added_at": "2025-12-30T23:14:08.054699+00:00",
+        "signal_id": "83b7ce69-1869-4ada-8e67-0f280978e682",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "regime_nano",
+      "token_chain": "regime",
+      "token_ticker": "nano",
+      "curator": null
+    },
+    {
+      "token_contract": "5XFeFezwgZvSdG2N69FPBuz98uFpfBCkFcXQXSiGpump",
+      "token_chain": "solana",
+      "token_ticker": "FIREBALL",
+      "curator": {
+        "added_at": "2025-12-30T02:23:59.654739+00:00",
+        "signal_id": "1b170e56-8534-4cc4-8d98-d044363ba11c",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "regime_alt",
+      "token_chain": "regime",
+      "token_ticker": "ALT",
+      "curator": null
+    },
+    {
+      "token_contract": "regime_btc_d",
+      "token_chain": "regime",
+      "token_ticker": "BTC.d",
+      "curator": null
+    },
+    {
+      "token_contract": "regime_small",
+      "token_chain": "regime",
+      "token_ticker": "small",
+      "curator": null
+    },
+    {
+      "token_contract": "regime_mid",
+      "token_chain": "regime",
+      "token_ticker": "mid",
+      "curator": null
+    },
+    {
+      "token_contract": "regime_big",
+      "token_chain": "regime",
+      "token_ticker": "big",
+      "curator": null
+    },
+    {
+      "token_contract": "regime_usdt_d",
+      "token_chain": "regime",
+      "token_ticker": "USDT.d",
+      "curator": null
+    },
+    {
+      "token_contract": "29zPc8uEQN4WbPFq5SU8Ee1aKaLHDWTBLwXr1A3Epump",
+      "token_chain": "solana",
+      "token_ticker": "LONG",
+      "curator": {
+        "added_at": "2025-12-31T13:32:32.357167+00:00",
+        "signal_id": "79f8fe71-e768-4b60-93e6-fada6c33b7a3",
+        "confidence": 0.6,
+        "curator_id": "giba_machado",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "6VLPpJdMuDaq62oSXhY97FXA72nkNfFg61ZZjzmiNn9W",
+      "token_chain": "solana",
+      "token_ticker": "AVICI",
+      "curator": {
+        "added_at": "2025-12-29T22:34:54.302381+00:00",
+        "signal_id": "b9776724-bac7-4555-a5d0-7dc07fc0f8fc",
+        "confidence": 0.6,
+        "curator_id": "the_professor",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "DitHyRMQiSDhn5cnKMJV2CDDt6sVct96YrECiM49pump",
+      "token_chain": "solana",
+      "token_ticker": "House",
+      "curator": {
+        "added_at": "2025-12-30T03:48:40.055404+00:00",
+        "signal_id": "f6ea690c-4cb6-4889-944b-2419b0071da3",
+        "confidence": 0.6,
+        "curator_id": "0xunihax0r",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "HYbbcoctzxZcrf89cTMPL1Q8wXR65Fhq6qfwuKXJpump",
+      "token_chain": "solana",
+      "token_ticker": "skin",
+      "curator": {
+        "added_at": "2025-12-30T15:57:13.933581+00:00",
+        "signal_id": "726eba16-8c01-4fac-a3d4-b1233facfcb1",
+        "confidence": 0.6,
+        "curator_id": "lexapro",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "B1rGc4HM4Q6q4nU78ADM7fGguxqiasH53fh6ViDXpump",
+      "token_chain": "solana",
+      "token_ticker": "BLOXX",
+      "curator": {
+        "added_at": "2025-12-30T00:37:45.690113+00:00",
+        "signal_id": "edaadcd2-99cb-4077-b3bb-9bcd96264e7c",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "DGNicx6qMPKSL1deR3fZfbHYjnm5ZJWmHNdY2NhDpump",
+      "token_chain": "solana",
+      "token_ticker": "AETH",
+      "curator": {
+        "added_at": "2025-12-30T00:39:00.215694+00:00",
+        "signal_id": "323f266b-c9bb-4049-b60a-360cc72cc030",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3E7LWnvBjKiauBJfbSFe86A1i5Rnzzs853bbjTmApump",
+      "token_chain": "solana",
+      "token_ticker": "WALL",
+      "curator": {
+        "added_at": "2025-12-30T01:57:59.958785+00:00",
+        "signal_id": "baa46ade-b695-4ea7-b927-9116067eea69",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "CYtqp57NEdyetzbDfxVoJ19MWHvvVCQBL9jfFjXWpump",
+      "token_chain": "solana",
+      "token_ticker": "OXE",
+      "curator": {
+        "added_at": "2025-12-30T09:16:31.905017+00:00",
+        "signal_id": "7bba2988-2ffd-40a2-8fda-57e24d75fcad",
+        "confidence": 0.6,
+        "curator_id": "tonybetw",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "ABHQGzXNoRbJ1sjUsCJ2TmTAo1uMx4EUpV1qYiSVpump",
+      "token_chain": "solana",
+      "token_ticker": "ruby",
+      "curator": {
+        "added_at": "2025-12-29T22:31:00.320054+00:00",
+        "signal_id": "fe0e67c3-a2b7-45df-b756-e5078ec556ce",
+        "confidence": 0.6,
+        "curator_id": "99_bollish",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "BeoD6uWxy1ThjCA8xbVRmzGfuUXPTnkhxgRSjAStv55V",
+      "token_chain": "solana",
+      "token_ticker": "LIT",
+      "curator": {
+        "added_at": "2025-12-30T20:23:43.127106+00:00",
+        "signal_id": "5e9c64f3-1c54-4a34-abaa-732a01298bd7",
+        "confidence": 0.7,
+        "curator_id": "0xdetweiler",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "DLMmRN9rbZspAAC3a1HgDHMC893Y2Ca9GjoNh9StwnYG",
+      "token_chain": "solana",
+      "token_ticker": "DLMM",
+      "curator": {
+        "added_at": "2025-12-29T22:28:35.525213+00:00",
+        "signal_id": "c9be3fc7-1291-4c6f-892b-3a62ba96a1ee",
+        "confidence": 0.6,
+        "curator_id": "breakb0nes",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "Ez5h2GUNC9c41nBk8zuR2ux1uCsRdhBrN89wfrabpump",
+      "token_chain": "solana",
+      "token_ticker": "PAWN",
+      "curator": {
+        "added_at": "2025-12-30T09:45:31.463802+00:00",
+        "signal_id": "337187be-99cd-43cd-8b1d-4076398484e9",
+        "confidence": 0.6,
+        "curator_id": "tonybetw",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "HjBMk5rABYdAvukYRvrScBnP9KnN9nLdKSbN2QPppump",
+      "token_chain": "solana",
+      "token_ticker": "RIFTS",
+      "curator": {
+        "added_at": "2025-12-29T22:40:56.986269+00:00",
+        "signal_id": "c52fe781-69a4-4653-9a39-79eb3be57333",
+        "confidence": 0.6,
+        "curator_id": "whalex",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "4PX31xRA1BaAyb2Js45ZKYp92VGWGp47yWeVs5CGVKbf",
+      "token_chain": "solana",
+      "token_ticker": "ZDLT",
+      "curator": {
+        "added_at": "2026-01-01T00:16:12.808316+00:00",
+        "signal_id": "7278ba29-f81e-449a-9961-7aed8970c9d9",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "DNhQZ1CE9qZ2FNrVhsCXwQJ2vZG8ufZkcYakTS5Jpump",
+      "token_chain": "solana",
+      "token_ticker": "ZAUTH",
+      "curator": {
+        "added_at": "2025-12-30T01:16:47.365196+00:00",
+        "signal_id": "4618de5f-b8bf-4882-a4c9-08d96f2e8619",
+        "confidence": 0.6,
+        "curator_id": "degen_ape",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "Gka1TQEevBbVw4W9K15ER96ZzKByMTb6TBMQzWFEpump",
+      "token_chain": "solana",
+      "token_ticker": "MINER",
+      "curator": {
+        "added_at": "2025-12-31T12:03:42.427248+00:00",
+        "signal_id": "9ac1193c-f7c1-4593-ac07-d0681ce8b1bc",
+        "confidence": 0.6,
+        "curator_id": "eleetmo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "METvsvVRapdj9cFLzq4Tr43xK4tAjQfwX76z3n6mWQL",
+      "token_chain": "solana",
+      "token_ticker": "MET",
+      "curator": {
+        "added_at": "2025-12-31T18:53:24.020204+00:00",
+        "signal_id": "bdb40897-5f6a-47f0-bc04-1293dac6a553",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "BkpaxHhE6snExazrPkVAjxDyZa8Nq3oDEzm5GQm2pump",
+      "token_chain": "solana",
+      "token_ticker": "LUMEN",
+      "curator": {
+        "added_at": "2025-12-30T02:51:00.965203+00:00",
+        "signal_id": "a43b257e-1ed6-455a-8372-a79422570f46",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "PRVT6TB7uss3FrUd2D9xs2zqDBsa3GbMJMwCQsgmeta",
+      "token_chain": "solana",
+      "token_ticker": "UMBRA",
+      "curator": {
+        "added_at": "2025-12-30T12:28:47.569368+00:00",
+        "signal_id": "faa0bef2-d390-402e-bdb3-61409108aaf6",
+        "confidence": 0.6,
+        "curator_id": "crypticsden",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "CzFvsLdUazabdiu9TYXujj4EY495fG7VgJJ3vQs6bonk",
+      "token_chain": "solana",
+      "token_ticker": "RADR",
+      "curator": {
+        "added_at": "2025-12-30T05:31:49.480315+00:00",
+        "signal_id": "07f9193a-a980-4123-85f7-1fa6fda7bd29",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3YunMjXoSZUnyUa3anZJ35qtP31Ch5QTF19mXBacm4ME",
+      "token_chain": "solana",
+      "token_ticker": "ANYONE",
+      "curator": {
+        "added_at": "2025-12-30T15:32:58.740025+00:00",
+        "signal_id": "d7d259ea-7e53-458a-9dc9-fcd009a7136b",
+        "confidence": 0.6,
+        "curator_id": "overdose_ai",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "WETZjtprkDMCcUxPi9PfWnowMRZkiGGHDb9rABuRZ2U",
+      "token_chain": "solana",
+      "token_ticker": "WET",
+      "curator": {
+        "added_at": "2025-12-30T16:11:57.319499+00:00",
+        "signal_id": "5e31536d-9981-4ec5-b68d-19451369fc7e",
+        "confidence": 0.6,
+        "curator_id": "0xunihax0r",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "DUSDt4AeLZHWYmcXnVGYdgAzjtzU5mXUVnTMdnSzAttM",
+      "token_chain": "solana",
+      "token_ticker": "DUSD",
+      "curator": {
+        "added_at": "2025-12-29T23:08:50.792004+00:00",
+        "signal_id": "427c1b9d-d78f-4305-b1c3-0624d9bb5ff1",
+        "confidence": 0.6,
+        "curator_id": "gideon",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "8avjtjHAHFqp4g2RR9ALAGBpSTqKPZR8nRbzSTwZERA",
+      "token_chain": "solana",
+      "token_ticker": "ZERA",
+      "curator": {
+        "added_at": "2025-12-29T22:36:10.312689+00:00",
+        "signal_id": "e1c90ba3-b8c6-4045-bbb8-f73a4e1cb3b2",
+        "confidence": 0.6,
+        "curator_id": "fitzy",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "ac2s1hetVt8maYzujHKYhhsM94bwunPCgtNCCxPWy6n",
+      "token_chain": "solana",
+      "token_ticker": "VICTORY",
+      "curator": {
+        "added_at": "2025-12-31T23:00:49.677275+00:00",
+        "signal_id": "3d0dd7f8-c6e1-4d44-9532-db5ebaf4c249",
+        "confidence": 0.6,
+        "curator_id": "99_bollish",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "9YZZtRDqd9kiJMqgZ8XmFaE1mfK2T4kNpYgW1Nfn9rYV",
+      "token_chain": "solana",
+      "token_ticker": "CT",
+      "curator": {
+        "added_at": "2025-12-29T23:57:05.566634+00:00",
+        "signal_id": "1cdf4b64-822a-47fe-a0fc-cb7e0d67f7b7",
+        "confidence": 0.6,
+        "curator_id": "degen_ape",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "7fRQixgMhULQxNQzaJrFEZyjmrBgJi85up9gZrcupump",
+      "token_chain": "solana",
+      "token_ticker": "ALIVE",
+      "curator": {
+        "added_at": "2025-12-29T23:59:40.363605+00:00",
+        "signal_id": "0630182b-a332-42c8-8717-6f40ba456425",
+        "confidence": 0.6,
+        "curator_id": "aeon",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "9BwhcPF2ibze2qvh8DQJ9y8yKBzr5igUJU18SepKpump",
+      "token_chain": "solana",
+      "token_ticker": "MULLER",
+      "curator": {
+        "added_at": "2025-12-30T06:51:23.276621+00:00",
+        "signal_id": "8358086a-8f37-42e9-b56f-cf1714425b4f",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "C7E9edXVM4gpR6xgbEvaQ6YqUz7pt9RvvuEr6EcLDhX1",
+      "token_chain": "solana",
+      "token_ticker": "LIT",
+      "curator": {
+        "added_at": "2025-12-29T23:09:53.557370+00:00",
+        "signal_id": "08a61899-cea0-4f1c-b08a-d750c336e838",
+        "confidence": 0.6,
+        "curator_id": "gideon",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "76yyZFPjVXveszyf1g7EpUsMeFueSRhWC6KnMVuiHoDL",
+      "token_chain": "solana",
+      "token_ticker": "HODL",
+      "curator": {
+        "added_at": "2025-12-29T22:46:31.906104+00:00",
+        "signal_id": "d1dfff27-946d-4365-bb7a-5d7fe9653894",
+        "confidence": 0.6,
+        "curator_id": "knight",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "EfPoo4wWgxKVToit7yX5VtXXBrhao4G8L7vrbKy6pump",
+      "token_chain": "solana",
+      "token_ticker": "DEXTER",
+      "curator": {
+        "added_at": "2025-12-29T22:42:27.267363+00:00",
+        "signal_id": "82396cab-9e24-48ef-b57c-49ae2eb7795b",
+        "confidence": 0.6,
+        "curator_id": "andrew",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "5EkcKr582FkAPVnRmaDdnkekTtnNRzNNSxmQxqrFpump",
+      "token_chain": "solana",
+      "token_ticker": "AQC",
+      "curator": {
+        "added_at": "2025-12-29T22:43:29.338704+00:00",
+        "signal_id": "5c52c2d8-8e61-4498-8885-affc8a699083",
+        "confidence": 0.6,
+        "curator_id": "crayola",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "G5grLASvz1xzgdh1c1GKy2q55mfuDDXhMQoXnDxWpump",
+      "token_chain": "solana",
+      "token_ticker": "RAM",
+      "curator": {
+        "added_at": "2025-12-30T03:50:04.966838+00:00",
+        "signal_id": "b6086b3a-bc7d-4701-8f96-d4fab11e3416",
+        "confidence": 0.6,
+        "curator_id": "0xunihax0r",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "4nswj3o1Lo9iWYvvRJxUD8vbCy9ay7QQoXYcncHNbonk",
+      "token_chain": "solana",
+      "token_ticker": "SPSC",
+      "curator": {
+        "added_at": "2025-12-30T14:21:02.092353+00:00",
+        "signal_id": "c57e52f8-a25b-4d8b-b8b9-03e199701f13",
+        "confidence": 0.6,
+        "curator_id": "dapo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "E6FYdN61pYkVDWvU5EbmVCPQmc7B9hmWCUnjEZ2ikLVu",
+      "token_chain": "solana",
+      "token_ticker": "SURF",
+      "curator": {
+        "added_at": "2025-12-30T15:22:01.729188+00:00",
+        "signal_id": "978aca40-4382-4ede-8a15-dd0bb8c5e7f8",
+        "confidence": 0.6,
+        "curator_id": "dapo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "F7pB3ZdfBnyFw2LRHydWEn9BmhEa5XihXLjhySFRpump",
+      "token_chain": "solana",
+      "token_ticker": "NOTHING",
+      "curator": {
+        "added_at": "2025-12-30T17:32:23.395222+00:00",
+        "signal_id": "b16b669d-8c43-4869-bb3e-a26594b16392",
+        "confidence": 0.6,
+        "curator_id": "knight",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3X4qJgVQ8rdDvbPMMjWrZSPDjm9KaDddXbV5UvuZpump",
+      "token_chain": "solana",
+      "token_ticker": "CHOPPED",
+      "curator": {
+        "added_at": "2025-12-29T22:31:45.399048+00:00",
+        "signal_id": "33cfe08b-243a-40fe-ac20-1d49e07eae16",
+        "confidence": 0.6,
+        "curator_id": "giba_machado",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "AbBADaxdQ1LtrU7sN9xvf4326ECSYbsUB37ddbRrpump",
+      "token_chain": "solana",
+      "token_ticker": "YUREI",
+      "curator": {
+        "added_at": "2025-12-29T23:58:03.766798+00:00",
+        "signal_id": "769a8fb2-4f77-4fa5-8c41-0a9205ae1459",
+        "confidence": 0.6,
+        "curator_id": "degen_ape",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "76WApFF6weYWkhCYHrAogDe6YfrGj5uZYvBdi945pump",
+      "token_chain": "solana",
+      "token_ticker": "canelcorn",
+      "curator": {
+        "added_at": "2025-12-31T06:39:02.175268+00:00",
+        "signal_id": "d35018aa-9309-43c5-bd9d-38054884cc15",
+        "confidence": 0.6,
+        "curator_id": "lexapro",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "FP8irXAjJwBkTHfGHxJJe6ZjiHU7nCgtL4GrqYSXBAGS",
+      "token_chain": "solana",
+      "token_ticker": "SHIT",
+      "curator": {
+        "added_at": "2025-12-30T15:51:32.872232+00:00",
+        "signal_id": "216b1c14-43f9-4621-91bc-c75821a8c8ba",
+        "confidence": 0.6,
+        "curator_id": "lexapro",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+      "token_chain": "solana",
+      "token_ticker": "JUP",
+      "curator": {
+        "added_at": "2025-12-31T18:59:23.318507+00:00",
+        "signal_id": "3508f20b-8474-40a1-81e9-7b1e011b1233",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "7EW5dDD6MYJK4PcZ89MGApJQwWeDEeNgH4NCVU4qpump",
+      "token_chain": "solana",
+      "token_ticker": "PURCH",
+      "curator": {
+        "added_at": "2025-12-30T08:24:59.194376+00:00",
+        "signal_id": "c10fecc7-886c-4af6-a111-ac4942f4ae3d",
+        "confidence": 0.6,
+        "curator_id": "contra",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "9DowFjAVk2svDXzFxcfuTgSTHjniW5D6TVaEmxFvpump",
+      "token_chain": "solana",
+      "token_ticker": "INVO",
+      "curator": {
+        "added_at": "2025-12-29T22:22:44.950251+00:00",
+        "signal_id": "218b1eee-1962-4e64-8e2b-38b3e6702236",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "2NWdpm3vZdTb9EFWZdRLkLUFrbQjS8VeEqs3ZUPUwwRF",
+      "token_chain": "solana",
+      "token_ticker": "Kalshi",
+      "curator": {
+        "added_at": "2025-12-30T16:34:32.439305+00:00",
+        "signal_id": "aabf8d5b-a628-411f-9773-1ee86fd35a8e",
+        "confidence": 0.7,
+        "curator_id": "0xdetweiler",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "7jiTjqfd1eBT5TkHnrGT187gfnuyNZCRDfvaBbMETPtC",
+      "token_chain": "solana",
+      "token_ticker": "XRP",
+      "curator": {
+        "added_at": "2025-12-30T12:53:44.650714+00:00",
+        "signal_id": "499ab643-f314-4534-ad2d-bd34aa229c0a",
+        "confidence": 0.7,
+        "curator_id": "0xdetweiler",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3a5gex7k4oxZqPpDjgcawMsgrmtWERLLi5NqHkALUUsr",
+      "token_chain": "solana",
+      "token_ticker": "juan",
+      "curator": {
+        "added_at": "2025-12-31T18:43:24.519106+00:00",
+        "signal_id": "b484aa8c-d684-4a62-9dc3-cb6d17fc99ac",
+        "confidence": 0.6,
+        "curator_id": "bigwarz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "9359LVZJs8bf2FXcTdHvwcMnvg2ZCf6DUZ5ABDcJKx52",
+      "token_chain": "solana",
+      "token_ticker": "SOAR",
+      "curator": {
+        "added_at": "2025-12-31T14:06:16.521513+00:00",
+        "signal_id": "12530465-2e34-476e-8711-31873944fe08",
+        "confidence": 0.6,
+        "curator_id": "franz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "E9uUgGXJ77AVmaqVhN544oz644VUPBGU6r4qUaeppump",
+      "token_chain": "solana",
+      "token_ticker": "WYNN",
+      "curator": {
+        "added_at": "2025-12-30T21:18:58.266029+00:00",
+        "signal_id": "37ba4988-addd-4972-a6c2-23355413bd41",
+        "confidence": 0.6,
+        "curator_id": "bigwarz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "HVW3PJcjTdWRe1n4GpeiYbZZVESffDiFfooxD9edaYmc",
+      "token_chain": "solana",
+      "token_ticker": "CC",
+      "curator": {
+        "added_at": "2025-12-30T04:48:57.622460+00:00",
+        "signal_id": "9589b134-00e7-4ce7-bc1f-c69701247b84",
+        "confidence": 0.6,
+        "curator_id": "game",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "Ew8KqgSitYucieR5KnSAL2SUFspcwA8AgSuZ5xWspump",
+      "token_chain": "solana",
+      "token_ticker": "Kurumi",
+      "curator": {
+        "added_at": "2025-12-31T18:47:25.415360+00:00",
+        "signal_id": "3bb06404-82a0-4593-843d-b7a15a941379",
+        "confidence": 0.6,
+        "curator_id": "duckingnator",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "7x1eHwdX1eKffNkQwJJtPsHKy6zEKGMuEvmArVHqpump",
+      "token_chain": "solana",
+      "token_ticker": "PNDR",
+      "curator": {
+        "added_at": "2025-12-31T19:07:16.120004+00:00",
+        "signal_id": "c65d87e5-1a2a-4e74-a04c-bef87b9315c2",
+        "confidence": 0.6,
+        "curator_id": "eleetmo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "7wbiW1XuGD77F4tSDWyMu73bJKwWX4zKwDfjdPRMpump",
+      "token_chain": "solana",
+      "token_ticker": "LOOKSMAX",
+      "curator": {
+        "added_at": "2025-12-31T20:51:47.606897+00:00",
+        "signal_id": "2568b558-cc85-474a-99c4-8225e8e1a4ca",
+        "confidence": 0.6,
+        "curator_id": "knight",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "kedoobK2qe2f1V8ee5vDXFr3H7gKnhQVNJXA3Ltcyai",
+      "token_chain": "solana",
+      "token_ticker": "U1",
+      "curator": {
+        "added_at": "2025-12-29T22:48:54.667709+00:00",
+        "signal_id": "29d35db0-db5e-4fd0-82da-9bccf466c983",
+        "confidence": 0.6,
+        "curator_id": "nolt",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "qnko6WJGEwEU3JYQFZakLe9V8dmS4YAXFARHeRipump",
+      "token_chain": "solana",
+      "token_ticker": "LIL",
+      "curator": {
+        "added_at": "2025-12-30T12:40:36.959323+00:00",
+        "signal_id": "1789ad08-a22a-4f57-92c4-2725e15031d2",
+        "confidence": 0.6,
+        "curator_id": "eleetmo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "CkTFDNGUtw58dBDEnMD9RW3tjTVKaoVXctcXdq8Gpump",
+      "token_chain": "solana",
+      "token_ticker": "KERMIT",
+      "curator": {
+        "added_at": "2025-12-31T09:28:11.410520+00:00",
+        "signal_id": "41e2214e-befc-435c-a859-53c2008e6ba0",
+        "confidence": 0.6,
+        "curator_id": "crypticsden",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3nB5Ucpmcpruez9rgfEQNdd2eC9Nnj1VrDuheLQ3pump",
+      "token_chain": "solana",
+      "token_ticker": "KEY",
+      "curator": {
+        "added_at": "2025-12-30T01:51:12.820526+00:00",
+        "signal_id": "52aed255-2ba5-425d-b8e1-1658954b24a8",
+        "confidence": 0.6,
+        "curator_id": "knight",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "6kP6Qjgo7Vke9HTe3tZ9DeRtKw2NDiE5fDABWEUspump",
+      "token_chain": "solana",
+      "token_ticker": "Zeroc",
+      "curator": {
+        "added_at": "2025-12-30T02:52:26.092823+00:00",
+        "signal_id": "f9a4bef8-db7f-4f39-b4c2-d33d46957825",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3qadpmJCfs6RxKPxpofA3CyEj78RKcjVLyoyVY6xpump",
+      "token_chain": "solana",
+      "token_ticker": "steak",
+      "curator": {
+        "added_at": "2025-12-30T12:50:43.541736+00:00",
+        "signal_id": "27880277-6b11-45cc-a88f-fb7a161cc62d",
+        "confidence": 0.6,
+        "curator_id": "bigwarz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "H5b4iYiZYycr7fmQ1dMj7hdfLGAEPcDH261K4hugpump",
+      "token_chain": "solana",
+      "token_ticker": "MONEROCHAN",
+      "curator": {
+        "added_at": "2025-12-30T13:36:35.853518+00:00",
+        "signal_id": "86050ce8-e3b6-4a87-8ada-65f9c5ca28cc",
+        "confidence": 0.6,
+        "curator_id": "franz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "CvaVVGi5Tutt4tJ6cKsUN3pLp1TV1chC7K9QiSkTpump",
+      "token_chain": "solana",
+      "token_ticker": "Bikinify",
+      "curator": {
+        "added_at": "2025-12-31T22:28:43.868323+00:00",
+        "signal_id": "2bf7f066-2c69-4dd1-a984-e0f0048c4e5b",
+        "confidence": 0.6,
+        "curator_id": "breakb0nes",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "2PrJoPoRzsm8DNuH6XPcTCtvt8XFzHBxqjwG5UC1pump",
+      "token_chain": "solana",
+      "token_ticker": "PISS",
+      "curator": {
+        "added_at": "2025-12-30T15:54:07.566515+00:00",
+        "signal_id": "8174d3ed-b1dc-4e34-a1a8-3fbb867b5bac",
+        "confidence": 0.6,
+        "curator_id": "lexapro",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "SoLo9oxzLDpcq1dpqAgMwgce5WqkRDtNXK7EPnbmeta",
+      "token_chain": "solana",
+      "token_ticker": "SOLO",
+      "curator": {
+        "added_at": "2025-12-30T01:14:31.954665+00:00",
+        "signal_id": "70bbae79-24b2-47f3-b6de-5d75b6918d8c",
+        "confidence": 0.6,
+        "curator_id": "franz",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "3qAR4mq5X8WTuyqDeie2Mj9wGrYVb83TiGdkEgYbpump",
+      "token_chain": "solana",
+      "token_ticker": "CiNET",
+      "curator": {
+        "added_at": "2025-12-30T12:00:10.577202+00:00",
+        "signal_id": "37959dc7-c96c-4379-b48d-14c76fecf773",
+        "confidence": 0.6,
+        "curator_id": "eleetmo",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "HdZh1mUvCVJzHfTFaJJxZJFENhiFAkyiXLA5iZZTpump",
+      "token_chain": "solana",
+      "token_ticker": "Shaw",
+      "curator": {
+        "added_at": "2025-12-31T12:39:13.026972+00:00",
+        "signal_id": "e423711c-3014-41a9-a9df-d59ffb9c97db",
+        "confidence": 0.6,
+        "curator_id": "giba_machado",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+      "token_chain": "solana",
+      "token_ticker": "PUMP",
+      "curator": {
+        "added_at": "2025-12-31T18:56:25.534990+00:00",
+        "signal_id": "953fa1d8-150f-4b9c-ae6b-58aff010ce31",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "METAwkXcqyXKy1AtsSgJ8JiUHwGCafnZL38n3vYmeta",
+      "token_chain": "solana",
+      "token_ticker": "META",
+      "curator": {
+        "added_at": "2025-12-31T13:02:14.270536+00:00",
+        "signal_id": "9881ca07-b310-4142-a96b-004421bbadc1",
+        "confidence": 0.6,
+        "curator_id": "game",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "Z6RHtkv5xrhpHwswaHSP6W1GQkhgqH3fAcA4NHforma",
+      "token_chain": "solana",
+      "token_ticker": "FORMA",
+      "curator": {
+        "added_at": "2025-12-31T09:08:50.388563+00:00",
+        "signal_id": "86513038-cfa0-4720-bc69-0fe9f1bd31c6",
+        "confidence": 0.6,
+        "curator_id": "99_bollish",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "FPNSAL5R3CmuwyycEJJvYgkcZzh9AheR6LmU9FQ2pump",
+      "token_chain": "solana",
+      "token_ticker": "ramcoin",
+      "curator": {
+        "added_at": "2025-12-30T04:42:19.383115+00:00",
+        "signal_id": "290881fa-bcad-4d7a-a6c7-f55ee8925c9b",
+        "confidence": 0.6,
+        "curator_id": "0xunihax0r",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "PAYmo6moDF3Ro3X6bU2jwe2UdBnBhv8YjLgL1j4DxGu",
+      "token_chain": "solana",
+      "token_ticker": "PAYAI",
+      "curator": {
+        "added_at": "2025-12-31T19:59:57.885248+00:00",
+        "signal_id": "628109d4-707c-4c56-b66e-101e56b7eb05",
+        "confidence": 0.6,
+        "curator_id": "m4cero",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "regime_btc",
+      "token_chain": "regime",
+      "token_ticker": "BTC",
+      "curator": null
+    },
+    {
+      "token_contract": "4R3DPW4BY97kJRfv8J5wgTtbDpoXpRv92W957tXMpump",
+      "token_chain": "solana",
+      "token_ticker": "1DEV",
+      "curator": {
+        "added_at": "2025-12-30T16:46:26.107153+00:00",
+        "signal_id": "5b4c486e-5b5c-4dc9-8f72-f3708d206ce1",
+        "confidence": 0.6,
+        "curator_id": "breakb0nes",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "8SkfuQkYNTskoQUbbjr2JbZQeqQV9egnJXgfMXf5bonk",
+      "token_chain": "solana",
+      "token_ticker": "fih",
+      "curator": {
+        "added_at": "2025-12-29T22:45:14.981840+00:00",
+        "signal_id": "9563720d-4589-4d71-b228-7a950df0f854",
+        "confidence": 0.6,
+        "curator_id": "cheater",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "6a9cn88NaQ9XjxirqXvid6u9DzEqwpfgsU333taMpump",
+      "token_chain": "solana",
+      "token_ticker": "NOTHING",
+      "curator": {
+        "added_at": "2025-12-30T01:50:04.189132+00:00",
+        "signal_id": "50ccad7b-6c93-4a3d-bef9-b3be0311a5a6",
+        "confidence": 0.6,
+        "curator_id": "knight",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "a3W4qutoEJA4232T2gwZUfgYJTetr96pU4SJMwppump",
+      "token_chain": "solana",
+      "token_ticker": "WhiteWhale",
+      "curator": {
+        "added_at": "2025-12-29T22:40:06.355377+00:00",
+        "signal_id": "400b8c0d-df18-4369-842b-acc7c2eddebd",
+        "confidence": 0.6,
+        "curator_id": "whalex",
+        "is_primary": true
+      }
+    },
+    {
+      "token_contract": "GdVNtUpjwtrXawTaQDbKpnLjrgYt68RFUdacPhLqi61y",
+      "token_chain": "solana",
+      "token_ticker": "lit",
+      "curator": {
+        "added_at": "2025-12-30T08:10:13.975766+00:00",
+        "signal_id": "8797e482-c9b5-4700-8818-87aaac27c0de",
+        "confidence": 0.7,
+        "curator_id": "0xdetweiler",
+        "is_primary": true
+      }
+    }
+  ]
+}

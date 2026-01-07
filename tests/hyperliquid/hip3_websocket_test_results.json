@@ -1,0 +1,61 @@
+{
+  "supported": [
+    "xyz:AAPL"
+  ],
+  "not_supported": [
+    "xyz:TSLA",
+    "vntl:SPACEX",
+    "flx:TSLA"
+  ],
+  "results": {
+    "xyz:TSLA": {
+      "coin": "xyz:TSLA",
+      "description": "Tesla on XYZ DEX",
+      "interval": "15m",
+      "supported": false,
+      "messages_received": 0,
+      "message_samples": [],
+      "errors": []
+    },
+    "vntl:SPACEX": {
+      "coin": "vntl:SPACEX",
+      "description": "SpaceX on Ventuals DEX",
+      "interval": "15m",
+      "supported": false,
+      "messages_received": 0,
+      "message_samples": [],
+      "errors": []
+    },
+    "xyz:AAPL": {
+      "coin": "xyz:AAPL",
+      "description": "Apple on XYZ DEX",
+      "interval": "15m",
+      "supported": true,
+      "messages_received": 1,
+      "message_samples": [
+        {
+          "timestamp": 1767187800000,
+          "end_timestamp": 1767188699999,
+          "symbol": "xyz:AAPL",
+          "interval": "15m",
+          "open": "272.37",
+          "high": "272.64",
+          "low": "272.3",
+          "close": "272.64",
+          "volume": "17.699",
+          "trades": 17
+        }
+      ],
+      "errors": []
+    },
+    "flx:TSLA": {
+      "coin": "flx:TSLA",
+      "description": "Tesla on Felix Exchange",
+      "interval": "15m",
+      "supported": false,
+      "messages_received": 0,
+      "message_samples": [],
+      "errors": []
+    }
+  }
+}

@@ -311,3 +311,5 @@ If you decide to wipe everything:
 
 The only thing you'd need to manually recreate is **active positions** (if you have any open trades).
 
+
+

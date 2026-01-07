@@ -1,0 +1,160 @@
+{
+  "websocket": {
+    "supported": true,
+    "subscription_formats": [
+      {
+        "type": "candle",
+        "coin": "BTC",
+        "interval": "1m"
+      },
+      {
+        "type": "candle",
+        "coin": "BTC",
+        "timeframe": "1m",
+        "interval": "1m"
+      }
+    ],
+    "message_formats": [
+      {
+        "channel": "candle",
+        "keys": [
+          "channel",
+          "data"
+        ],
+        "data_structure": [
+          "t",
+          "T",
+          "s",
+          "i",
+          "o",
+          "c",
+          "h",
+          "l",
+          "v",
+          "n"
+        ]
+      },
+      {
+        "channel": "candle",
+        "keys": [
+          "channel",
+          "data"
+        ],
+        "data_structure": [
+          "t",
+          "T",
+          "s",
+          "i",
+          "o",
+          "c",
+          "h",
+          "l",
+          "v",
+          "n"
+        ]
+      }
+    ],
+    "available_intervals": [
+      "1m"
+    ],
+    "errors": [
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '1m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"1m\"}}'}",
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '5m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"5m\"}}'}",
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '15m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"15m\"}}'}",
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '1h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"1h\"}}'}",
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '4h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"4h\"}}'}",
+      "{'type': 'candles', 'coin': 'BTC', 'interval': '1d'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candles\", \"coin\": \"BTC\", \"interval\": \"1d\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '1m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"1m\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '5m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"5m\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '15m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"15m\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '1h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"1h\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '4h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"4h\"}}'}",
+      "{'type': 'interval', 'coin': 'BTC', 'interval': '1d'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"interval\", \"coin\": \"BTC\", \"interval\": \"1d\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '1m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"1m\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '5m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"5m\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '15m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"15m\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '1h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"1h\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '4h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"4h\"}}'}",
+      "{'type': 'ohlc', 'coin': 'BTC', 'interval': '1d'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"ohlc\", \"coin\": \"BTC\", \"interval\": \"1d\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '1m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"1m\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '5m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"5m\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '15m'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"15m\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '1h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"1h\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '4h'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"4h\"}}'}",
+      "{'type': 'candle', 'symbol': 'BTC', 'interval': '1d'}: {'channel': 'error', 'data': 'Error parsing JSON into valid websocket request: {\"method\": \"subscribe\", \"subscription\": {\"type\": \"candle\", \"symbol\": \"BTC\", \"interval\": \"1d\"}}'}"
+    ]
+  },
+  "rest": {
+    "endpoints_found": [],
+    "endpoints_tested": [
+      "/info with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/info with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/info with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/info with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/candles with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/candles with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/candles with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/candles with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/ohlc with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/ohlc with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/ohlc with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/ohlc with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/klines with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/klines with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/klines with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/klines with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/bars with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/bars with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/bars with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/bars with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/candle with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/candle with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/candle with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/candle with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/v1/candles with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/v1/candles with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/v1/candles with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/v1/candles with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/v1/ohlc with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/v1/ohlc with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/v1/ohlc with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/v1/ohlc with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/api/v1/candles with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/api/v1/candles with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/api/v1/candles with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/api/v1/candles with {'market': 'BTC', 'period': '1m', 'limit': 10}",
+      "/api/v1/klines with {'symbol': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/api/v1/klines with {'coin': 'BTC', 'interval': '1m', 'limit': 10}",
+      "/api/v1/klines with {'pair': 'BTC', 'timeframe': '1m', 'limit': 10}",
+      "/api/v1/klines with {'market': 'BTC', 'period': '1m', 'limit': 10}"
+    ],
+    "rate_limits": {},
+    "available_intervals": [],
+    "errors": []
+  },
+  "volume_comparison": {
+    "trades_volume": {
+      "messages_per_30s": 13,
+      "estimated_per_minute": 26
+    },
+    "candles_volume": {
+      "messages_per_30s": 16,
+      "estimated_per_minute": 32
+    },
+    "comparison": {
+      "trades_to_candles_ratio": 0.8125,
+      "reduction_pct": -23.076923076923084
+    }
+  },
+  "documentation": {
+    "websocket_docs": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket",
+    "rest_api_docs": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api",
+    "rate_limits_docs": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits",
+    "notes": [
+      "Check WebSocket subscription types",
+      "Check REST API endpoints",
+      "Check rate limits",
+      "Check available timeframes"
+    ]
+  }
+}

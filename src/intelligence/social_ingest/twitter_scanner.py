@@ -186,7 +186,7 @@ class TwitterScanner:
 
                 # If the most recent tweet is the same as last time, no new tweets
                 if most_recent_tweet_url == last_seen_url:
-                    print(f"Scanning @{handle.replace('@', '')}: No new tweets")
+                    # Silently skip - only show output when there are new tweets or errors
                     return
 
                 # Collect new tweets strictly after last seen, skipping pinned if present
@@ -222,12 +222,10 @@ class TwitterScanner:
                 else:
                     self.logger.debug(f"Skipping duplicate tweet: {tweet_url}")
             
-            # Single line summary per curator scan
+            # Single line summary per curator scan (only show when tokens are found)
             if tokens_found:
                 tokens_str = ', '.join([f"${t}" for t in tokens_found])
                 print(f"Scanning @{handle.replace('@', '')}: {tokens_str} found")
-            else:
-                print(f"Scanning @{handle.replace('@', '')}: No tokens found")
             
             # Update last seen tweet for this curator
             self.curator_last_seen[curator_id] = most_recent_tweet_url

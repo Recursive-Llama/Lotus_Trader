@@ -362,3 +362,5 @@ halo = (Constants.S2_RETEST_HALO_ATR_MULTIPLIER * s2_halo_mult * atr) if anchor_
 
 The system already has the infrastructure (miner, materializer, override application) - we just need to add S2 episode tracking similar to S1.
 
+
+

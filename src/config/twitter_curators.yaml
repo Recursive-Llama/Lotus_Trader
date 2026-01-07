@@ -585,6 +585,16 @@ curators:
     tags: ["alpha", "calls", "multi_platform"]
     notes: "Multi-platform curator; Twitter @NobleIrons7de and Telegram channel 'Alphas in Valhalla ⚔️' (channel ID: -1001605794606)"
 
+  - id: "turtle"
+    name: "Turtle"
+    platforms:
+      twitter:
+        handle: "@turtleonchain"
+        active: true
+        priority: "medium"
+    tags: ["alpha", "calls"]
+    notes: "Twitter curator added via request"
+
 # Example of curator with both Twitter and Telegram
 # - id: "example_curator"
 #   name: "Example Curator"

@@ -820,7 +820,7 @@ def plan_actions_v4(
         except Exception as e:
             logging.getLogger(__name__).warning(f"Error applying S1 tuning overrides: {e}")
     
-    # S1: One-time initial entry (only on S0 → S1 transition)
+    # S1: Retest entry (only after S2 breakout has occurred)
     if effective_buy_signal and state == "S1":
         # Check episode blocking first
         token_contract = position.get("token_contract", "")
@@ -832,9 +832,20 @@ def plan_actions_v4(
             )
             return []
         
+        # NEW: S1 buy only enabled after S2 breakout has occurred
+        uptrend_meta = features.get("uptrend_episode_meta") or {}
+        s2_episode = uptrend_meta.get("s2_episode")
+        if not s2_episode:
+            pm_logger.info(
+                "PLAN ACTIONS: BLOCKED S1 entry (waiting for S2 breakout) | %s/%s tf=%s | "
+                "reason: S1 retest entry only enabled after S2 breakout confirmation",
+                token_ticker, token_chain, timeframe
+            )
+            return []
+        
         last_s1_buy = exec_history.get("last_s1_buy")
         if not last_s1_buy:
-            # Never bought in S1, and we're in S1 (transitioned from S0)
+            # Never bought in S1, and we're in S1 (retest after S2 breakout)
             entry_size = _a_to_entry_size(a_final, state, buy_signal=True, buy_flag=False, first_dip_buy_flag=False)
             scores = uptrend.get("scores") or {}
             
@@ -1004,6 +1015,14 @@ def plan_actions_v4(
         has_pool = pool_basis > 0
         recovery_started = pool.get("recovery_started", False)
         
+        # Diagnostic logging: Log full pool structure and exec_history state
+        pm_logger.info(
+            "POOL_DIAG: S2 buy_flag pool check | %s/%s tf=%s | "
+            "exec_history_keys=%s | pool=%s | pool_basis=$%.2f has_pool=%s recovery_started=%s",
+            token_ticker, token_chain, timeframe,
+            list(exec_history.keys()), pool, pool_basis, has_pool, recovery_started
+        )
+        
         # S2 dip allowed if: flat OR (has pool AND DX not started)
         can_s2_dip = is_flat or (has_pool and not recovery_started)
         
@@ -1109,6 +1128,14 @@ def plan_actions_v4(
         has_pool = pool_basis > 0
         dx_count = pool.get("dx_count", 0)
         dx_next_arm = pool.get("dx_next_arm")
+        
+        # Diagnostic logging: Log full pool structure and exec_history state
+        pm_logger.info(
+            "POOL_DIAG: S3 buy_flag pool check | %s/%s tf=%s | "
+            "exec_history_keys=%s | pool=%s | pool_basis=$%.2f has_pool=%s dx_count=%d",
+            token_ticker, token_chain, timeframe,
+            list(exec_history.keys()), pool, pool_basis, has_pool, dx_count
+        )
         
         # DX gating: in zone, has pool, < 3 DX, price at or below arm (or first buy)
         price_at_arm = dx_next_arm is None or current_price <= dx_next_arm

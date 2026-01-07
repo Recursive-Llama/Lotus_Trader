@@ -42,7 +42,6 @@ class DecisionMakerLowcapSimple:
         
         # Simple configuration
         self.config = config or self._get_default_config()
-        self.default_allocation_pct = float(self.config.get('default_allocation_pct', 10.0))
         self.book_id = self.config.get('book_id', 'onchain_crypto')
         
         # Initialize learning system components
@@ -53,6 +52,7 @@ class DecisionMakerLowcapSimple:
         trading_config = self.config.get('trading', {})
         
         # No need for dollar amounts - we work with percentages only
+        self.default_allocation_pct = float(trading_config.get('default_allocation_pct', 10.0))
         self.min_curator_score = trading_config.get('min_curator_score', 0.1)
         self.max_exposure_pct = trading_config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
         self.max_positions = trading_config.get('max_positions', 69)  # Maximum number of active positions
@@ -648,10 +648,11 @@ class DecisionMakerLowcapSimple:
             
             # Base timeframe splits (defaults) - only 15m, 1h, 4h normalize to 100%
             # 1m is separate and only traded if other timeframes aren't active
+            # With 25% base: 15m=5%, 1h=10%, 4h=10%, 1m=2.5% (total 27.5% per token)
             base_splits = {
-                '15m': 0.25,  # 25%
-                '1h': 0.50,   # 50%
-                '4h': 0.25    # 25%
+                '15m': 0.20,  # 20% of base = 5% of portfolio
+                '1h': 0.40,   # 40% of base = 10% of portfolio
+                '4h': 0.40    # 40% of base = 10% of portfolio
                 # Note: 1m is handled separately, not part of the 100% split
             }
             
@@ -668,7 +669,7 @@ class DecisionMakerLowcapSimple:
                 
                 if has_learned_data and all(w > 0 for w in timeframe_weights.values()):
                     # Extract weights for 15m, 1h, 4h only (normalize these to 100%)
-                    # 1m is separate with fixed 10% allocation
+                    # 1m is separate with fixed 10% of base allocation (2.5% of portfolio with 25% base)
                     main_timeframe_weights = {
                         '15m': timeframe_weights.get('15m', 1.0),
                         '1h': timeframe_weights.get('1h', 1.0),
@@ -679,25 +680,26 @@ class DecisionMakerLowcapSimple:
                     # This directly reflects performance: better performing timeframes get more allocation
                     normalized_weights = self.coefficient_reader.normalize_timeframe_weights(main_timeframe_weights)
                     
-                    # Add 1m with fixed 10% allocation (separate from the 100% normalization)
+                    # Add 1m with fixed 10% of base allocation (separate from the 100% normalization)
+                    # With 25% base: 1m = 2.5% of portfolio
                     timeframe_splits = {
-                        '1m': 0.10,  # Fixed 10% for 1m
+                        '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
                         **normalized_weights  # 15m, 1h, 4h normalized to 100%
                     }
                     self.logger.info(f"Using learned timeframe weights: {timeframe_splits}")
                 else:
                     # No learned data or invalid weights - use base splits
-                    # Add 1m with fixed 10% allocation
+                    # Add 1m with fixed 10% of base allocation
                     timeframe_splits = {
-                        '1m': 0.10,  # Fixed 10% for 1m
+                        '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
                         **base_splits  # 15m, 1h, 4h = 100%
                     }
                     self.logger.info(f"Using base timeframe splits (no learned data): {timeframe_splits}")
             except Exception as e:
                 self.logger.warning(f"Error getting learned timeframe weights, using base splits: {e}")
-                # Fallback to base splits - add 1m with fixed 10% allocation
+                # Fallback to base splits - add 1m with fixed 10% of base allocation
                 timeframe_splits = {
-                    '1m': 0.10,  # Fixed 10% for 1m
+                    '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
                     **base_splits  # 15m, 1h, 4h = 100%
                 }
             

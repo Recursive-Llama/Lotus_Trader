@@ -293,17 +293,18 @@ class PMCoreTick:
                     "reason": f"No profit to swap (profit_usd={profit_usd:.2f})"
                 }
             
-            # Calculate swap amount (10% of profit)
-            swap_amount_usd = profit_usd * (buyback_percentage / 100.0)
-            
-            # Minimum swap amount check (avoid dust)
-            min_swap_usd = float(os.getenv("LOTUS_BUYBACK_MIN_USD", "1.0"))
-            if swap_amount_usd < min_swap_usd:
+            # Minimum profit gate: $1.00 minimum profit required
+            # (If profit >= $1.00, then 10% buyback >= $0.10, so only one gate needed)
+            min_profit_usd = float(os.getenv("LOTUS_BUYBACK_MIN_PROFIT_USD", "1.0"))
+            if profit_usd < min_profit_usd:
                 return {
                     "success": True,
                     "skipped": True,
-                    "reason": f"Swap amount too small: ${swap_amount_usd:.2f} < ${min_swap_usd:.2f}"
+                    "reason": f"Profit too small: ${profit_usd:.2f} < ${min_profit_usd:.2f} (min profit gate)"
                 }
+            
+            # Calculate swap amount (10% of profit)
+            swap_amount_usd = profit_usd * (buyback_percentage / 100.0)
             
             logger.info(f"Executing Lotus buyback: ${swap_amount_usd:.2f} (10% of ${profit_usd:.2f} profit)")
             
@@ -331,16 +332,18 @@ class PMCoreTick:
                 }
             
             # Get Lotus tokens received from swap
-            # Li.Fi returns amount in smallest unit, need to convert
-            # Lotus token has 9 decimals (standard SPL token)
-            tokens_received_raw = swap_result.get("toAmount") or swap_result.get("toAmountMin") or "0"
+            # Prefer raw amount + decimals from Li.Fi executor (already returned for SPL tokens)
+            tokens_received_raw = swap_result.get("tokens_received_raw") or swap_result.get("toAmount") or swap_result.get("toAmountMin")
+            token_decimals = int(swap_result.get("to_token_decimals", 9) or 9)  # SPL tokens use 9 decimals
             try:
-                lotus_tokens = float(tokens_received_raw) / 1_000_000_000  # 9 decimals
-            except (ValueError, TypeError):
-                # Fallback: try to get from result directly
-                lotus_tokens = float(swap_result.get("tokens_received", 0.0))
+                if tokens_received_raw:
+                    lotus_tokens = float(tokens_received_raw) / (10 ** token_decimals)
+                else:
+                    lotus_tokens = float(swap_result.get("tokens_received", 0.0) or 0.0)
+            except (ValueError, TypeError, ZeroDivisionError):
+                lotus_tokens = 0.0
             
-            swap_tx_hash = swap_result.get("txHash") or swap_result.get("tx_hash")
+            swap_tx_hash = swap_result.get("tx_hash") or swap_result.get("txHash") or swap_result.get("tx_hash")
             
             logger.info(f"Lotus swap successful: {lotus_tokens:.6f} tokens received (tx: {swap_tx_hash})")
             
@@ -376,6 +379,71 @@ class PMCoreTick:
                 "success": False,
                 "error": str(e)
             }
+    
+    def _update_buyback_totals(self, lotus_tokens: float, lotus_tokens_transferred: float) -> None:
+        """
+        Update cumulative buyback totals in wallet_balances table for 'lotus' chain.
+        
+        Args:
+            lotus_tokens: Total Lotus tokens bought back in this buyback
+            lotus_tokens_transferred: Total Lotus tokens transferred to holding wallet in this buyback
+        """
+        try:
+            # Get current wallet_balances entry for 'lotus' chain
+            result = self.sb.table("wallet_balances").select("*").eq("chain", "lotus").limit(1).execute()
+            
+            if not result.data:
+                # Create new entry with buyback totals
+                self.sb.table("wallet_balances").insert({
+                    "chain": "lotus",
+                    "balance": 0.0,  # Will be updated by WalletManager.update_lotus_wallet_balance()
+                    "balance_usd": 0.0,
+                    "usdc_balance": 0.0,
+                    "wallet_address": os.getenv("LOTUS_HOLDING_WALLET", "AbumtzzxomWWrm9uypY6ViRgruGdJBPFPM2vyHewTFdd"),
+                    "positions": {
+                        "buyback_totals": {
+                            "total_bought_back": float(lotus_tokens),
+                            "total_transferred": float(lotus_tokens_transferred)
+                        }
+                    },
+                    "last_updated": datetime.now(timezone.utc).isoformat()
+                }).execute()
+                logger.info(f"Created new 'lotus' wallet_balances entry with buyback totals: {lotus_tokens:.6f} bought, {lotus_tokens_transferred:.6f} transferred")
+            else:
+                # Update existing entry - increment buyback totals
+                current = result.data[0]
+                positions = current.get("positions") or {}
+                
+                # Get current totals (default to 0 if not present)
+                buyback_totals = positions.get("buyback_totals", {})
+                current_total_bought = float(buyback_totals.get("total_bought_back", 0.0))
+                current_total_transferred = float(buyback_totals.get("total_transferred", 0.0))
+                
+                # Increment totals
+                new_total_bought = current_total_bought + float(lotus_tokens)
+                new_total_transferred = current_total_transferred + float(lotus_tokens_transferred)
+                
+                # Update positions JSONB
+                positions["buyback_totals"] = {
+                    "total_bought_back": new_total_bought,
+                    "total_transferred": new_total_transferred
+                }
+                
+                # Update database
+                self.sb.table("wallet_balances").update({
+                    "positions": positions,
+                    "last_updated": datetime.now(timezone.utc).isoformat()
+                }).eq("chain", "lotus").execute()
+                
+                logger.info(
+                    f"Updated buyback totals: {new_total_bought:.6f} total bought back "
+                    f"({lotus_tokens:.6f} this buyback), {new_total_transferred:.6f} total transferred "
+                    f"({lotus_tokens_transferred:.6f} this buyback)"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error updating buyback totals in wallet_balances: {e}", exc_info=True)
+            # Don't fail the buyback if this update fails
     
     def _transfer_lotus_to_holding_wallet(self, amount: float, holding_wallet: str) -> Optional[Dict[str, Any]]:
         """
@@ -902,17 +970,36 @@ class PMCoreTick:
         active["summary"] = self._summarize_window_samples(samples)
         
         # Log to pattern_episode_events if context is provided
-        if position and uptrend_signals:
+        if not position:
+            logger.debug(
+                f"Skipping episode event logging: position is None | "
+                f"window_id={active.get('window_id')} | episode_id={episode.get('episode_id')}"
+            )
+        elif not uptrend_signals:
+            logger.debug(
+                f"Skipping episode event logging: uptrend_signals is None | "
+                f"window_id={active.get('window_id')} | episode_id={episode.get('episode_id')}"
+            )
+        else:
             try:
                 decision = "acted" if active.get("entered") else "skipped"
                 
                 # Determine pattern key and scope
-                window_type = active.get("window_type") # s1_buy_signal or None (s3)
-                is_s1 = window_type == "s1_buy_signal" or (episode.get("episode_id") or "").startswith("s1_")
-                state = "S1" if is_s1 else "S3"
+                window_type = active.get("window_type") # s1_buy_signal, s2_buy_flag, or None (s3)
+                episode_id_str = (episode.get("episode_id") or "")
+                is_s1 = window_type == "s1_buy_signal" or episode_id_str.startswith("s1_")
+                is_s2 = window_type == "s2_buy_flag" or episode_id_str.startswith("s2_")
                 
-                # For skipped events, we infer the action type
-                action_type = "entry" if is_s1 else "add"
+                # Set state and action type based on window type
+                if is_s1:
+                    state = "S1"
+                    action_type = "entry"
+                elif is_s2:
+                    state = "S2"
+                    action_type = "entry"  # S2 is also an entry opportunity
+                else:
+                    state = "S3"
+                    action_type = "add"
                 
                 # Build scope
                 pattern_key, _, scope = self._build_pattern_scope(
@@ -924,7 +1011,18 @@ class PMCoreTick:
                     state=state
                 )
                 
-                if pattern_key and scope:
+                if not pattern_key:
+                    logger.warning(
+                        f"Failed to generate pattern_key for episode window | "
+                        f"window_id={active.get('window_id')} | window_type={window_type} | "
+                        f"episode_id={episode_id_str} | state={state} | action_type={action_type}"
+                    )
+                elif not scope:
+                    logger.warning(
+                        f"Failed to generate scope for episode window | "
+                        f"window_id={active.get('window_id')} | position_id={position.get('id')}"
+                    )
+                else:
                     # Merge levers into summary for factors
                     factors = active.get("summary") or {}
                     if levers:
@@ -943,9 +1041,19 @@ class PMCoreTick:
                     )
                     if db_id:
                         active["db_id"] = db_id
+                    else:
+                        logger.warning(
+                            f"Failed to get db_id from episode event insert | "
+                            f"window_id={active.get('window_id')} | episode_id={episode_id_str} | "
+                            f"decision={decision} | pattern_key={pattern_key}"
+                        )
                         
             except Exception as e:
-                logger.warning(f"Error finalizing active window logging: {e}")
+                logger.warning(
+                    f"Error finalizing active window logging: {e} | "
+                    f"window_id={active.get('window_id')} | episode_id={episode.get('episode_id')}",
+                    exc_info=True
+                )
 
         episode.setdefault("windows", []).append(active)
         episode["active_window"] = None
@@ -1191,16 +1299,21 @@ class PMCoreTick:
 
         if state and prev_state and prev_state != state:
             episode_id = None
-            if state == "S1" and prev_state == "S0":
-                episode_id = self._generate_episode_id("s1")
-                meta["s1_episode"] = {
-                    "episode_id": episode_id,
-                    "started_at": now.isoformat(),
-                    "entered": False,
-                    "windows": [],
-                    "active_window": None,
-                }
-                changed = True
+            # S1 episode now only starts after S2 breakout has occurred (retest phase)
+            # This ensures we only buy S1 retests after breakout confirmation
+            if state == "S1" and prev_state == "S2":
+                s2_episode = meta.get("s2_episode")
+                if s2_episode:  # Only create S1 episode if S2 breakout has occurred
+                    episode_id = self._generate_episode_id("s1")
+                    meta["s1_episode"] = {
+                        "episode_id": episode_id,
+                        "started_at": now.isoformat(),
+                        "entered": False,
+                        "windows": [],
+                        "active_window": None,
+                    }
+                    changed = True
+                    logger.debug("PHASE7: Started S1 episode (retest phase) %s for position", episode_id)
             # Phase 7: S2 episode starts when transitioning to S2 from S1 (first time in attempt)
             elif state == "S2" and prev_state == "S1" and not meta.get("s2_episode"):
                 episode_id = self._generate_episode_id("s2")
@@ -1283,6 +1396,9 @@ class PMCoreTick:
                             s2_episode = meta.get("s2_episode")
                             entered_s2 = s2_episode.get("entered", False) if s2_episode else False
                             
+                            # Get P&L to check if we lost money (only block if P&L < 0)
+                            total_pnl_usd = float(position.get("total_pnl_usd", 0.0) or 0.0)
+                            
                             record_attempt_failure(
                                 sb_client=self.sb,
                                 token_contract=position.get("token_contract", ""),
@@ -1290,6 +1406,7 @@ class PMCoreTick:
                                 timeframe=position.get("timeframe", ""),
                                 entered_s1=True,
                                 entered_s2=entered_s2,
+                                total_pnl_usd=total_pnl_usd,
                                 book_id=position.get("book_id", "onchain_crypto")
                             )
                         except Exception as e:
@@ -1364,6 +1481,9 @@ class PMCoreTick:
                             if s1_episode:  # Check if it exists (not None)
                                 entered_s1 = s1_episode.get("entered", False)
                             
+                            # Get P&L to check if we lost money (only block if P&L < 0)
+                            total_pnl_usd = float(position.get("total_pnl_usd", 0.0) or 0.0)
+                            
                             record_attempt_failure(
                                 sb_client=self.sb,
                                 token_contract=position.get("token_contract", ""),
@@ -1371,6 +1491,7 @@ class PMCoreTick:
                                 timeframe=position.get("timeframe", ""),
                                 entered_s1=entered_s1,
                                 entered_s2=True,
+                                total_pnl_usd=total_pnl_usd,
                                 book_id=position.get("book_id", "onchain_crypto")
                             )
                         except Exception as e:
@@ -1932,6 +2053,19 @@ class PMCoreTick:
             features = current[0].get("features") or {}
             execution_history = features.get("pm_execution_history") or {}
             
+            # Diagnostic logging: Log pool state when loading execution_history
+            pool_before = execution_history.get("trim_pool")
+            if pool_before:
+                logger.info(
+                    "POOL_DIAG: Loaded pool from DB | position=%s | pool=%s",
+                    position_id, pool_before
+                )
+            else:
+                logger.debug(
+                    "POOL_DIAG: No pool in exec_history | position=%s | exec_history_keys=%s",
+                    position_id, list(execution_history.keys())
+                )
+            
             now_iso = datetime.now(timezone.utc).isoformat()
             price = float(execution_result.get("price", 0.0))
             size_frac = float(action.get("size_frac", 0.0))
@@ -2083,12 +2217,15 @@ class PMCoreTick:
                 }
                 
                 # Update trim pool - use USDC received from execution
-                usdc_received = float(execution_result.get("usdc_received", 0.0))
-                if usdc_received > 0:
-                    _on_trim(execution_history, usdc_received)
+                actual_usd = float(execution_result.get("actual_usd", 0.0))
+                if actual_usd > 0:
+                    pool_before = _get_pool(execution_history)
+                    _on_trim(execution_history, actual_usd)
+                    pool_after = _get_pool(execution_history)
                     logger.info(
-                        "TRIM_POOL: Updated pool with $%.2f trim | position=%s",
-                        usdc_received, position_id
+                        "TRIM_POOL: Updated pool with $%.2f trim | position=%s | "
+                        "pool_before=%s pool_after=%s",
+                        actual_usd, position_id, pool_before, pool_after
                     )
             
             # Update prev_state if we have state info
@@ -2099,7 +2236,24 @@ class PMCoreTick:
             
             # Save back to features
             features["pm_execution_history"] = execution_history
-            self.sb.table("lowcap_positions").update({"features": features}).eq("id", position_id).execute()
+            
+            # Diagnostic logging: Log pool state before saving
+            pool_to_save = execution_history.get("trim_pool")
+            if pool_to_save:
+                logger.info(
+                    "POOL_DIAG: Saving pool to DB | position=%s | pool=%s",
+                    position_id, pool_to_save
+                )
+            
+            # Save to database
+            update_result = self.sb.table("lowcap_positions").update({"features": features}).eq("id", position_id).execute()
+            
+            # Diagnostic logging: Verify save succeeded
+            if pool_to_save:
+                logger.info(
+                    "POOL_DIAG: Pool save completed | position=%s | update_success=%s",
+                    position_id, len(update_result.data) > 0 if update_result.data else False
+                )
             
         except Exception as e:
             logger.error(f"Error updating execution history for position {position_id}: {e}")
@@ -3081,6 +3235,12 @@ class PMCoreTick:
                     if "pm_execution_history" not in features:
                         features["pm_execution_history"] = {}
                     features["pm_execution_history"]["lotus_buyback"] = buyback_result
+                    
+                    # Update cumulative buyback totals in wallet_balances
+                    lotus_tokens = buyback_result.get("lotus_tokens", 0.0)
+                    lotus_tokens_transferred = buyback_result.get("lotus_tokens_transferred", 0.0)
+                    if lotus_tokens > 0:
+                        self._update_buyback_totals(lotus_tokens, lotus_tokens_transferred)
                 elif buyback_result and not buyback_result.get("success"):
                     logger.warning(f"Lotus buyback failed for position {position_id}: {buyback_result.get('error')}")
             except Exception as e:
@@ -3420,6 +3580,276 @@ class PMCoreTick:
         except Exception as e:
             logger.warning(f"strand write failed for {token}: {e}")
 
+    def process_position(self, position: Dict[str, Any], regime_context: Optional[Dict[str, Any]] = None, pm_cfg: Optional[Dict[str, Any]] = None, exposure_lookup: Optional["ExposureLookup"] = None, bucket_map: Optional[Dict[tuple, str]] = None) -> int:
+        """
+        Process a single position (extracted from run() for testing).
+        
+        Args:
+            position: Position dict from database
+            regime_context: Optional pre-computed regime context (if None, will compute)
+            pm_cfg: Optional pre-computed PM config (if None, will load)
+            exposure_lookup: Optional pre-computed exposure lookup (if None, will build)
+            bucket_map: Optional pre-computed bucket map (if None, will fetch)
+        
+        Returns:
+            Number of strands written
+        """
+        now = datetime.now(timezone.utc)
+        
+        # Compute dependencies if not provided
+        if regime_context is None:
+            regime_context = self._get_regime_context()
+        if pm_cfg is None:
+            pm_cfg = load_pm_config()
+            pm_cfg = fetch_and_merge_db_config(pm_cfg, self.sb)
+        bucket_cfg = pm_cfg.get("bucket_order_multipliers") or {}
+        if exposure_lookup is None:
+            exposure_lookup = self._build_exposure_lookup(regime_context, pm_cfg)
+        if bucket_map is None:
+            token_keys = [(position.get("token_contract"), position.get("token_chain"))]
+            bucket_map = self._fetch_token_buckets(token_keys)
+        
+        actions_enabled = (os.getenv("ACTIONS_ENABLED", "0") == "1")
+        
+        p = position
+        token_contract = p.get("token_contract")
+        token_chain = p.get("token_chain")
+        token = token_contract or p.get("token_ticker") or "UNKNOWN"
+        token_ticker = p.get("token_ticker") or token_contract or "UNKNOWN"
+        features = p.get("features") or {}
+        token_bucket = bucket_map.get((token_contract, token_chain)) or bucket_map.get((token_contract, None))
+        book_id = p.get("book_id", "onchain_crypto")
+        
+        # Get regime states for this token's bucket across all timeframes (for logging)
+        bucket_states = self._get_bucket_regime_state(token_bucket)
+        # Format as string for backward compatibility with plan_actions_v4
+        regime_state_str = f"Macro {bucket_states['macro']}, Meso {bucket_states['meso']}, Micro {bucket_states['micro']}"
+        # Full regime bundle across drivers/horizons for scope/learning
+        regime_state_bundle = self._get_regime_states_bundle(token_bucket)
+
+        # Compute A/E - use v2 if enabled, otherwise legacy compute_levers
+        use_ae_v2 = pm_cfg.get("feature_flags", {}).get("ae_v2_enabled", False)
+        
+        if use_ae_v2:
+            # A/E v2: Flag-driven, strength is first-class
+            regime_flags = extract_regime_flags(self.sb, token_bucket, book_id)
+            a_base, e_base, ae_diag = compute_ae_v2(regime_flags, token_bucket)
+            
+            # Log A/E v2 computation
+            logger.info(
+                "AE_V2: %s bucket=%s | flags → A=%.3f E=%.3f | diag=%s",
+                token_ticker, token_bucket, a_base, e_base, ae_diag.get("after_flags", {})
+            )
+            
+            # Note: Strength is applied later in plan_actions_v4 when pattern is known
+            a_final = a_base
+            e_final = e_base
+            position_size_frac = 0.33  # Default, will be overridden by A-score sizing
+            
+            # Build minimal levers dict for backward compatibility
+            le = {
+                "A_value": a_final,
+                "E_value": e_final,
+                "position_size_frac": position_size_frac,
+                "ae_v2_diagnostics": ae_diag,
+            }
+        else:
+            # Legacy: compute_levers (regime-driven A + intent deltas + bucket multiplier)
+            le = compute_levers(
+                features,
+                bucket_context=regime_context,
+                position_bucket=token_bucket,
+                bucket_config=bucket_cfg,
+                exec_timeframe=self.timeframe,
+            )
+            a_final = float(le["A_value"])
+            e_final = float(le["E_value"])
+            position_size_frac = float(le.get("position_size_frac", 0.33))
+
+        episode_strands: List[Dict[str, Any]] = []
+        meta_changed = False
+        try:
+            episode_strands, meta_changed = self._process_episode_logging(
+                position=p,
+                regime_context=regime_context,
+                token_bucket=token_bucket,
+                now=now,
+                levers=le, # Pass levers for factor logging
+            )
+        except Exception as episode_err:
+            logger.warning(f"Episode logging failed for position {p.get('id')}: {episode_err}")
+            episode_strands = []
+            meta_changed = False
+
+        if meta_changed:
+            try:
+                self.sb.table("lowcap_positions").update({"features": p.get("features")}).eq("id", p.get("id")).execute()
+            except Exception as update_err:
+                logger.warning(f"Failed to persist episode meta for position {p.get('id')}: {update_err}")
+        if episode_strands:
+            try:
+                self.sb.table("ad_strands").insert(episode_strands).execute()
+            except Exception as strand_err:
+                logger.warning(f"Failed to insert episode strands for position {p.get('id')}: {strand_err}")
+        
+        # Recalculate P&L fields before decisions (hybrid approach - check if stale)
+        pnl_last_calculated = p.get("pnl_last_calculated_at")
+        should_recalculate = False
+        
+        if not pnl_last_calculated:
+            should_recalculate = True
+        else:
+            try:
+                last_calc_dt = datetime.fromisoformat(pnl_last_calculated.replace("Z", "+00:00"))
+                minutes_since = (now - last_calc_dt).total_seconds() / 60.0
+                # Recalculate if > 5 minutes old (hybrid approach)
+                should_recalculate = minutes_since > 5.0
+            except Exception:
+                should_recalculate = True
+        
+        if should_recalculate:
+            try:
+                pnl_updates = self._recalculate_pnl_fields(p)
+                if pnl_updates:
+                    self.sb.table("lowcap_positions").update(pnl_updates).eq("id", p.get("id")).execute()
+                    # Update p dict with new values for this iteration
+                    p.update(pnl_updates)
+            except Exception as e:
+                logger.warning(f"Error recalculating P&L fields for position {p.get('id')}: {e}")
+        
+        # Use plan_actions_v4 (legacy plan_actions removed)
+        if actions_enabled:
+            # Get feature flags from config (if available)
+            feature_flags = pm_cfg.get("feature_flags", {})
+            
+            # Diagnostic logging: Log pool state when position is loaded for planning
+            position_features = position.get("features") or {}
+            position_exec_history = position_features.get("pm_execution_history") or {}
+            position_pool = position_exec_history.get("trim_pool")
+            if position_pool:
+                logger.info(
+                    "POOL_DIAG: Position loaded for planning | %s/%s tf=%s position_id=%s | pool=%s",
+                    position.get("token_ticker", "?"), position.get("token_chain", "?"), 
+                    position.get("timeframe", "?"), position.get("id", "?"), position_pool
+                )
+            elif position_exec_history:
+                logger.debug(
+                    "POOL_DIAG: Position loaded (no pool) | %s/%s tf=%s position_id=%s | exec_history_keys=%s",
+                    position.get("token_ticker", "?"), position.get("token_chain", "?"),
+                    position.get("timeframe", "?"), position.get("id", "?"), list(position_exec_history.keys())
+                )
+            
+            actions = plan_actions_v4(
+                p, a_final, e_final, regime_state_str, self.sb,
+                regime_context=regime_context,
+                token_bucket=token_bucket,
+                feature_flags=feature_flags,
+                exposure_lookup=exposure_lookup,
+                regime_states=regime_state_bundle,
+            )
+            
+            # Log when first-dip buy flag is set but no action returned
+            features_check = p.get("features") or {}
+            uptrend_check = features_check.get("uptrend_engine_v4") or {}
+            first_dip_flag = uptrend_check.get("first_dip_buy_flag", False)
+            if first_dip_flag and (not actions or all(a.get("decision_type", "").lower() == "hold" for a in actions)):
+                ticker = p.get("token_ticker", p.get("token_contract", "?")[:20])
+                logger.info("PM: first_dip_buy_flag=True but no action for %s (%s) - actions=%s", 
+                           ticker, p.get("timeframe", "?"), [a.get("decision_type") for a in actions] if actions else "[]")
+        else:
+            actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
+        
+        # Attach enhanced A/E diagnostics to each action for strand auditing
+        try:
+            diag = le.get("diagnostics") or {}
+            for act in actions:
+                act["lever_diag"] = {
+                    **diag,
+                    "a_e_components": {
+                        "a_final": a_final,
+                        "e_final": e_final,
+                        "position_size_frac": position_size_frac,
+                        "regime_state": bucket_states,  # Dict: {"macro": "S0", "meso": "S1", "micro": "S3"}
+                        "regime_state_bundle": regime_state_bundle,
+                        "regime_state_str": regime_state_str,  # Formatted string for logging
+                        "token_bucket": token_bucket or "unknown",
+                        "active_positions": 1  # Single position for process_position
+                    }
+                }
+        except Exception:
+            pass
+        
+        # Execute actions and collect results
+        execution_results: Dict[str, Dict[str, Any]] = {}
+        
+        for act in actions:
+            decision_type = act.get("decision_type", "").lower()
+            
+            # Skip hold actions
+            if decision_type == "hold" or not decision_type:
+                continue
+            
+            # Skip execution when no position for trims; still log strand elsewhere
+            if decision_type == "trim":
+                try:
+                    if float(p.get("total_quantity") or 0.0) <= 0.0:
+                        exec_key = f"{p.get('id')}:{decision_type}"
+                        execution_results[exec_key] = {
+                            "status": "skipped",
+                            "error": "no_position_for_trim"
+                        }
+                        continue
+                except Exception:
+                    pass
+            
+            # Execute via executor
+            try:
+                exec_result = self.executor.execute(act, p)
+                exec_key = f"{p.get('id')}:{decision_type}"
+                execution_results[exec_key] = exec_result
+                
+                # Log execution result
+                exec_status = exec_result.get("status", "unknown")
+                logger.info(
+                    f"EXECUTION RESULT: {decision_type} {p.get('token_ticker', '')}/{p.get('token_chain', '')} | "
+                    f"status={exec_status} | "
+                    f"tx_hash={exec_result.get('tx_hash', 'None')[:8] if exec_result.get('tx_hash') else 'None'}"
+                )
+                
+                # Update position table
+                if exec_status == "success":
+                    # Get a_final and e_final from the action's lever_diag if available
+                    lever_diag = act.get("lever_diag", {})
+                    a_e_components = lever_diag.get("a_e_components", {})
+                    a_final = float(a_e_components.get("a_final", 0.5))
+                    e_final = float(a_e_components.get("e_final", 0.5))
+                    
+                    # Store position status before update (for entry detection)
+                    position_status_before = p.get("status", "")
+                    
+                    self._update_position_after_execution(
+                        p.get("id"), decision_type, exec_result, act, p, a_final, e_final
+                    )
+                    self._update_execution_history(p.get("id"), decision_type, exec_result, act)
+                    
+                    # Send Telegram notification (non-blocking)
+                    # Pass position_status_before to help determine if this is an entry
+                    self._send_execution_notification(p, decision_type, exec_result, act, a_final, e_final, position_status_before)
+            except Exception as e:
+                logger.error(f"Error executing action for position {p.get('id')}: {e}")
+                execution_results[f"{p.get('id')}:{decision_type}"] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+        
+        # Check for position closure after all actions (state-based, not action-based)
+        # This handles S0 transitions regardless of which action triggered it
+        self._check_position_closure(p, "", {}, {})
+            
+        # Write strands with execution results
+        self._write_strands(p, str(token), now, a_final, e_final, regime_state_str, actions, execution_results, regime_context, token_bucket)
+        return len(actions)
+    
     def run(self) -> int:
         now = datetime.now(timezone.utc)
         # Reset regime cache for this run
@@ -3436,227 +3866,10 @@ class PMCoreTick:
         token_keys = [(p.get("token_contract"), p.get("token_chain")) for p in positions]
         bucket_map = self._fetch_token_buckets(token_keys)
         written = 0
-        actions_enabled = (os.getenv("ACTIONS_ENABLED", "0") == "1")
         
         for p in positions:
-            token_contract = p.get("token_contract")
-            token_chain = p.get("token_chain")
-            token = token_contract or p.get("token_ticker") or "UNKNOWN"
-            features = p.get("features") or {}
-            token_bucket = bucket_map.get((token_contract, token_chain)) or bucket_map.get((token_contract, None))
-            
-            # Get regime states for this token's bucket across all timeframes (for logging)
-            bucket_states = self._get_bucket_regime_state(token_bucket)
-            # Format as string for backward compatibility with plan_actions_v4
-            regime_state_str = f"Macro {bucket_states['macro']}, Meso {bucket_states['meso']}, Micro {bucket_states['micro']}"
-            # Full regime bundle across drivers/horizons for scope/learning
-            regime_state_bundle = self._get_regime_states_bundle(token_bucket)
-
-            # Compute A/E - use v2 if enabled, otherwise legacy compute_levers
-            use_ae_v2 = pm_cfg.get("feature_flags", {}).get("ae_v2_enabled", False)
-            
-            if use_ae_v2:
-                # A/E v2: Flag-driven, strength is first-class
-                regime_flags = extract_regime_flags(self.sb, token_bucket, book_id)
-                a_base, e_base, ae_diag = compute_ae_v2(regime_flags, token_bucket)
-                
-                # Log A/E v2 computation
-                logger.info(
-                    "AE_V2: %s bucket=%s | flags → A=%.3f E=%.3f | diag=%s",
-                    token_ticker, token_bucket, a_base, e_base, ae_diag.get("after_flags", {})
-                )
-                
-                # Note: Strength is applied later in plan_actions_v4 when pattern is known
-                a_final = a_base
-                e_final = e_base
-                position_size_frac = 0.33  # Default, will be overridden by A-score sizing
-                
-                # Build minimal levers dict for backward compatibility
-                le = {
-                    "A_value": a_final,
-                    "E_value": e_final,
-                    "position_size_frac": position_size_frac,
-                    "ae_v2_diagnostics": ae_diag,
-                }
-            else:
-                # Legacy: compute_levers (regime-driven A + intent deltas + bucket multiplier)
-                le = compute_levers(
-                    features,
-                    bucket_context=regime_context,
-                    position_bucket=token_bucket,
-                    bucket_config=bucket_cfg,
-                    exec_timeframe=self.timeframe,
-                )
-                a_final = float(le["A_value"])
-                e_final = float(le["E_value"])
-                position_size_frac = float(le.get("position_size_frac", 0.33))
-
-            episode_strands: List[Dict[str, Any]] = []
-            meta_changed = False
-            try:
-                episode_strands, meta_changed = self._process_episode_logging(
-                    position=p,
-                    regime_context=regime_context,
-                    token_bucket=token_bucket,
-                    now=now,
-                    levers=le, # Pass levers for factor logging
-                )
-            except Exception as episode_err:
-                logger.warning(f"Episode logging failed for position {p.get('id')}: {episode_err}")
-                episode_strands = []
-                meta_changed = False
-
-            if meta_changed:
-                try:
-                    self.sb.table("lowcap_positions").update({"features": p.get("features")}).eq("id", p.get("id")).execute()
-                except Exception as update_err:
-                    logger.warning(f"Failed to persist episode meta for position {p.get('id')}: {update_err}")
-            if episode_strands:
-                try:
-                    self.sb.table("ad_strands").insert(episode_strands).execute()
-                except Exception as strand_err:
-                    logger.warning(f"Failed to insert episode strands for position {p.get('id')}: {strand_err}")
-            
-            # Recalculate P&L fields before decisions (hybrid approach - check if stale)
-            pnl_last_calculated = p.get("pnl_last_calculated_at")
-            should_recalculate = False
-            
-            if not pnl_last_calculated:
-                should_recalculate = True
-            else:
-                try:
-                    last_calc_dt = datetime.fromisoformat(pnl_last_calculated.replace("Z", "+00:00"))
-                    minutes_since = (now - last_calc_dt).total_seconds() / 60.0
-                    # Recalculate if > 5 minutes old (hybrid approach)
-                    should_recalculate = minutes_since > 5.0
-                except Exception:
-                    should_recalculate = True
-            
-            if should_recalculate:
-                try:
-                    pnl_updates = self._recalculate_pnl_fields(p)
-                    if pnl_updates:
-                        self.sb.table("lowcap_positions").update(pnl_updates).eq("id", p.get("id")).execute()
-                        # Update p dict with new values for this iteration
-                        p.update(pnl_updates)
-                except Exception as e:
-                    logger.warning(f"Error recalculating P&L fields for position {p.get('id')}: {e}")
-            
-            # Use plan_actions_v4 (legacy plan_actions removed)
-            if actions_enabled:
-                # Get feature flags from config (if available)
-                feature_flags = pm_cfg.get("feature_flags", {})
-                
-                actions = plan_actions_v4(
-                    p, a_final, e_final, regime_state_str, self.sb,
-                    regime_context=regime_context,
-                    token_bucket=token_bucket,
-                    feature_flags=feature_flags,
-                    exposure_lookup=exposure_lookup,
-                    regime_states=regime_state_bundle,
-                )
-                
-                # Log when first-dip buy flag is set but no action returned
-                features_check = p.get("features") or {}
-                uptrend_check = features_check.get("uptrend_engine_v4") or {}
-                first_dip_flag = uptrend_check.get("first_dip_buy_flag", False)
-                if first_dip_flag and (not actions or all(a.get("decision_type", "").lower() == "hold" for a in actions)):
-                    ticker = p.get("token_ticker", p.get("token_contract", "?")[:20])
-                    logger.info("PM: first_dip_buy_flag=True but no action for %s (%s) - actions=%s", 
-                               ticker, p.get("timeframe", "?"), [a.get("decision_type") for a in actions] if actions else "[]")
-            else:
-                actions = [{"decision_type": "hold", "size_frac": 0.0, "reasons": {}}]
-            
-            # Attach enhanced A/E diagnostics to each action for strand auditing
-            try:
-                diag = le.get("diagnostics") or {}
-                for act in actions:
-                    act["lever_diag"] = {
-                        **diag,
-                        "a_e_components": {
-                            "a_final": a_final,
-                            "e_final": e_final,
-                            "position_size_frac": position_size_frac,
-                        "regime_state": bucket_states,  # Dict: {"macro": "S0", "meso": "S1", "micro": "S3"}
-                        "regime_state_bundle": regime_state_bundle,
-                            "regime_state_str": regime_state_str,  # Formatted string for logging
-                            "token_bucket": token_bucket or "unknown",
-                            "active_positions": len(positions)
-                        }
-                    }
-            except Exception:
-                pass
-            
-            # Execute actions and collect results
-            execution_results: Dict[str, Dict[str, Any]] = {}
-            
-            for act in actions:
-                decision_type = act.get("decision_type", "").lower()
-                
-                # Skip hold actions
-                if decision_type == "hold" or not decision_type:
-                    continue
-                
-                # Skip execution when no position for trims; still log strand elsewhere
-                if decision_type == "trim":
-                    try:
-                        if float(p.get("total_quantity") or 0.0) <= 0.0:
-                            exec_key = f"{p.get('id')}:{decision_type}"
-                            execution_results[exec_key] = {
-                                "status": "skipped",
-                                "error": "no_position_for_trim"
-                            }
-                            continue
-                    except Exception:
-                        pass
-                
-                # Execute via executor
-                try:
-                    exec_result = self.executor.execute(act, p)
-                    exec_key = f"{p.get('id')}:{decision_type}"
-                    execution_results[exec_key] = exec_result
-                    
-                    # Log execution result
-                    exec_status = exec_result.get("status", "unknown")
-                    logger.info(
-                        f"EXECUTION RESULT: {decision_type} {p.get('token_ticker', '')}/{p.get('token_chain', '')} | "
-                        f"status={exec_status} | "
-                        f"tx_hash={exec_result.get('tx_hash', 'None')[:8] if exec_result.get('tx_hash') else 'None'}"
-                    )
-                    
-                    # Update position table
-                    if exec_status == "success":
-                        # Get a_final and e_final from the action's lever_diag if available
-                        lever_diag = act.get("lever_diag", {})
-                        a_e_components = lever_diag.get("a_e_components", {})
-                        a_final = float(a_e_components.get("a_final", 0.5))
-                        e_final = float(a_e_components.get("e_final", 0.5))
-                        
-                        # Store position status before update (for entry detection)
-                        position_status_before = p.get("status", "")
-                        
-                        self._update_position_after_execution(
-                            p.get("id"), decision_type, exec_result, act, p, a_final, e_final
-                        )
-                        self._update_execution_history(p.get("id"), decision_type, exec_result, act)
-                        
-                        # Send Telegram notification (non-blocking)
-                        # Pass position_status_before to help determine if this is an entry
-                        self._send_execution_notification(p, decision_type, exec_result, act, a_final, e_final, position_status_before)
-                except Exception as e:
-                    logger.error(f"Error executing action for position {p.get('id')}: {e}")
-                    execution_results[f"{p.get('id')}:{decision_type}"] = {
-                        "status": "error",
-                        "error": str(e)
-                    }
-            
-            # Check for position closure after all actions (state-based, not action-based)
-            # This handles S0 transitions regardless of which action triggered it
-            self._check_position_closure(p, "", {}, {})
-            
-            # Write strands with execution results
-            self._write_strands(p, str(token), now, a_final, e_final, regime_state_str, actions, execution_results, regime_context, token_bucket)
-            written += len(actions)
+            written += self.process_position(p, regime_context, pm_cfg, exposure_lookup, bucket_map)
+        
         logger.info("pm_core_tick (%s) wrote %d strands for %d positions", self.timeframe, written, len(positions))
         return written
 

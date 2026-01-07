@@ -115,9 +115,9 @@ class SocialTradingSystem:
                     'book_nav': float(os.getenv('BOOK_NAV', '100000.0')),  # $100k
                     'max_exposure_pct': 20.0,
                     'min_curator_score': 0.6,
-                    'default_allocation_pct': 4.0,  # 4% default allocation
-                    'min_allocation_pct': 2.0,  # Minimum 2% allocation
-                    'max_allocation_pct': 6.0,  # Maximum 6% allocation
+                    'default_allocation_pct': 25.0,  # 25% default allocation
+                    'min_allocation_pct': 10.0,  # Minimum 10% allocation
+                    'max_allocation_pct': 40.0,  # Maximum 40% allocation
                     'slippage_pct': 1.0
                 },
                 'position_management': {

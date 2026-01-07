@@ -57,6 +57,7 @@ def setup_logging():
         'decision_maker': 'logs/decision_maker.log',
         'pm_core': 'logs/pm_core.log',
         'src.intelligence.lowcap_portfolio_manager.pm.executor': 'logs/pm_executor.log',
+        'src.intelligence.lowcap_portfolio_manager.pm.episode_blocking': 'logs/pm_core.log',  # Episode blocking logs go to pm_core.log
         'trader': 'logs/trader.log',
         'learning_system': 'logs/learning_system.log',
         'price_collector': 'logs/price_collector.log',
@@ -332,9 +333,9 @@ class TradingSystem:
                 'book_nav': float(os.getenv('BOOK_NAV', '100000.0')),
                 'max_exposure_pct': 20.0,
                 'min_curator_score': 0.6,
-                'default_allocation_pct': 4.0,
-                'min_allocation_pct': 2.0,
-                'max_allocation_pct': 6.0,
+                'default_allocation_pct': 25.0,
+                'min_allocation_pct': 10.0,
+                'max_allocation_pct': 40.0,
                 'slippage_pct': 1.0
             },
             'position_management': {

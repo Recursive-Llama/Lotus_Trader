@@ -32,13 +32,28 @@ class BalanceSnapshotJob:
             
             usdc_total = sum(float(row.get("usdc_balance", 0) or 0) for row in wallet_rows)
             
-            # 2. Get active positions value
+            # 2. Get active positions with full details for JSONB storage
             position_rows = (
                 self.sb.table("lowcap_positions")
-                .select("current_usd_value")
+                .select("token_ticker,token_contract,token_chain,timeframe,current_usd_value,total_pnl_usd,rpnl_usd,total_extracted_usd,total_allocation_usd")
                 .eq("status", "active")
                 .execute()
             ).data or []
+            
+            # Build positions array for JSONB column
+            positions_array = []
+            for pos in position_rows:
+                positions_array.append({
+                    "ticker": pos.get("token_ticker") or "?",
+                    "contract": pos.get("token_contract") or "",
+                    "chain": pos.get("token_chain") or "",
+                    "timeframe": pos.get("timeframe") or "",
+                    "value": float(pos.get("current_usd_value", 0) or 0),
+                    "current_pnl": float(pos.get("total_pnl_usd", 0) or 0),
+                    "realized_pnl": float(pos.get("rpnl_usd", 0) or 0),
+                    "extracted": float(pos.get("total_extracted_usd", 0) or 0),
+                    "allocated": float(pos.get("total_allocation_usd", 0) or 0)
+                })
             
             active_positions_value = sum(
                 float(row.get("current_usd_value", 0) or 0) 
@@ -49,13 +64,14 @@ class BalanceSnapshotJob:
             # 3. Calculate total
             total_balance = usdc_total + active_positions_value
             
-            # 4. Insert snapshot
+            # 4. Insert snapshot with positions array
             snapshot = {
                 "snapshot_type": snapshot_type,
                 "total_balance_usd": total_balance,
                 "usdc_total": usdc_total,
                 "active_positions_value": active_positions_value,
                 "active_positions_count": active_positions_count,
+                "positions": positions_array,  # JSONB array of position details
                 "captured_at": datetime.now(timezone.utc).isoformat()
             }
             
@@ -145,12 +161,17 @@ class BalanceSnapshotJob:
                 avg_positions_value = sum(float(s["active_positions_value"]) for s in snapshots) / len(snapshots)
                 avg_positions_count = sum(int(s["active_positions_count"]) for s in snapshots) / len(snapshots)
                 
+                # Use positions from the last snapshot in the window (most recent state)
+                last_snapshot = snapshots[-1]
+                positions = last_snapshot.get("positions", [])
+                
                 four_hour_snapshot = {
                     "snapshot_type": "4hour",
                     "total_balance_usd": avg_balance,
                     "usdc_total": avg_usdc,
                     "active_positions_value": avg_positions_value,
                     "active_positions_count": int(avg_positions_count),
+                    "positions": positions,  # Positions from last snapshot in window
                     "captured_at": window_start.isoformat()
                 }
                 
@@ -221,12 +242,17 @@ class BalanceSnapshotJob:
                 avg_positions_value = sum(float(s["active_positions_value"]) for s in snapshots) / len(snapshots)
                 avg_positions_count = sum(int(s["active_positions_count"]) for s in snapshots) / len(snapshots)
                 
+                # Use positions from the last snapshot in the day (most recent state)
+                last_snapshot = snapshots[-1]
+                positions = last_snapshot.get("positions", [])
+                
                 daily_snapshot = {
                     "snapshot_type": "daily",
                     "total_balance_usd": avg_balance,
                     "usdc_total": avg_usdc,
                     "active_positions_value": avg_positions_value,
                     "active_positions_count": int(avg_positions_count),
+                    "positions": positions,  # Positions from last snapshot in day
                     "captured_at": day_start.isoformat()
                 }
                 
@@ -298,12 +324,17 @@ class BalanceSnapshotJob:
                 avg_positions_value = sum(float(s["active_positions_value"]) for s in snapshots) / len(snapshots)
                 avg_positions_count = sum(int(s["active_positions_count"]) for s in snapshots) / len(snapshots)
                 
+                # Use positions from the last snapshot in the week (most recent state)
+                last_snapshot = snapshots[-1]
+                positions = last_snapshot.get("positions", [])
+                
                 weekly_snapshot = {
                     "snapshot_type": "weekly",
                     "total_balance_usd": avg_balance,
                     "usdc_total": avg_usdc,
                     "active_positions_value": avg_positions_value,
                     "active_positions_count": int(avg_positions_count),
+                    "positions": positions,  # Positions from last snapshot in week
                     "captured_at": week_start.isoformat()
                 }
                 
@@ -374,12 +405,17 @@ class BalanceSnapshotJob:
                 avg_positions_value = sum(float(s["active_positions_value"]) for s in snapshots) / len(snapshots)
                 avg_positions_count = sum(int(s["active_positions_count"]) for s in snapshots) / len(snapshots)
                 
+                # Use positions from the last snapshot in the month (most recent state)
+                last_snapshot = snapshots[-1]
+                positions = last_snapshot.get("positions", [])
+                
                 monthly_snapshot = {
                     "snapshot_type": "monthly",
                     "total_balance_usd": avg_balance,
                     "usdc_total": avg_usdc,
                     "active_positions_value": avg_positions_value,
                     "active_positions_count": int(avg_positions_count),
+                    "positions": positions,  # Positions from last snapshot in month
                     "captured_at": month_start.isoformat()
                 }
                 

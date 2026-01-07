@@ -172,53 +172,94 @@ class TATracker:
         This pattern prevents bulk-reading large JSONB columns that cause timeouts.
         See: write_features_token_geometry() for the correct pattern.
         
+        Optimizations:
+        - For small datasets (< 200), fetch all at once to avoid chunking overhead
+        - Uses timeframe-first filter to match optimal index pattern
+        - Adds ordering for consistent results and better index usage
+        
         Args:
             chunk_size: Number of positions to fetch per query (default 100)
             
         Yields:
             Position dictionaries one at a time
         """
-        offset = 0
-        total_fetched = 0
         start_time = time.time()
         
-        while True:
-            query_start = time.time()
-            res = (
-                self.sb.table("lowcap_positions")
-                .select("id,token_contract,token_chain,timeframe")  # NO features!
-                .eq("timeframe", self.timeframe)
-                .in_("status", ["watchlist", "active"])
-                .range(offset, offset + chunk_size - 1)
-                .execute()
-            )
-            query_time = time.time() - query_start
-            
-            if query_time > QUERY_WARN_SECONDS:
-                logger.warning(
-                    "Slow position query: chunk %d-%d took %.2fs",
-                    offset, offset + chunk_size, query_time
-                )
-            
-            batch = res.data or []
-            if not batch:
-                break
-                
-            total_fetched += len(batch)
+        # Try fetching all positions at once first (for small datasets, this is much faster)
+        # If we get exactly the limit, we'll fall back to chunking
+        query_start = time.time()
+        res = (
+            self.sb.table("lowcap_positions")
+            .select("id,token_contract,token_chain,timeframe")  # NO features!
+            .eq("timeframe", self.timeframe)  # Filter by timeframe first (matches index pattern)
+            .in_("status", ["watchlist", "active"])
+            .order("id")  # Consistent ordering helps with index usage
+            .limit(200)  # Try fetching up to 200 at once
+            .execute()
+        )
+        query_time = time.time() - query_start
+        
+        batch = res.data or []
+        total_fetched = len(batch)
+        
+        # If we got exactly 200, there might be more - use chunking
+        if len(batch) == 200:
+            # Yield what we have first
             for p in batch:
                 yield p
             
-            offset += chunk_size
+            # Continue with chunking for remaining positions
+            offset = 200
+            while True:
+                chunk_start = time.time()
+                res = (
+                    self.sb.table("lowcap_positions")
+                    .select("id,token_contract,token_chain,timeframe")
+                    .eq("timeframe", self.timeframe)
+                    .in_("status", ["watchlist", "active"])
+                    .order("id")
+                    .range(offset, offset + chunk_size - 1)
+                    .execute()
+                )
+                chunk_time = time.time() - chunk_start
+                
+                if chunk_time > QUERY_WARN_SECONDS:
+                    logger.warning(
+                        "Slow position query: chunk %d-%d took %.2fs",
+                        offset, offset + chunk_size, chunk_time
+                    )
+                
+                chunk_batch = res.data or []
+                if not chunk_batch:
+                    break
+                    
+                total_fetched += len(chunk_batch)
+                for p in chunk_batch:
+                    yield p
+                
+                offset += chunk_size
+                
+                # Safety: max 2000 positions (same as old limit)
+                if total_fetched >= 2000:
+                    logger.warning("Hit position limit (2000), stopping")
+                    break
+        else:
+            # Small dataset - yield all at once
+            if query_time > QUERY_WARN_SECONDS:
+                logger.warning(
+                    "Slow position query: fetched %d positions in %.2fs",
+                    total_fetched, query_time
+                )
             
-            # Safety: max 2000 positions (same as old limit)
-            if total_fetched >= 2000:
-                logger.warning("Hit position limit (2000), stopping")
-                break
+            for p in batch:
+                yield p
         
         total_time = time.time() - start_time
         if total_time > QUERY_CRITICAL_SECONDS:
             logger.error(
-                "CRITICAL: Fetching %d positions took %.2fs - investigate query performance",
+                "CRITICAL: Fetching %d positions took %.2fs - investigate query performance. "
+                "Consider adding composite index: CREATE INDEX idx_lowcap_positions_timeframe_status "
+                "ON lowcap_positions(timeframe, status) WHERE status IN ('watchlist', 'active');",
                 total_fetched, total_time
             )
         elif total_fetched > 0:

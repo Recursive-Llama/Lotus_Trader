@@ -5,10 +5,11 @@ Deterministic safety latch for preventing re-entry after failed attempts.
 This is NOT learned - it's immediate risk control.
 
 Key rules:
-- S1 failure blocks S1 + S2
-- S2 failure blocks S2 only
+- S1 failure blocks S1 + S2 (only if P&L < 0)
+- S2 failure blocks S2 only (only if P&L < 0)
 - Any observed success unblocks (even if we didn't participate)
-- Failure only recorded if we actually acted (skipping is correct)
+- Failure only recorded if we actually acted AND lost money (P&L < 0)
+- Profitable attempts that fail to reach S3 don't block (we made money, so it's fine)
 
 Part of Scaling A/E v2 Implementation (Phase 6)
 """
@@ -28,11 +29,12 @@ def record_attempt_failure(
     timeframe: str,
     entered_s1: bool,
     entered_s2: bool,
+    total_pnl_usd: float = 0.0,
     book_id: str = "onchain_crypto"
 ) -> None:
     """
     Called when an attempt ends at S0 (failure).
-    Only blocks if we actually acted in S1 or S2.
+    Only blocks if we actually acted in S1 or S2 AND we lost money (P&L < 0).
     
     Args:
         sb_client: Supabase client
@@ -41,6 +43,7 @@ def record_attempt_failure(
         timeframe: Position timeframe
         entered_s1: True if we took an S1 entry in this attempt
         entered_s2: True if we took an S2 entry in this attempt
+        total_pnl_usd: Total P&L (realized + unrealized) in USD. Only blocks if < 0.
         book_id: Book identifier
     """
     # We skipped - correct decision, no block needed
@@ -48,6 +51,15 @@ def record_attempt_failure(
         logger.debug(
             "EPISODE_BLOCK: Skipping record (no entry) | %s/%s tf=%s",
             token_contract[:12], token_chain, timeframe
+        )
+        return
+    
+    # P&L gate: Only block if we lost money (P&L < 0)
+    # If we made money or broke even, don't block (profitable attempt that didn't reach S3 is fine)
+    if total_pnl_usd >= 0:
+        logger.info(
+            "EPISODE_BLOCK: Skipping block (P&L >= 0) | %s/%s tf=%s | P&L=$%.2f | entered_s1=%s entered_s2=%s",
+            token_contract[:12], token_chain, timeframe, total_pnl_usd, entered_s1, entered_s2
         )
         return
     

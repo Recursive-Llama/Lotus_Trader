@@ -1,0 +1,247 @@
+{
+  "supported": [
+    "1m",
+    "5m",
+    "15m",
+    "1h",
+    "4h",
+    "1d"
+  ],
+  "not_supported": [],
+  "results": {
+    "1m": {
+      "interval": "1m",
+      "supported": true,
+      "messages_received": 3,
+      "message_samples": [
+        {
+          "timestamp": 1767184560000,
+          "end_timestamp": 1767184619999,
+          "symbol": "BTC",
+          "interval": "1m",
+          "open": "88900.0",
+          "high": "88901.0",
+          "low": "88900.0",
+          "close": "88900.0",
+          "volume": "0.00196",
+          "trades": 11
+        },
+        {
+          "timestamp": 1767184560000,
+          "end_timestamp": 1767184619999,
+          "symbol": "BTC",
+          "interval": "1m",
+          "open": "88900.0",
+          "high": "88901.0",
+          "low": "88898.0",
+          "close": "88898.0",
+          "volume": "0.00209",
+          "trades": 12
+        },
+        {
+          "timestamp": 1767184560000,
+          "end_timestamp": 1767184619999,
+          "symbol": "BTC",
+          "interval": "1m",
+          "open": "88900.0",
+          "high": "88901.0",
+          "low": "88892.0",
+          "close": "88892.0",
+          "volume": "0.11558",
+          "trades": 22
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 8.648916041012853
+    },
+    "5m": {
+      "interval": "5m",
+      "supported": true,
+      "messages_received": 3,
+      "message_samples": [
+        {
+          "timestamp": 1767184500000,
+          "end_timestamp": 1767184799999,
+          "symbol": "BTC",
+          "interval": "5m",
+          "open": "88925.0",
+          "high": "88927.0",
+          "low": "88891.0",
+          "close": "88891.0",
+          "volume": "4.61592",
+          "trades": 159
+        },
+        {
+          "timestamp": 1767184500000,
+          "end_timestamp": 1767184799999,
+          "symbol": "BTC",
+          "interval": "5m",
+          "open": "88925.0",
+          "high": "88927.0",
+          "low": "88891.0",
+          "close": "88891.0",
+          "volume": "4.61664",
+          "trades": 160
+        },
+        {
+          "timestamp": 1767184500000,
+          "end_timestamp": 1767184799999,
+          "symbol": "BTC",
+          "interval": "5m",
+          "open": "88925.0",
+          "high": "88927.0",
+          "low": "88890.0",
+          "close": "88890.0",
+          "volume": "4.63953",
+          "trades": 163
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 5.988022291101515
+    },
+    "15m": {
+      "interval": "15m",
+      "supported": true,
+      "messages_received": 3,
+      "message_samples": [
+        {
+          "timestamp": 1767184200000,
+          "end_timestamp": 1767185099999,
+          "symbol": "BTC",
+          "interval": "15m",
+          "open": "88908.0",
+          "high": "88951.0",
+          "low": "88872.0",
+          "close": "88874.0",
+          "volume": "22.04283",
+          "trades": 540
+        },
+        {
+          "timestamp": 1767184200000,
+          "end_timestamp": 1767185099999,
+          "symbol": "BTC",
+          "interval": "15m",
+          "open": "88908.0",
+          "high": "88951.0",
+          "low": "88872.0",
+          "close": "88873.0",
+          "volume": "22.05534",
+          "trades": 542
+        },
+        {
+          "timestamp": 1767184200000,
+          "end_timestamp": 1767185099999,
+          "symbol": "BTC",
+          "interval": "15m",
+          "open": "88908.0",
+          "high": "88951.0",
+          "low": "88872.0",
+          "close": "88873.0",
+          "volume": "22.05575",
+          "trades": 543
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 2.756090332986787
+    },
+    "1h": {
+      "interval": "1h",
+      "supported": true,
+      "messages_received": 2,
+      "message_samples": [
+        {
+          "timestamp": 1767182400000,
+          "end_timestamp": 1767185999999,
+          "symbol": "BTC",
+          "interval": "1h",
+          "open": "88982.0",
+          "high": "89009.0",
+          "low": "88872.0",
+          "close": "88874.0",
+          "volume": "128.57652",
+          "trades": 3805
+        },
+        {
+          "timestamp": 1767182400000,
+          "end_timestamp": 1767185999999,
+          "symbol": "BTC",
+          "interval": "1h",
+          "open": "88982.0",
+          "high": "89009.0",
+          "low": "88872.0",
+          "close": "88874.0",
+          "volume": "128.57826",
+          "trades": 3806
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 2.683980624889955
+    },
+    "4h": {
+      "interval": "4h",
+      "supported": true,
+      "messages_received": 2,
+      "message_samples": [
+        {
+          "timestamp": 1767182400000,
+          "end_timestamp": 1767196799999,
+          "symbol": "BTC",
+          "interval": "4h",
+          "open": "88982.0",
+          "high": "89009.0",
+          "low": "88872.0",
+          "close": "88874.0",
+          "volume": "129.26042",
+          "trades": 3813
+        },
+        {
+          "timestamp": 1767182400000,
+          "end_timestamp": 1767196799999,
+          "symbol": "BTC",
+          "interval": "4h",
+          "open": "88982.0",
+          "high": "89009.0",
+          "low": "88872.0",
+          "close": "88878.0",
+          "volume": "129.8264",
+          "trades": 3824
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 8.009147291071713
+    },
+    "1d": {
+      "interval": "1d",
+      "supported": true,
+      "messages_received": 2,
+      "message_samples": [
+        {
+          "timestamp": 1767139200000,
+          "end_timestamp": 1767225599999,
+          "symbol": "BTC",
+          "interval": "1d",
+          "open": "88467.0",
+          "high": "89009.0",
+          "low": "88155.0",
+          "close": "88878.0",
+          "volume": "4092.67408",
+          "trades": 76655
+        },
+        {
+          "timestamp": 1767139200000,
+          "end_timestamp": 1767225599999,
+          "symbol": "BTC",
+          "interval": "1d",
+          "open": "88467.0",
+          "high": "89009.0",
+          "low": "88155.0",
+          "close": "88877.0",
+          "volume": "4092.77639",
+          "trades": 76656
+        }
+      ],
+      "errors": [],
+      "test_duration_seconds": 0.48555054189637303
+    }
+  }
+}
