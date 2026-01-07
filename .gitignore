@@ -13,6 +13,11 @@ secrets/
 *.key
 *.pem
 
+# Telegram session files (contain authentication tokens)
+*.session
+telegram_session*.session
+signal_bot.session
+
 # Database files
 *.db
 *.sqlite
