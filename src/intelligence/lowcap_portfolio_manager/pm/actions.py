@@ -9,7 +9,7 @@ from supabase import create_client, Client  # type: ignore
 from .config import load_pm_config
 from .bucketing_helpers import bucket_a_e, bucket_score
 from .overrides import apply_pattern_strength_overrides, apply_pattern_execution_overrides
-from .pattern_keys_v5 import generate_canonical_pattern_key, extract_scope_from_context
+from .pattern_keys_v5 import generate_canonical_pattern_key, build_unified_scope
 from .exposure import ExposureLookup
 from .episode_blocking import is_entry_blocked
 
@@ -150,16 +150,7 @@ def _apply_v5_overrides_to_action(
         if not pattern_key:
             return action
         
-        bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
-        scope = extract_scope_from_context(
-            action_context=action_context,
-            regime_context=regime_context or {},
-            position_bucket=token_bucket,
-            bucket_rank=bucket_rank,
-            regime_states=regime_states,
-            chain=position.get("token_chain"),
-            book_id=position.get("book_id") or (position.get("entry_context") or {}).get("book_id"),
-        )
+        scope = build_unified_scope(position=position, regime_context=regime_context)
         
         entry_context = position.get("entry_context") or {}
         features = position.get("features") or {}
@@ -215,7 +206,7 @@ def _apply_v5_overrides_to_action(
                 "E_value": e_final,
                 "position_size_frac": position_size_frac
             }
-            adjusted_levers, strength_mult = apply_pattern_strength_overrides(
+            adjusted_levers, strength_mult, applied_overrides = apply_pattern_strength_overrides(
                 pattern_key=pattern_key,
                 action_category=action_category,
                 scope=scope,
@@ -237,6 +228,7 @@ def _apply_v5_overrides_to_action(
         reasons["pm_strength"] = size_mult
         reasons["exposure_skew"] = exposure_skew
         reasons["pm_final_multiplier"] = final_mult
+        reasons["applied_overrides"] = applied_overrides if applied_overrides else []
         
         plan_controls = action.get("reasons", {})
         adjusted_controls = apply_pattern_execution_overrides(
@@ -265,6 +257,74 @@ def _apply_v5_overrides_to_action(
 # ============================================================================
 # Helper functions for plan_actions_v4()
 # ============================================================================
+
+def _calculate_halo_dist(price: float, ema: float, atr: float) -> float:
+    """Calculate normalized distance from EMA in ATR units."""
+    if atr <= 0 or ema <= 0:
+        return 0.0
+    return abs(price - ema) / atr
+
+
+def compute_gate_margins(
+    uptrend: Dict[str, Any],
+    tuned_controls: Dict[str, Any],
+    state: str,
+) -> Dict[str, float]:
+    """
+    Compute gate margins at decision tick for Learning System v2.
+    
+    Positive margin = gate passed
+    Negative margin = gate blocked (shadow)
+    
+    Returns dict like:
+        {"ts_margin": 5.2, "halo_margin": -0.3, "slope_margin": 1.0, ...}
+    """
+    margins = {}
+    
+    diag = (uptrend.get("diagnostics") or {}).get("buy_check") or {}
+    scores = uptrend.get("scores") or {}
+    
+    # TS margin: ts_score - ts_min (positive = passed)
+    ts_score = float(diag.get("ts_with_boost", 0.0)) * 100.0  # Convert to 0-100 scale
+    ts_min = float(tuned_controls.get("ts_min", 60.0))
+    margins["ts_margin"] = ts_score - ts_min
+    
+    # Halo margin: halo_max - halo_dist (positive = passed, inside zone)
+    price = float(uptrend.get("price", 0.0))
+    ema_vals = uptrend.get("ema") or {}
+    ema60 = float(ema_vals.get("ema60", 0.0))
+    atr = float(diag.get("atr", 0.0))
+    halo_dist = _calculate_halo_dist(price, ema60, atr) if atr > 0 else 0.0
+    halo_max = float(tuned_controls.get("halo_mult", 1.0))
+    margins["halo_margin"] = halo_max - halo_dist
+    
+    # Slope margin: slope - slope_min (positive = passed)
+    # Slope is binary in current system, so margin is 1.0 if passed, -1.0 if failed
+    slope_ok = diag.get("slope_ok", False)
+    margins["slope_margin"] = 1.0 if slope_ok else -1.0
+    
+    # DX margin (for S3): dx_score - dx_min (positive = passed)
+    if state == "S3":
+        dx_score = float(scores.get("dx", 0.0)) * 100.0
+        dx_min = float(tuned_controls.get("dx_min", 60.0))
+        margins["dx_margin"] = dx_score - dx_min
+    
+    return margins
+
+
+def get_blocked_by(gate_margins: Dict[str, float]) -> List[str]:
+    """Get list of gates that blocked entry (negative margins)."""
+    return [gate.replace("_margin", "") for gate, margin in gate_margins.items() if margin < 0]
+
+
+def get_near_miss_gates(gate_margins: Dict[str, float], top_n: int = 2) -> List[str]:
+    """Get top N gates closest to failing (smallest positive margins)."""
+    passed_gates = [(gate.replace("_margin", ""), margin) 
+                    for gate, margin in gate_margins.items() if margin >= 0]
+    passed_gates.sort(key=lambda x: x[1])  # Sort by margin ascending
+    return [gate for gate, _ in passed_gates[:top_n]]
+
+
 
 def _a_to_entry_size(a_final: float, state: str, buy_signal: bool = False, buy_flag: bool = False, first_dip_buy_flag: bool = False) -> float:
     """
@@ -351,10 +411,8 @@ def _count_bars_since(timestamp_iso: str, token_contract: str, chain: str, timef
     except Exception:
         return 0
 
-def _calculate_halo_dist(price: float, ema60: float, atr: float) -> float:
-    if atr > 0 and ema60 > 0:
-        return abs(price - ema60) / atr
-    return 999.0 # Far away
+
+# _calculate_halo_dist moved to helper functions section above
 
 # ============================================================================
 # plan_actions_v4() - New PM action planning using Uptrend Engine v4 signals
@@ -771,20 +829,7 @@ def plan_actions_v4(
                 "market_family": "lowcaps",
                 "buy_signal": base_buy_signal
             }
-            bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
-            scope = extract_scope_from_context(
-                action_context=action_context_s1,
-                regime_context=regime_context or {},
-                position_bucket=token_bucket,
-                bucket_rank=bucket_rank
-            )
-            # Add entry context
-            entry_context = position.get("entry_context") or {}
-            scope.update({
-                "curator": entry_context.get("curator"),
-                "chain": entry_context.get("chain") or position.get("token_chain"),
-                "mcap_bucket": entry_context.get("mcap_bucket") or scope.get("mcap_bucket"),
-            })
+            scope = build_unified_scope(position=position, regime_context=regime_context)
             
             # Apply Overrides
             tuned_controls = apply_pattern_execution_overrides(
@@ -816,9 +861,12 @@ def plan_actions_v4(
                 
                 if effective_buy_signal != base_buy_signal:
                     logging.getLogger(__name__).info(f"Tuning Override: S1 Signal Flipped {base_buy_signal} -> {effective_buy_signal} (TS:{tuned_controls['ts_min']} Halo:{tuned_controls['halo_mult']})")
+                    # Note: Shadow entry creation is now handled by the comprehensive 
+                    # entry_zone_ok logic below, which covers all gate blocking scenarios
                     
         except Exception as e:
             logging.getLogger(__name__).warning(f"Error applying S1 tuning overrides: {e}")
+
     
     # S1: Retest entry (only after S2 breakout has occurred)
     if effective_buy_signal and state == "S1":
@@ -875,6 +923,19 @@ def plan_actions_v4(
                 }
                 
                 decision_type = "entry" if is_new_trade else "add"
+                
+                # Learning System v2: Compute gate margins for active entries
+                # This enables near_miss_gates analysis if entry later fails
+                tuned_controls = {}
+                try:
+                    from .lesson_applicator import apply_tuning_overrides
+                    tuned_controls = apply_tuning_overrides({}, position, sb_client) or {}
+                except Exception:
+                    pass
+                
+                entry_gate_margins = compute_gate_margins(uptrend, tuned_controls, state)
+                entry_near_miss = get_near_miss_gates(entry_gate_margins)
+                
                 action = {
                     "decision_type": decision_type,
                     "size_frac": entry_size,
@@ -883,6 +944,10 @@ def plan_actions_v4(
                         "state": state,
                         "a_score": a_final,
                         "ts_score": scores.get("ts", 0.0),
+                        # Learning v2: Store for trajectory analysis
+                        "gate_margins": entry_gate_margins,
+                        "near_miss_gates": entry_near_miss,
+                        "entry_event": "S1.retest_entry",
                     }
                 }
                 # Apply v5 overrides
@@ -923,7 +988,58 @@ def plan_actions_v4(
             state
         )
     
+    # ------------------------------------------------------------------------
+    # S1 Shadow Entry Logic: Create shadow when entry_zone_ok but other gates block
+    # ------------------------------------------------------------------------
+    # This allows learning what would have happened if we had entered when in the entry zone
+    # Shadow positions are tracked until S0 or active position replaces them
+    if state == "S1" and not effective_buy_signal and is_new_trade:
+        # Check s2_episode requirement (same as active entries)
+        uptrend_meta = features.get("uptrend_episode_meta") or {}
+        s2_episode = uptrend_meta.get("s2_episode")
+        
+        # Check if entry_zone_ok from diagnostics
+        diag = uptrend.get("diagnostics", {}).get("buy_check", {})
+        entry_zone_ok = diag.get("entry_zone_ok", False)
+        
+        # Only create shadow if: s2_episode exists AND entry_zone_ok
+        if s2_episode and entry_zone_ok:
+            # Check we haven't already bought in S1 (same gate as active)
+            last_s1_buy = exec_history.get("last_s1_buy")
+            if not last_s1_buy:
+                # Check status is not already shadow (avoid duplicate shadows)
+                current_status = position.get("status", "")
+                if current_status != "shadow":
+                    # Compute gate margins for learning
+                    tuned_controls = {'ts_min': 60.0, 'halo_mult': 1.0}
+                    gate_margins = compute_gate_margins(uptrend, tuned_controls, state)
+                    blocked_by = get_blocked_by(gate_margins)
+                    
+                    pm_logger.info(
+                        "SHADOW ENTRY: S1 entry_zone_ok but gates blocked | %s/%s tf=%s | "
+                        "blocked_by=%s | margins=%s | diag=%s",
+                        token_ticker, token_chain, timeframe,
+                        blocked_by, gate_margins,
+                        {k: v for k, v in diag.items() if k in ['entry_zone_ok', 'slope_ok', 'ts_ok', 'ts_with_boost']}
+                    )
+                    
+                    return [{
+                        "decision_type": "shadow_entry",
+                        "size_frac": 0.0,
+                        "reasons": {
+                            "entry_event": "S1.entry_zone_blocked",
+                            "blocked_by": blocked_by,
+                            "gate_margins": gate_margins,
+                            "diagnostics": diag,  # Full diagnostics for learning
+                            "state": state,
+                            "a_score": a_final,
+                            "ts_score": diag.get("ts_score", 0.0),
+                            "ts_with_boost": diag.get("ts_with_boost", 0.0),
+                        }
+                    }]
+    
     # S2/S3: Reset on trim or state transition
+
     # ------------------------------------------------------------------------
     # S3 Tuning Logic: Re-evaluate Signal with Overrides (DX & TS)
     # ------------------------------------------------------------------------
@@ -942,20 +1058,7 @@ def plan_actions_v4(
                 "market_family": "lowcaps",
                 "buy_flag": buy_flag
             }
-            bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
-            scope_s3 = extract_scope_from_context(
-                action_context=action_context_s3,
-                regime_context=regime_context or {},
-                position_bucket=token_bucket,
-                bucket_rank=bucket_rank
-            )
-            
-            entry_context = position.get("entry_context") or {}
-            scope_s3.update({
-                "curator": entry_context.get("curator"),
-                "chain": entry_context.get("chain") or position.get("token_chain"),
-                "mcap_bucket": entry_context.get("mcap_bucket") or scope_s3.get("mcap_bucket"),
-            })
+            scope_s3 = build_unified_scope(position=position, regime_context=regime_context)
             
             tuned_controls = apply_pattern_execution_overrides(
                 pattern_key="pm.uptrend.S3.add",
@@ -1103,9 +1206,56 @@ def plan_actions_v4(
                 has_pool, recovery_started
             )
     
+    # ------------------------------------------------------------------------
+    # S2 Shadow Entry Logic: Create shadow when entry_zone_ok but other gates block
+    # ------------------------------------------------------------------------
+    # S2 entry uses EMA333 as anchor. If price is in entry zone but slope/ts gates block,
+    # create shadow to track what would have happened if we had entered.
+    if state == "S2" and not effective_buy_flag and is_new_trade:
+        # Check if entry_zone_ok from diagnostics (S2 uses buy_check with anchor_is_333=True)
+        diag = uptrend.get("diagnostics", {}).get("buy_check", {})
+        entry_zone_ok = diag.get("entry_zone_ok", False)
+        
+        # Only create shadow if entry_zone_ok
+        if entry_zone_ok:
+            # Check we haven't already bought in S2 (same gate as active)
+            last_s2_buy = exec_history.get("last_s2_buy")
+            if not last_s2_buy:
+                # Check status is not already shadow (avoid duplicate shadows)
+                current_status = position.get("status", "")
+                if current_status != "shadow":
+                    # Compute gate margins for learning
+                    tuned_controls = {'ts_min': 60.0, 'halo_mult': 1.5}  # S2 retest defaults
+                    gate_margins = compute_gate_margins(uptrend, tuned_controls, state)
+                    blocked_by = get_blocked_by(gate_margins)
+                    
+                    pm_logger.info(
+                        "SHADOW ENTRY: S2 entry_zone_ok but gates blocked | %s/%s tf=%s | "
+                        "blocked_by=%s | margins=%s | diag=%s",
+                        token_ticker, token_chain, timeframe,
+                        blocked_by, gate_margins,
+                        {k: v for k, v in diag.items() if k in ['entry_zone_ok', 'slope_ok', 'ts_ok', 'ts_with_boost']}
+                    )
+                    
+                    return [{
+                        "decision_type": "shadow_entry",
+                        "size_frac": 0.0,
+                        "reasons": {
+                            "entry_event": "S2.entry_zone_blocked",
+                            "blocked_by": blocked_by,
+                            "gate_margins": gate_margins,
+                            "diagnostics": diag,  # Full diagnostics for learning
+                            "state": state,
+                            "a_score": a_final,
+                            "ts_score": diag.get("ts_score", 0.0),
+                            "ts_with_boost": diag.get("ts_with_boost", 0.0),
+                        }
+                    }]
+    
     # ==========================================================================
     # S3 DX BUY (from trim pool, 6×ATR ladder, max 3)
     # ==========================================================================
+
     if effective_buy_flag and state == "S3":
         # Defensive check: Never buy when in emergency exit zone (price < EMA333)
         emergency_exit_active = uptrend.get("emergency_exit", False)

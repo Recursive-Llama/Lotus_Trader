@@ -199,6 +199,25 @@ def apply_strength_to_ae(
     return A_final, E_final, diagnostics
 
 
+def get_regime_book_id(book_id: str) -> str:
+    """
+    Map crypto book_ids to shared regime driver book_id.
+    
+    All crypto markets (onchain, spot, perps) use the same crypto regime drivers.
+    Other asset classes (stocks, etc.) use their own regime drivers.
+    
+    Args:
+        book_id: Position's book_id (e.g., "perps", "onchain_crypto", "stock_perps")
+    
+    Returns:
+        Regime driver book_id to query (e.g., "onchain_crypto" for crypto, original for others)
+    """
+    CRYPTO_BOOK_IDS = {"onchain_crypto", "perps", "spot_crypto", "perp_crypto"}
+    if book_id in CRYPTO_BOOK_IDS:
+        return "onchain_crypto"  # All crypto uses same regime drivers
+    return book_id  # Other asset classes use their own
+
+
 def extract_regime_flags(
     sb_client,
     token_bucket: str,
@@ -207,10 +226,19 @@ def extract_regime_flags(
     """
     Extract current flags from regime driver positions.
     
+    Args:
+        sb_client: Supabase client
+        token_bucket: Token's cap bucket (e.g., "micro")
+        book_id: Position's book_id (e.g., "perps", "onchain_crypto", "stock_perps")
+                 Will be mapped to regime driver book_id internally
+    
     Returns:
         Dict of driver -> {"buy": bool, "trim": bool, "emergency": bool}
     """
     flags: Dict[str, Dict[str, bool]] = {}
+    
+    # Map crypto book_ids to shared regime driver book_id
+    regime_book_id = get_regime_book_id(book_id)
     
     # Drivers to check (map internal key to ticker)
     drivers = {
@@ -228,7 +256,7 @@ def extract_regime_flags(
                 .select("features")
                 .eq("token_ticker", ticker)
                 .eq("status", "regime_driver")
-                .eq("book_id", book_id)
+                .eq("book_id", regime_book_id)  # Use mapped book_id
                 .limit(1)
                 .execute()
             )

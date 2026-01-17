@@ -52,7 +52,7 @@ class DecisionMakerLowcapSimple:
         trading_config = self.config.get('trading', {})
         
         # No need for dollar amounts - we work with percentages only
-        self.default_allocation_pct = float(trading_config.get('default_allocation_pct', 10.0))
+        self.default_allocation_pct = float(trading_config.get('default_allocation_pct', 15.0))
         self.min_curator_score = trading_config.get('min_curator_score', 0.1)
         self.max_exposure_pct = trading_config.get('max_exposure_pct', 100.0)  # 100% max exposure for lowcap portfolio
         self.max_positions = trading_config.get('max_positions', 69)  # Maximum number of active positions
@@ -495,7 +495,7 @@ class DecisionMakerLowcapSimple:
             created_decision = await self.supabase_manager.create_strand(decision)
             self.logger.info(f"✅ APPROVED: {social_signal['signal_pack']['curator']['id']} -> {allocation_pct}%")
             
-            # v4: Create 4 positions per token (one per timeframe: 1m, 15m, 1h, 4h)
+            # v4: Create 3 positions per token (one per timeframe: 15m, 1h, 4h)
             await self._create_positions_for_token(created_decision, allocation_pct, token_data, curator_score, intent_analysis, decision_id=created_decision.get('id'))
             
             # Trigger learning system to process the decision strand
@@ -618,7 +618,7 @@ class DecisionMakerLowcapSimple:
         decision_id: Optional[str] = None
     ) -> bool:
         """
-        Create 4 positions per token (one per timeframe: 1m, 15m, 1h, 4h)
+        Create 3 positions per token (one per timeframe: 15m, 1h, 4h)
         If already holding, skip position creation but still log intent via decision strand.
         
         Args:
@@ -646,14 +646,12 @@ class DecisionMakerLowcapSimple:
             # Note: We no longer calculate fixed USD amounts here
             # PM will calculate USD amounts at execution time based on current portfolio size
             
-            # Base timeframe splits (defaults) - only 15m, 1h, 4h normalize to 100%
-            # 1m is separate and only traded if other timeframes aren't active
-            # With 25% base: 15m=5%, 1h=10%, 4h=10%, 1m=2.5% (total 27.5% per token)
+            # Base timeframe splits (defaults) - 15m, 1h, 4h normalize to 100%
+            # No 1m positions
             base_splits = {
-                '15m': 0.20,  # 20% of base = 5% of portfolio
-                '1h': 0.40,   # 40% of base = 10% of portfolio
-                '4h': 0.40    # 40% of base = 10% of portfolio
-                # Note: 1m is handled separately, not part of the 100% split
+                '15m': 0.20,  # 20% of base
+                '1h': 0.40,   # 40% of base
+                '4h': 0.40    # 40% of base
             }
             
             # Get learned timeframe weights (Phase 3)
@@ -668,40 +666,24 @@ class DecisionMakerLowcapSimple:
                 has_learned_data = any(w != 1.0 for w in timeframe_weights.values())
                 
                 if has_learned_data and all(w > 0 for w in timeframe_weights.values()):
-                    # Extract weights for 15m, 1h, 4h only (normalize these to 100%)
-                    # 1m is separate with fixed 10% of base allocation (2.5% of portfolio with 25% base)
+                    # Extract weights for 15m, 1h, 4h only (normalize to 100%)
                     main_timeframe_weights = {
                         '15m': timeframe_weights.get('15m', 1.0),
                         '1h': timeframe_weights.get('1h', 1.0),
                         '4h': timeframe_weights.get('4h', 1.0)
                     }
                     
-                    # Normalize learned weights to sum to 1.0 (original approach)
-                    # This directly reflects performance: better performing timeframes get more allocation
-                    normalized_weights = self.coefficient_reader.normalize_timeframe_weights(main_timeframe_weights)
-                    
-                    # Add 1m with fixed 10% of base allocation (separate from the 100% normalization)
-                    # With 25% base: 1m = 2.5% of portfolio
-                    timeframe_splits = {
-                        '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
-                        **normalized_weights  # 15m, 1h, 4h normalized to 100%
-                    }
+                    # Normalize learned weights to sum to 1.0
+                    timeframe_splits = self.coefficient_reader.normalize_timeframe_weights(main_timeframe_weights)
                     self.logger.info(f"Using learned timeframe weights: {timeframe_splits}")
                 else:
                     # No learned data or invalid weights - use base splits
-                    # Add 1m with fixed 10% of base allocation
-                    timeframe_splits = {
-                        '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
-                        **base_splits  # 15m, 1h, 4h = 100%
-                    }
+                    timeframe_splits = base_splits.copy()
                     self.logger.info(f"Using base timeframe splits (no learned data): {timeframe_splits}")
             except Exception as e:
                 self.logger.warning(f"Error getting learned timeframe weights, using base splits: {e}")
-                # Fallback to base splits - add 1m with fixed 10% of base allocation
-                timeframe_splits = {
-                    '1m': 0.10,  # Fixed 10% of base = 2.5% of portfolio
-                    **base_splits  # 15m, 1h, 4h = 100%
-                }
+                # Fallback to base splits
+                timeframe_splits = base_splits.copy()
             
             # Build entry_context for learning system (with buckets)
             # Note: venue_data not available here, volume will be from token_data if available
@@ -730,7 +712,7 @@ class DecisionMakerLowcapSimple:
             }
             
             positions_created = []
-            timeframes = ['1m', '15m', '1h', '4h']
+            timeframes = ['15m', '1h', '4h']
             
             for timeframe in timeframes:
                 # Get timeframe-specific allocation percentage
@@ -877,7 +859,7 @@ class DecisionMakerLowcapSimple:
                                 'position_id': primary_position_id,
                                 'content': {
                                     **current_content,
-                                    'position_ids': position_ids,  # Store all 4 position IDs
+                                    'position_ids': position_ids,  # Store all 3 position IDs
                                     'primary_position_id': primary_position_id
                                 },
                                 'updated_at': datetime.now(timezone.utc).isoformat()
@@ -893,9 +875,10 @@ class DecisionMakerLowcapSimple:
                 except Exception as e:
                     self.logger.error(f"Error backfilling position_id to decision_lowcap strand: {e}")
             
-            # Trigger backfill for all 4 timeframes (synchronous, blocking)
-            if len(positions_created) == 4:
-                self.logger.info(f"✅ Created all 4 positions for {token_ticker} (total allocation: {allocation_pct}%)")
+            # Trigger backfill for newly created timeframes (synchronous, blocking)
+            # Changed from == 4 to > 0: backfill should run whenever ANY new positions are created
+            if len(positions_created) > 0:
+                self.logger.info(f"✅ Created {len(positions_created)} positions for {token_ticker} (total allocation: {allocation_pct}%)")
                 
                 # Trigger backfill sequentially (synchronous, blocking)
                 try:
@@ -904,9 +887,9 @@ class DecisionMakerLowcapSimple:
                     )
                     
                     lookback_minutes = 20160  # 14 days
-                    timeframes_to_backfill = ['1m', '15m', '1h', '4h']
+                    timeframes_to_backfill = ['15m', '1h', '4h']  # No 1m positions
                     
-                    self.logger.info(f"🔄 Starting backfill for {token_ticker} (4 timeframes, sequential, synchronous)")
+                    self.logger.info(f"🔄 Starting backfill for {token_ticker} (3 timeframes, sequential, synchronous)")
                     
                     # Run backfills sequentially and collect results
                     backfill_results = {}
@@ -928,8 +911,8 @@ class DecisionMakerLowcapSimple:
                             self.logger.error(f"Backfill {tf} failed for {token_ticker}: {e}")
                             backfill_results[tf] = 'ERR'
                     
-                    # Single line summary: Backfill TOKEN: 1m/15m/1h/4h bars
-                    bars_summary = f"{backfill_results.get('1m', 0)}/{backfill_results.get('15m', 0)}/{backfill_results.get('1h', 0)}/{backfill_results.get('4h', 0)}"
+                    # Single line summary: Backfill TOKEN: 15m/1h/4h bars
+                    bars_summary = f"{backfill_results.get('15m', 0)}/{backfill_results.get('1h', 0)}/{backfill_results.get('4h', 0)}"
                     self.logger.info(f"Backfill {token_ticker}: {bars_summary}")
                     
                     # Trigger TA Tracker, Uptrend Engine, and PM Core immediately (don't wait for schedule)
@@ -982,11 +965,9 @@ class DecisionMakerLowcapSimple:
                 
                 return True
             else:
-                # Some positions already existed (duplicate key) - this is expected
-                if len(positions_created) == 0:
-                    self.logger.info(f"𐄷 All positions already exist for {token_ticker} (using existing positions)")
-                else:
-                    self.logger.info(f"ℹ️  Created {len(positions_created)}/4 new positions for {token_ticker} ({4 - len(positions_created)} already existed)")
+                # No new positions created - all already existed
+                # Note: we only create 3 timeframes (15m, 1h, 4h), not 4
+                self.logger.info(f"𐄷 All positions already exist for {token_ticker} (using existing positions)")
                 return True  # Still return True - existing positions are valid
                 
         except Exception as e:

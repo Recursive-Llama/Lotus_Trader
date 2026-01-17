@@ -27,6 +27,7 @@ from supabase import create_client, Client  # type: ignore
 from statistics import median
 
 from src.intelligence.lowcap_portfolio_manager.spiral.persist import SpiralPersist
+from src.intelligence.lowcap_portfolio_manager.data.price_data_reader import PriceDataReader
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ class GeometryBuilder:
         self.lookback_days = int(os.getenv("GEOM_LOOKBACK_DAYS", "14"))
         self.generate_charts = generate_charts
         self.timeframe = timeframe
+        # PriceDataReader for universal data access
+        self.data_reader = PriceDataReader(self.sb)
 
     def _active_positions(self) -> List[Dict[str, Any]]:
         """Get positions for this timeframe (watchlist + active only)."""
@@ -64,37 +67,20 @@ class GeometryBuilder:
         return res.data or []
 
     def _fetch_bars(self, contract: str, chain: str, end: datetime, minutes: int = None) -> List[Dict[str, Any]]:
-        """Fetch OHLC bars for the specified timeframe."""
-        # If minutes is None, fetch all available data
-        if minutes is not None:
-            start = end - timedelta(minutes=minutes)
-            # Use OHLC data for the specified timeframe
-            res = (
-                self.sb.table("lowcap_price_data_ohlc")
-                .select("timestamp, high_usd, low_usd, close_usd, volume")
-                .eq("token_contract", contract)
-                .eq("chain", chain)
-                .eq("timeframe", self.timeframe)  # Use timeframe-specific data
-                .gte("timestamp", start.isoformat())
-                .lte("timestamp", end.isoformat())
-                .gt("close_usd", 0)  # Filter out zero-price bars (no trading)
-                .order("timestamp", desc=False)
-                .execute()
-            )
-        else:
-            # Fetch all available data
-            res = (
-                self.sb.table("lowcap_price_data_ohlc")
-                .select("timestamp, high_usd, low_usd, close_usd, volume")
-                .eq("token_contract", contract)
-                .eq("chain", chain)
-                .eq("timeframe", self.timeframe)  # Use timeframe-specific data
-                .lte("timestamp", end.isoformat())
-                .gt("close_usd", 0)  # Filter out zero-price bars (no trading)
-                .order("timestamp", desc=False)
-                .execute()
-            )
-        return res.data or []
+        """Fetch OHLC bars for the specified timeframe via PriceDataReader (venue-agnostic)."""
+        # PriceDataReader handles table routing and schema normalization
+        bars = self.data_reader.fetch_bars_for_geometry(
+            contract=contract,
+            chain=chain,
+            timeframe=self.timeframe,
+            end=end,
+            lookback_minutes=minutes
+        )
+        # Filter out zero-price bars (no trading) - PriceDataReader returns normalized format
+        return [
+            bar for bar in bars
+            if bar.get("close_usd", 0) > 0
+        ]
 
     def _get_swing_points_with_coordinates(self, timestamps: List[datetime], highs: List[float], lows: List[float], closes: List[float]) -> List[Dict[str, Any]]:
         """Get swing points with their coordinates (timestamps and prices)"""

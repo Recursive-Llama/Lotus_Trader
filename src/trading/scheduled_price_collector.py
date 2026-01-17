@@ -211,6 +211,11 @@ class ScheduledPriceCollector:
             for pos in all_positions:
                 token = pos.get('token_contract')
                 chain = pos.get('token_chain', '').lower()
+                
+                # Hyperliquid prices are collected via WebSocket, not DexScreener
+                if chain == 'hyperliquid':
+                    continue
+                    
                 if token and chain and self._should_collect_this_cycle(token, chain, interval, priority_1m):
                     tokens_to_collect.append({'token_contract': token, 'token_chain': chain})
             
@@ -549,13 +554,10 @@ class ScheduledPriceCollector:
             if is_native_token:
                 price_native = 1.0
                 # Keep the USD price as is - this is the actual price we want to store
-            
-            # If we got USDT pair for non-native tokens, convert to native price using current native/USD rate
-            if quote_symbol == 'USDT' and price_usd > 0 and not is_native_token:
-                native_usd_rate = self._get_native_usd_rate(chain)
-                if native_usd_rate > 0:
-                    price_native = price_usd / native_usd_rate
-                    logger.info(f"Converted USDT price to native for {chain}: ${price_usd:.6f} USD -> {price_native:.6f} native")
+            else:
+                # For non-native tokens, price_native is calculated from priceNative field
+                # (already set above from pair data, no conversion needed since we use USD prices)
+                pass
             
             # Get volume data from Dexscreener (multi-timeframe volumes)
             volume_data = pair.get('volume', {})
@@ -764,20 +766,35 @@ class ScheduledPriceCollector:
             return False
 
     async def _get_current_price_usd_from_db(self, token_contract: str, chain: str) -> Optional[float]:
-        """Get current USD price from database"""
+        """Get current USD price from database (supporting both Lowcap and Hyperliquid tables)"""
         try:
-            result = self.supabase_manager.client.table('lowcap_price_data_1m').select(
-                'price_usd'
-            ).eq('token_contract', token_contract).eq('chain', chain).order(
-                'timestamp', desc=True
-            ).limit(1).execute()
-            
-            if result.data and len(result.data) > 0:
-                return float(result.data[0]['price_usd'])
+            if chain == 'hyperliquid':
+                # Hyperliquid data is in a separate table (ingested via WS)
+                # Note: Hyperliquid table uses 'token' instead of 'token_contract', and 'close' instead of 'price_usd'
+                # We use the most recent 1m candle as "current price"
+                result = self.supabase_manager.client.table('hyperliquid_price_data_ohlc').select(
+                    'close'
+                ).eq('token', token_contract).eq('timeframe', '1m').order(
+                    'ts', desc=True
+                ).limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    return float(result.data[0]['close'])
+            else:
+                # Standard lowcap tokens (DexScreener)
+                result = self.supabase_manager.client.table('lowcap_price_data_1m').select(
+                    'price_usd'
+                ).eq('token_contract', token_contract).eq('chain', chain).order(
+                    'timestamp', desc=True
+                ).limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    return float(result.data[0]['price_usd'])
+                    
             return None
             
         except Exception as e:
-            logger.error(f"Error getting current USD price from database: {e}")
+            logger.error(f"Error getting current USD price from database for {token_contract} ({chain}): {e}")
             return None
 
     async def _get_native_usd_rate_async(self, chain: str) -> float:
@@ -814,16 +831,19 @@ class ScheduledPriceCollector:
 
     async def _update_all_wallet_balances(self):
         """
-        Update wallet balances for home chain (Solana) only.
+        Update wallet balances for home chain (Solana) and Hyperliquid.
         
-        All trading capital is on Solana USDC. Other chains (Base, Ethereum, BSC) are only
-        used for gas via Li.Fi swaps, so we don't need to track their balances.
+        - Solana: USDC balance (home chain capital)
+        - Hyperliquid: Margin balance (collateral for perpetuals)
         """
         try:
             home_chain = os.getenv("HOME_CHAIN", "solana").lower()
             
-            # Only update home chain (Solana) - this is where all USDC capital is
+            # Update home chain (Solana) - this is where all USDC capital is
             await self._update_wallet_balance_for_chain(home_chain)
+            
+            # Update Hyperliquid margin balance
+            await self._update_hyperliquid_balance()
                 
         except Exception as e:
             logger.error(f"Error updating wallet balances: {e}")
@@ -894,6 +914,55 @@ class ScheduledPriceCollector:
             
         except Exception as e:
             logger.error(f"Error updating {chain} wallet balance: {e}")
+    
+    async def _update_hyperliquid_balance(self):
+        """
+        Update Hyperliquid margin balance (USDC collateral).
+        
+        Hyperliquid uses margin/collateral separate from Solana USDC.
+        This balance is used for allocation calculations for Hyperliquid positions.
+        """
+        try:
+            # Use specific logger for Hyperliquid operations to route to correct log file
+            hl_logger = logging.getLogger("hyperliquid_balance")
+            
+            # Check if Hyperliquid is enabled
+            hl_enabled = os.getenv("HL_INGEST_ENABLED", "0")
+            if hl_enabled != "1":
+                hl_logger.debug(f"Skipping Hyperliquid balance update: HL_INGEST_ENABLED={hl_enabled}")
+                return
+            
+            # Import here to avoid circular dependencies
+            from src.intelligence.lowcap_portfolio_manager.pm.hyperliquid_executor import HyperliquidExecutor
+            
+            executor = HyperliquidExecutor()
+            hl_logger.debug("Fetching Hyperliquid margin balance...")
+            margin_balance = executor.get_margin_balance()
+            
+            if margin_balance is None:
+                hl_logger.warning("Could not get Hyperliquid margin balance (returned None)")
+                return
+            
+            # Get account address for wallet_address field
+            account_address = os.getenv("HL_ACCOUNT_ADDRESS", "")
+            
+            # Update wallet_balances table
+            updates = {
+                'chain': 'hyperliquid',
+                'balance': float(margin_balance),  # Required field: map margin to balance
+                'usdc_balance': float(margin_balance),
+                'balance_usd': float(margin_balance),
+                'wallet_address': account_address,
+                'last_updated': datetime.now(timezone.utc).isoformat()
+            }
+            
+            self.supabase_manager.client.table('wallet_balances').upsert(updates).execute()
+            logger.debug(f"Updated Hyperliquid margin balance: ${margin_balance:.2f}")
+            
+        except ImportError:
+            logger.debug("HyperliquidExecutor not available, skipping Hyperliquid balance update")
+        except Exception as e:
+            logger.warning(f"Error updating Hyperliquid balance: {e}")
 
 
 # Example usage and testing

@@ -83,38 +83,86 @@ class TelegramScanner:
             social_ingest_module: Social ingest module for processing messages
             check_interval: Check interval in seconds
         """
-        try:
-            # Load session and connect
-            if not os.path.exists(self.session_file):
-                logger.error(f"Session file not found: {self.session_file}")
-                logger.error("Please run telegram_auth_setup.py first")
-                return
-            
-            with open(self.session_file, 'r') as f:
-                session_string = f.read().strip()
-            
-            self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
-            await self.client.start()
-            
-            logger.info("🚀 Telegram monitoring started")
-            
-            # Main monitoring loop
-            while True:
+        from telethon.errors import SecurityError, RPCError, FloodWaitError
+        
+        retry_delay = 5
+        max_retry_delay = 300
+        
+        logger.info("🚀 Starting Telegram monitoring service...")
+        
+        while True:
+            try:
+                # Load session and connect
+                if not os.path.exists(self.session_file):
+                    logger.error(f"Session file not found: {self.session_file}")
+                    logger.error("Please run telegram_auth_setup.py first")
+                    # If no session file, wait a long time before checking again to avoid log spam
+                    await asyncio.sleep(60)
+                    continue
+                
+                with open(self.session_file, 'r') as f:
+                    session_string = f.read().strip()
+                
+                if not session_string:
+                    logger.error("Session file is empty")
+                    await asyncio.sleep(60)
+                    continue
+
+                self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
+                
                 try:
-                    await self._check_all_curators(social_ingest_module)
-                    await asyncio.sleep(check_interval)
-                except KeyboardInterrupt:
-                    logger.info("🛑 Monitoring stopped by user")
-                    break
+                    await self.client.start()
+                except SecurityError as e:
+                    logger.critical(f"Security error during connection: {e}")
+                    logger.critical("Check system clock synchronization! 'Server sent a very old message' usually means local clock is wrong.")
+                    await asyncio.sleep(60)
+                    continue
                 except Exception as e:
-                    logger.error(f"Error in monitoring loop: {e}")
-                    await asyncio.sleep(check_interval)
-                    
-        except Exception as e:
-            logger.error(f"Failed to start Telegram monitoring: {e}")
-        finally:
-            if self.client:
-                await self.client.disconnect()
+                    logger.error(f"Failed to connect: {e}")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, max_retry_delay)
+                    continue
+
+                logger.info("✅ Telegram client connected successfully")
+                retry_delay = 5  # Reset retry delay on successful connection
+                
+                # Main monitoring loop
+                while True:
+                    try:
+                        if not self.client.is_connected():
+                            logger.warning("Client disconnected, attempting to reconnect...")
+                            await self.client.connect()
+                            
+                        await self._check_all_curators(social_ingest_module)
+                        await asyncio.sleep(check_interval)
+                        
+                    except SecurityError as e:
+                        logger.error(f"Security error in loop (possible clock skew): {e}")
+                        # If we get a security error, breaks inner loop to force full client restart
+                        break
+                    except FloodWaitError as e:
+                        logger.warning(f"Flood wait error: waiting {e.seconds} seconds")
+                        await asyncio.sleep(e.seconds)
+                    except KeyboardInterrupt:
+                        logger.info("🛑 Monitoring stopped by user")
+                        return
+                    except Exception as e:
+                        logger.error(f"Error in monitoring loop: {e}")
+                        await asyncio.sleep(check_interval)
+            
+            except KeyboardInterrupt:
+                logger.info("🛑 Monitoring stopped by user")
+                break
+            except Exception as e:
+                logger.error(f"Critical error in monitor wrapper: {e}")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+            finally:
+                if self.client:
+                    try:
+                        await self.client.disconnect()
+                    except:
+                        pass
     
     async def _check_all_curators(self, social_ingest_module):
         """Check all Telegram curators for new messages"""

@@ -177,20 +177,27 @@ class GenericOHLCRollup:
         """
         Calculate coverage threshold based on collection interval.
         
-        Returns threshold as decimal (0.60, 0.45, 0.33, etc.)
-        - Interval 1: 60%
-        - Interval 2: 45%
+        Returns threshold as decimal (0.50, 0.40, 0.33, etc.)
+        - Interval 1: 50% (was 60%)
+        - Interval 2: 40% (was 45%)
         - Interval 3: 33%
-        - etc.
+        - Interval 4: 25%
+        - Interval 5+: 20% minimum
+        
+        Lower thresholds allow more tokens with less frequent collection,
+        since we're now trading on 15m timeframe (not 1m).
         """
         interval = self._get_collection_interval()
         if interval <= 1:
-            return 0.60  # 60% for every-minute collection
+            return 0.50  # 50% for every-minute collection
         elif interval == 2:
-            return 0.45  # 45% for every-2-minute collection
+            return 0.40  # 40% for every-2-minute collection
+        elif interval == 3:
+            return 0.33  # 33% for every-3-minute collection
+        elif interval == 4:
+            return 0.25  # 25% for every-4-minute collection
         else:
-            # Dynamic: slightly below (60 / interval) / 60 to give buffer
-            return max(0.20, (60 / interval - 2) / 60)
+            return 0.20  # 20% minimum for 5+ minute collection
 
     def _reset_gt_budget_if_needed(self):
         now = datetime.now(timezone.utc)

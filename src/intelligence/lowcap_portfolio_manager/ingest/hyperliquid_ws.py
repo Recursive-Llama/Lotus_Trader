@@ -162,9 +162,13 @@ class HyperliquidWSIngester:
                 "subscription": {"type": "trades", "coin": sym},
             }
             await ws.send(json.dumps(msg))
-            logger.info("Subscribed to trades for %s", sym)
             if self._debug and self._debug_seen < self._debug_limit:
-                logger.info("Subscribe payload: %s", msg)
+                logger.debug("Subscribe payload: %s", msg)
+
+        # Log summary instead of every symbol
+        example_list = ", ".join(symbols[:5])
+        suffix = "..." if len(symbols) > 5 else ""
+        logger.info("Subscribed to trades for %d symbols (%s%s)", len(symbols), example_list, suffix)
 
     async def _handle_message(self, raw: str | bytes) -> None:
         data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))

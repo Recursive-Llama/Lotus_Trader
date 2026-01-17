@@ -3,12 +3,16 @@
 Periodic job to update bars_count for all positions and check for dormant → watchlist transitions.
 
 Runs hourly to:
-1. Count actual bars in lowcap_price_data_ohlc for each position
+1. Count actual bars in the correct OHLC table for each position (based on chain)
 2. Update bars_count in lowcap_positions
 3. Auto-flip dormant → watchlist when bars_count >= 333 (minimum required)
 4. For 1m timeframe: only allow watchlist if NO higher timeframe (15m/1h/4h) has >= 333 bars
 
 This ensures positions transition correctly as data accumulates from scheduled jobs.
+
+Note: Hyperliquid positions use hyperliquid_price_data_ohlc table with different column names:
+- token (not token_contract)
+- ts (not timestamp)
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ from typing import Dict, Any, List
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
+
+from intelligence.lowcap_portfolio_manager.data.price_table_helper import get_price_table_name
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -36,14 +42,27 @@ def _check_higher_tf_ready(sb: Client, token_contract: str, chain: str, bars_cou
     for tf in HIGHER_TIMEFRAMES:
         key = (token_contract, chain, tf)
         if key not in bars_count_cache:
-            result = (
-                sb.table("lowcap_price_data_ohlc")
-                .select("timestamp", count="exact")
-                .eq("token_contract", token_contract)
-                .eq("chain", chain)
-                .eq("timeframe", tf)
-                .execute()
-            )
+            # Use correct table based on chain
+            table_name = get_price_table_name(chain)
+            if chain == "hyperliquid":
+                # hyperliquid_price_data_ohlc uses 'token' and 'ts' columns
+                result = (
+                    sb.table(table_name)
+                    .select("ts", count="exact")
+                    .eq("token", token_contract)
+                    .eq("timeframe", tf)
+                    .execute()
+                )
+            else:
+                # lowcap_price_data_ohlc uses 'token_contract' and 'timestamp' columns
+                result = (
+                    sb.table(table_name)
+                    .select("timestamp", count="exact")
+                    .eq("token_contract", token_contract)
+                    .eq("chain", chain)
+                    .eq("timeframe", tf)
+                    .execute()
+                )
             bars_count = result.count if hasattr(result, "count") else len(result.data) if result.data else 0
             bars_count_cache[key] = bars_count
         else:
@@ -104,15 +123,28 @@ def update_all_bars_counts() -> Dict[str, Any]:
             # Count actual bars in database for this token/chain/timeframe
             key = (token_contract, chain, timeframe)
             if key not in bars_count_cache:
-                # Count bars (use count='exact' for accurate count)
-                result = (
-                    sb.table("lowcap_price_data_ohlc")
-                    .select("timestamp", count="exact")
-                    .eq("token_contract", token_contract)
-                    .eq("chain", chain)
-                    .eq("timeframe", timeframe)
-                    .execute()
-                )
+                # Use correct table based on chain
+                table_name = get_price_table_name(chain)
+                
+                if chain == "hyperliquid":
+                    # hyperliquid_price_data_ohlc uses 'token' and 'ts' columns
+                    result = (
+                        sb.table(table_name)
+                        .select("ts", count="exact")
+                        .eq("token", token_contract)
+                        .eq("timeframe", timeframe)
+                        .execute()
+                    )
+                else:
+                    # lowcap_price_data_ohlc uses 'token_contract' and 'timestamp' columns
+                    result = (
+                        sb.table(table_name)
+                        .select("timestamp", count="exact")
+                        .eq("token_contract", token_contract)
+                        .eq("chain", chain)
+                        .eq("timeframe", timeframe)
+                        .execute()
+                    )
                 
                 bars_count = result.count if hasattr(result, "count") else len(result.data) if result.data else 0
                 bars_count_cache[key] = bars_count

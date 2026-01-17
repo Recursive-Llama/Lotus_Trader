@@ -223,25 +223,20 @@ class UptrendEngineV4:
 
     def _latest_close_1h(self, contract: str, chain: str) -> Dict[str, Any]:
         """Get latest close price (bar close for deterministic checks) - timeframe-specific."""
-        row = (
-            self.sb.table("lowcap_price_data_ohlc")
-            .select("timestamp, close_usd, low_usd")
-            .eq("token_contract", contract)
-            .eq("chain", chain)
-            .eq("timeframe", self.timeframe)
-            .order("timestamp", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-        if row:
-            r = row[0]
-            return {
-                "ts": str(r.get("timestamp")),
-                "close": float(r.get("close_usd") or 0.0),
-                "low": float(r.get("low_usd") or 0.0),
-            }
+        # Use PriceDataReader for chain-agnostic data access
+        if not hasattr(self, 'data_reader'):
+             # Lazy init if not present (though normally passed or init in __init__)
+             # Ideally should be in __init__, but for now let's use the one we can create
+             from src.intelligence.lowcap_portfolio_manager.data.price_data_reader import PriceDataReader
+             self.data_reader = PriceDataReader(self.sb)
+             
+        latest = self.data_reader.latest_close(contract, chain, self.timeframe)
+        if latest:
+             return {
+                 "ts": str(latest.get("ts")),
+                 "close": float(latest.get("close") or 0.0),
+                 "low": float(latest.get("low") or 0.0),
+             }
         return {"ts": None, "close": 0.0, "low": 0.0}
 
     def _get_atr(self, ta: Dict[str, Any]) -> float:
@@ -1684,6 +1679,116 @@ class UptrendEngineV4:
                         current_ts = last.get("ts") or _now_iso()
                         self._set_s3_start_ts(pid, features, current_ts)
                         
+                        # Compute S3 scores immediately (same as "Stay in S3" path)
+                        # This ensures positions have complete payloads right after transition
+                        s3_scores = self._compute_s3_scores(contract, chain, price, ema_vals, ta, features)
+                        
+                        # Ensure s3_scores is a dict (defensive check)
+                        if not isinstance(s3_scores, dict):
+                            logger.error("s3_scores is not a dict: %s (type: %s) for %s/%s", s3_scores, type(s3_scores), contract, chain)
+                            s3_scores = {"ox": 0.5, "dx": 0.5, "edx": 0.5, "diagnostics": {}}
+                        ox = s3_scores.get("ox", 0.0)
+                        dx = s3_scores.get("dx", 0.0)
+                        edx = s3_scores.get("edx", 0.0)
+                        
+                        # Compute emergency exit and reclaimed flags
+                        ema333_val = ema_vals.get("ema333", 0.0)
+                        emergency_exit = price < ema333_val
+                        prev_emergency_exit = bool(prev_payload.get("emergency_exit", False))
+                        reclaimed_ema333 = prev_emergency_exit and price >= ema333_val
+                        
+                        # Compute DX buy logic (simplified for transition - full logic in "Stay in S3")
+                        ema144_val = ema_vals.get("ema144", 0.0)
+                        price_in_discount_zone = price <= ema144_val if ema144_val > 0 else False
+                        ema_slopes = ta.get("ema_slopes") or {}
+                        ema250_slope = float(ema_slopes.get("ema250_slope", 0.0))
+                        ema333_slope = float(ema_slopes.get("ema333_slope", 0.0))
+                        slope_ok = (ema250_slope > 0.0) or (ema333_slope >= 0.0)
+                        ts_score = self._compute_ts(ta)
+                        sr_levels = self._read_sr_levels(features)
+                        atr_val = self._get_atr(ta)
+                        sr_boost = self._compute_sr_boost(price, ema333_val, atr_val, sr_levels)
+                        ts_with_boost = ts_score + sr_boost
+                        ts_ok = ts_with_boost >= Constants.TS_THRESHOLD
+                        edx_suppression = 0.0
+                        if edx >= 0.7:
+                            edx_suppression = 0.15
+                        elif edx >= 0.5:
+                            edx_suppression = (edx - 0.5) * 0.5
+                        dx_threshold_adjusted = Constants.DX_BUY_THRESHOLD + edx_suppression
+                        price_position_boost = 0.0
+                        if price_in_discount_zone and ema333_val > ema144_val and (ema333_val - ema144_val) > 0:
+                            band_width = ema333_val - ema144_val
+                            price_pos = (price - ema144_val) / band_width
+                            price_position_boost = (price_pos * 0.10) - ((1.0 - price_pos) * 0.05)
+                        dx_threshold_final = max(0.0, dx_threshold_adjusted - price_position_boost)
+                        dx_ok = dx >= dx_threshold_final
+                        dx_buy_ok = dx_ok and price_in_discount_zone and slope_ok and ts_ok and not emergency_exit
+                        
+                        # Compute trim flag: OX >= 0.65 AND price within 1×ATR of S/R level
+                        sr_halo = 1.0 * atr_val
+                        near_sr = False
+                        closest_sr_level = None
+                        closest_sr_distance = float('inf')
+                        if sr_levels and atr_val > 0:
+                            for level in sr_levels:
+                                level_price = float(level.get("price") or 0.0)
+                                if level_price > 0:
+                                    distance = abs(price - level_price)
+                                    if distance <= sr_halo:
+                                        near_sr = True
+                                    if distance < closest_sr_distance:
+                                        closest_sr_distance = distance
+                                        closest_sr_level = level_price
+                        trim_flag = (ox >= Constants.OX_SELL_THRESHOLD) and near_sr
+                        
+                        # Log trim check
+                        if trim_flag:
+                            logger.info("S3 TRIM TRIGGERED (transition): %s/%s (timeframe=%s, ox=%.4f, near_sr=%s, closest_sr=%.8f, distance=%.8f)", 
+                                       contract, chain, self.timeframe, ox, near_sr, closest_sr_level or 0.0, closest_sr_distance)
+                        
+                        # Build complete extra_data with scores and flags
+                        extra_data = {
+                            "trim_flag": trim_flag,
+                            "buy_flag": dx_buy_ok,
+                            "first_dip_buy_flag": False,  # Deprecated, but include for consistency
+                            "emergency_exit": emergency_exit,
+                            "reclaimed_ema333": reclaimed_ema333,
+                            "scores": {
+                                "ox": ox,
+                                "dx": dx,
+                                "edx": edx,
+                                "ts": ts_score,
+                                "ts_with_boost": ts_with_boost,
+                                "sr_boost": sr_boost,
+                            },
+                            "diagnostics": {
+                                **(s3_scores.get("diagnostics", {}) if isinstance(s3_scores.get("diagnostics", {}), dict) else {}),
+                                "s3_buy_check": {
+                                    "price": price,
+                                    "ema144": ema144_val,
+                                    "ema333": ema333_val,
+                                    "price_in_discount_zone": price_in_discount_zone,
+                                    "dx": dx,
+                                    "dx_threshold_base": Constants.DX_BUY_THRESHOLD,
+                                    "edx_suppression": edx_suppression,
+                                    "dx_threshold_adjusted": dx_threshold_adjusted,
+                                    "price_position_boost": price_position_boost,
+                                    "dx_threshold_final": dx_threshold_final,
+                                    "dx_ok": dx_ok,
+                                    "slope_ok": slope_ok,
+                                    "ema250_slope": ema250_slope,
+                                    "ema333_slope": ema333_slope,
+                                    "ts_ok": ts_ok,
+                                    "ts_score": ts_score,
+                                    "ts_with_boost": ts_with_boost,
+                                    "sr_boost": sr_boost,
+                                    "emergency_exit": emergency_exit,
+                                    "buy_flag": dx_buy_ok,
+                                },
+                            },
+                        }
+                        
                         payload = self._build_payload(
                             "S3",
                             contract,
@@ -1691,9 +1796,7 @@ class UptrendEngineV4:
                             price,
                             ema_vals,
                             features,
-                            {
-                                "diagnostics": {},  # S3 scores added below
-                            },
+                            extra_data,  # Now includes scores and flags!
                             prev_state=prev_state,
                         )
                         features["uptrend_engine_v4"] = payload
@@ -2043,7 +2146,7 @@ class UptrendEngineV4:
                                         "emergency_exit": emergency_exit,
                                         "buy_flag": dx_buy_ok,
                                     },
-                                    "first_dip_buy_check": first_dip_check.get("diagnostics", {}),
+                                    "first_dip_buy_check": {},
                                 },
                             },
                         

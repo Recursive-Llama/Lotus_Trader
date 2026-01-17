@@ -684,19 +684,23 @@ class TradingSystem:
         # 0.5. Start Hyperliquid WS early so we can verify it's working
         hl_ingester = None
         hl_task = None
+        hl_candle_ingester = None
+        hl_candle_task = None
+        
         if os.getenv("HL_INGEST_ENABLED", "0") == "1":
+            # Start majors WS (for regime drivers - BTC, ETH, etc.)
             try:
                 from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import HyperliquidWSIngester
                 
                 hl_ingester = HyperliquidWSIngester()
                 hl_task = asyncio.create_task(hl_ingester.run())
-                scheduler_logger.info("Hyperliquid WS ingester started (early)")
+                scheduler_logger.info("Hyperliquid WS ingester started (majors)")
                 
                 # Wait a few seconds for it to connect and receive first data (with glyph loading)
                 async def wait_for_hl():
                     await asyncio.sleep(5)
                 
-                await show_glyph_loading_async("⨳ Starting Hyperliquid WS...", wait_for_hl())
+                await show_glyph_loading_async("⨳ Starting Hyperliquid WS (majors)...", wait_for_hl())
                 
                 # Check if it's working
                 if bootstrap:
@@ -722,6 +726,23 @@ class TradingSystem:
             except Exception as e:
                 scheduler_logger.error(f"HL WS early start error: {e}", exc_info=True)
                 print("✗")
+            
+            # Start candle WS for trading positions (discovers symbols from positions table)
+            try:
+                from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_candle_ws import HyperliquidCandleWSIngester
+                
+                hl_candle_ingester = HyperliquidCandleWSIngester(discover_from_positions=True)
+                hl_candle_task = asyncio.create_task(hl_candle_ingester.run())
+                scheduler_logger.info("Hyperliquid Candle WS ingester started (trading positions)")
+                
+                async def wait_for_hl_candle():
+                    await asyncio.sleep(3)
+                
+                await show_glyph_loading_async("⨳ Starting Hyperliquid WS (positions)...", wait_for_hl_candle())
+                print("✓")
+            except Exception as e:
+                scheduler_logger.error(f"HL Candle WS start error: {e}", exc_info=True)
+                print(f"✗ HL Candle WS failed: {str(e)[:50]}")
         
         # 1. Seed Jobs (Individual error handling per job)
         print("   ⨳ Running Seed Jobs...")
@@ -760,9 +781,11 @@ class TradingSystem:
         # 2. Recurring Schedule
         tasks = []
         
-        # Add Hyperliquid WS task if it was started early
+        # Add Hyperliquid WS tasks if they were started early
         if hl_task:
             tasks.append(hl_task)
+        if hl_candle_task:
+            tasks.append(hl_candle_task)
         
         # 1 Minute Jobs
         tasks.append(asyncio.create_task(self._schedule_at_interval(60, lambda: GenericOHLCRollup().rollup_timeframe(DataSource.LOWCAPS, Timeframe.M1), "OHLC 1m")))
@@ -996,8 +1019,37 @@ class TradingSystem:
             self.tasks.append(strand_task)
             logger.info("Strand monitor started")
             
-            # Keep alive
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+            # Heartbeat task to detect silent hangs
+            async def heartbeat():
+                start_time = datetime.now(timezone.utc)
+                while self.running:
+                    await asyncio.sleep(300)  # 5 minutes
+                    uptime = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
+                    active_tasks = sum(1 for t in self.tasks if not t.done())
+                    scheduler_logger.info(
+                        f"HEARTBEAT: uptime={uptime:.1f}m | active_tasks={active_tasks}/{len(self.tasks)} | "
+                        f"time={datetime.now(timezone.utc).isoformat()}"
+                    )
+            
+            heartbeat_task = asyncio.create_task(heartbeat())
+            self.tasks.append(heartbeat_task)
+            logger.info("Heartbeat task started (5m interval)")
+            
+            # Keep alive with improved task monitoring
+            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+            
+            # Log task outcomes
+            for i, result in enumerate(results):
+                task_name = getattr(self.tasks[i], 'get_name', lambda: f'task_{i}')()
+                if isinstance(result, Exception):
+                    logger.error(f"Task {task_name} failed with exception: {result}")
+                elif result is not None:
+                    logger.info(f"Task {task_name} completed with result: {result}")
+            
+            logger.critical(
+                "SYSTEM HALT: All tasks completed - this should not happen in normal operation. "
+                "Check logs above for task failures."
+            )
             
         except asyncio.CancelledError:
             print("\n∅ System shutting down...")

@@ -78,6 +78,8 @@ def determine_motif(action_type: str, action_context: Dict[str, Any], uptrend_si
     # Add motifs
     if action_type_lower == "add":
         # Check for specific add triggers
+        if action_context.get("is_dx_buy"):
+            return "dx"
         if uptrend_signals.get("exhaustion"):
             return "exhaustion_add"  # Adding despite exhaustion (rare)
         return "add"
@@ -161,9 +163,86 @@ def generate_canonical_pattern_key(
     
     # Build canonical pattern key
     pattern_key_core = f"{family}.{state}.{motif}"
-    pattern_key_full = f"module={module}|pattern_key={pattern_key_core}"
+    pattern_key_full = f"module=pm|pattern_key={pattern_key_core}"
     
     return pattern_key_full, action_category
+
+
+def build_unified_scope(
+    position: Dict[str, Any],
+    entry_context: Optional[Dict[str, Any]] = None,
+    regime_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Build canonical 15-dimension scope for Learning System v2.
+    
+    Fields:
+      1. book_id (Asset class/venue) - replaces market_family
+      2. timeframe
+      3. chain
+      4. ticker
+      5. mcap_bucket
+      6. vol_bucket
+      7. age_bucket
+      8. curator
+      9. intent
+      10. bucket_leader
+      11. bucket_rank_position
+      12. opp_meso_bin
+      13. conf_meso_bin
+      14. riskoff_meso_bin
+      15. bucket_rank_meso_bin
+    
+    Args:
+        position: Position dict (must contain book_id, timeframe, chain, ticker)
+        entry_context: Entry context dict (buckets, intent, regimes)
+        regime_context: Regime context dict (bucket_rank)
+        
+    Returns:
+        Scope dict with non-None values
+    """
+    entry_context = entry_context or position.get("entry_context") or {}
+    bucket_rank = (regime_context or {}).get("bucket_rank", [])
+    mcap_bucket = entry_context.get("mcap_bucket")
+    
+    # Bucket rank processing
+    bucket_leader = None
+    bucket_rank_pos = None
+    if bucket_rank:
+        bucket_leader = bucket_rank[0]
+        if mcap_bucket and mcap_bucket in bucket_rank:
+            bucket_rank_pos = bucket_rank.index(mcap_bucket) + 1  # 1-indexed
+    
+    scope = {
+        # Primary identifier
+        "book_id": position.get("book_id") or entry_context.get("book_id"),
+        
+        # Token dims
+        "timeframe": position.get("timeframe"),
+        "chain": position.get("token_chain"),
+        "ticker": position.get("token_ticker"),
+        
+        # Token characteristics  
+        "mcap_bucket": mcap_bucket,
+        "vol_bucket": entry_context.get("vol_bucket"),
+        "age_bucket": entry_context.get("age_bucket"),
+        
+        # Signal dims
+        "curator": entry_context.get("curator"),
+        "intent": entry_context.get("intent"),
+        
+        # Bucket rotation
+        "bucket_leader": bucket_leader,
+        "bucket_rank_position": bucket_rank_pos,
+        
+        # 4 Regime meso bins
+        "opp_meso_bin": entry_context.get("opp_meso_bin"),
+        "conf_meso_bin": entry_context.get("conf_meso_bin"),
+        "riskoff_meso_bin": entry_context.get("riskoff_meso_bin"),
+        "bucket_rank_meso_bin": entry_context.get("bucket_rank_meso_bin"),
+    }
+    
+    return {k: v for k, v in scope.items() if v is not None}
 
 
 def extract_scope_from_context(
@@ -176,78 +255,27 @@ def extract_scope_from_context(
     book_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Extract scope dimensions from action context and regime context.
-    
-    Args:
-        action_context: Action context dict
-        regime_context: Regime context from _get_regime_context()
-        position_bucket: Token's cap bucket (e.g., "micro")
-        bucket_rank: Bucket rank list (e.g., ["micro", "nano", "mid", ...])
-    
-    Returns:
-        Scope dict with all 10 dimensions
+    DEPRECATED: Use build_unified_scope instead.
+    Kept for backward compatibility during migration.
     """
-    # Bucket context
-    bucket_leader = None
-    bucket_rank_position = None
-    if bucket_rank and len(bucket_rank) > 0:
-        bucket_leader = bucket_rank[0]
-        if position_bucket and position_bucket in bucket_rank:
-            bucket_rank_position = bucket_rank.index(position_bucket) + 1  # 1-indexed
-    
-    # Market/token dims
-    market_family = action_context.get("market_family") or "lowcaps"
-    bucket = position_bucket or action_context.get("bucket") or "unknown"
-    timeframe = action_context.get("timeframe") or "1h"
-    
-    # Behavioral dims (A_mode and E_mode from action_context or derived from A/E values)
-    A_mode = action_context.get("A_mode")
-    E_mode = action_context.get("E_mode")
-    
-    # If not provided, derive from A/E values if available
-    if not A_mode and "a_final" in action_context:
-        a_final = float(action_context.get("a_final", 0.5))
-        if a_final < 0.33:
-            A_mode = "patient"
-        elif a_final < 0.67:
-            A_mode = "normal"
-        else:
-            A_mode = "aggressive"
-    
-    if not E_mode and "e_final" in action_context:
-        e_final = float(action_context.get("e_final", 0.5))
-        if e_final < 0.33:
-            E_mode = "patient"
-        elif e_final < 0.67:
-            E_mode = "normal"
-        else:
-            E_mode = "aggressive"
-    
-    # Build scope dict (no legacy phase fields; regime states provided separately)
-    scope = {
-        "bucket_leader": bucket_leader,
-        "bucket_rank_position": bucket_rank_position,
-        "market_family": market_family,
-        "bucket": bucket,
-        "timeframe": timeframe,
-        "A_mode": A_mode or "unknown",
-        "E_mode": E_mode or "unknown",
+    # Best effort reconstruction of position/entry_context from loose args
+    position = {
+        "book_id": book_id or action_context.get("book_id"),
+        "timeframe": action_context.get("timeframe"),
+        "token_chain": chain or action_context.get("chain"),
+        "token_ticker": action_context.get("ticker"), 
     }
-
-    # Add chain/book if provided
-    if chain:
-        scope["chain"] = chain
-    if book_id:
-        scope["book_id"] = book_id
-
-    # Add regime driver S-states (btc/alt/bucket/btcd/usdt.d per macro/meso/micro)
-    if regime_states:
-        scope.update({k: v for k, v in regime_states.items() if v is not None})
     
-    # Remove None values
-    scope = {k: v for k, v in scope.items() if v is not None}
+    entry_context = {
+        "mcap_bucket": position_bucket or action_context.get("bucket"),
+        "opp_meso_bin": (regime_states or {}).get("opp_meso_bin"),
+        "conf_meso_bin": (regime_states or {}).get("conf_meso_bin"),
+        "riskoff_meso_bin": (regime_states or {}).get("riskoff_meso_bin"),
+        "bucket_rank_meso_bin": (regime_states or {}).get("bucket_rank_meso_bin"),
+    }
     
-    return scope
+    # Pass regex_context explicitly to capture bucket_rank
+    return build_unified_scope(position, entry_context, regime_context)
 
 
 def extract_controls_from_action(
@@ -305,4 +333,3 @@ def extract_controls_from_action(
         "signals": signals,
         "applied_knobs": knobs
     }
-

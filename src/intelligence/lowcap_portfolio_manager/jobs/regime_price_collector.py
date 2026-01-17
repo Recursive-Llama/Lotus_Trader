@@ -40,6 +40,8 @@ MAJOR_SYMBOLS = {
 ALT_COMPONENTS = ["SOL", "ETH", "BNB", "HYPE"]  # Components for ALT composite
 # Note: HYPE is not available on Binance, so it can only be backfilled from Hyperliquid WS
 # If HYPE data is missing, ALT composite will use SOL/ETH/BNB only
+MAJORS = ["BTC", "SOL", "ETH", "BNB", "HYPE"]  # Symbols that go to majors_price_data_ohlc
+REGIME_DRIVERS = ["BTC"]  # Symbols that go to regime_price_data_ohlc
 
 # Market cap bucket thresholds (USD)
 BUCKET_THRESHOLDS = {
@@ -147,17 +149,16 @@ class RegimePriceCollector:
         logger.info(f"Regime collection complete: {len(results['drivers_collected'])} drivers")
         return results
     
-    def backfill_majors_from_binance(
+    def backfill_majors_from_hyperliquid(
         self, 
         days: int = 90,
         timeframes: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Backfill historical majors data from Binance API.
+        Backfill historical majors data from Hyperliquid candleSnapshot API.
         
-        Note: Hyperliquid WS only provides real-time data, so we use Binance for historical backfill.
-        This is fine - ALT composite uses the same data source (majors_price_data_ohlc) regardless
-        of whether it came from Binance backfill or Hyperliquid WS.
+        Uses Hyperliquid's candleSnapshot endpoint for more accurate historical data
+        (same venue as trading). Falls back to Binance only if Hyperliquid fails.
         
         Args:
             days: Number of days to backfill
@@ -169,7 +170,7 @@ class RegimePriceCollector:
         if timeframes is None:
             timeframes = REGIME_TIMEFRAMES
             
-        logger.info(f"Backfilling {days} days of majors from Binance")
+        logger.info(f"Backfilling {days} days of majors from Hyperliquid")
         results = {
             "days": days,
             "symbols": [],
@@ -177,22 +178,47 @@ class RegimePriceCollector:
             "errors": [],
         }
         
-        # Write BTC to regime_price_data_ohlc, SOL/ETH/BNB to majors_price_data_ohlc
+        # Map Hyperliquid intervals (regime timeframes use same names)
+        interval_map = {"1m": "1m", "1h": "1h", "1d": "1d"}
+        
+        # Backfill majors: BTC, SOL, ETH, BNB, HYPE
         # Use uppercase symbols to match Hyperliquid naming convention
-        for symbol_key, binance_symbol in MAJOR_SYMBOLS.items():
+        for symbol_key in ["BTC", "SOL", "ETH", "BNB", "HYPE"]:
+            if symbol_key not in ALT_COMPONENTS and symbol_key != "BTC":
+                continue  # Skip if not in ALT components (HYPE is included)
+                
             for tf in timeframes:
                 try:
-                    bars = self._fetch_binance_klines(binance_symbol, tf, days)
-                    if symbol_key == "BTC":
-                        # Write BTC to regime_price_data_ohlc (it's a regime driver)
-                        self._write_major_bars(symbol_key, tf, bars)
-                        results["bars_written"] += len(bars)
-                        logger.info(f"Backfilled {len(bars)} BTC bars for {tf}")
+                    interval = interval_map.get(tf, tf)
+                    if not interval:
+                        logger.warning(f"Skipping {symbol_key}/{tf}: unsupported interval")
+                        continue
+                    
+                    # Backfill from Hyperliquid
+                    from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_backfill import backfill_from_hyperliquid
+                    candles_written = backfill_from_hyperliquid(
+                        self.sb,
+                        coin=symbol_key,
+                        interval=interval,
+                        days=days
+                    )
+                    
+                    if candles_written == 0:
+                        logger.warning(f"No candles backfilled for {symbol_key}/{tf} from Hyperliquid, trying Binance fallback")
+                        # Fallback to Binance for non-BTC symbols (if available)
+                        if symbol_key != "BTC" and symbol_key in MAJOR_SYMBOLS:
+                            binance_symbol = MAJOR_SYMBOLS[symbol_key]
+                            bars = self._fetch_binance_klines(binance_symbol, tf, days)
+                            self._write_majors_ohlc(symbol_key, tf, bars)
+                            candles_written = len(bars)
+                            logger.info(f"Backfilled {len(bars)} {symbol_key} bars from Binance fallback for {tf}")
                     else:
-                        # Write SOL/ETH/BNB to majors_price_data_ohlc (for ALT composite)
-                        # Use uppercase symbol to match Hyperliquid naming (SOL, ETH, BNB)
-                        self._write_majors_ohlc(symbol_key, tf, bars)
-                        logger.info(f"Backfilled {len(bars)} {symbol_key} bars to majors_price_data_ohlc for {tf}")
+                        # Transform Hyperliquid candles to appropriate tables
+                        # Read from hyperliquid_price_data_ohlc and write to majors/regime
+                        self._sync_hyperliquid_to_majors_regime(symbol_key, tf, days)
+                        results["bars_written"] += candles_written
+                        logger.info(f"Backfilled {candles_written} {symbol_key} bars from Hyperliquid for {tf}")
+                        
                 except Exception as e:
                     logger.error(f"Failed to backfill {symbol_key}/{tf}: {e}", exc_info=True)
                     results["errors"].append(f"{symbol_key}/{tf}: {e}")
@@ -209,6 +235,108 @@ class RegimePriceCollector:
         
         logger.info(f"Backfill complete: {results['bars_written']} bars written")
         return results
+    
+    def _sync_hyperliquid_to_majors_regime(self, symbol: str, timeframe: str, days: int) -> None:
+        """
+        Sync candles from hyperliquid_price_data_ohlc to majors_price_data_ohlc and regime_price_data_ohlc.
+        
+        This is needed because backfill_from_hyperliquid writes to hyperliquid_price_data_ohlc,
+        but we also need the data in majors_price_data_ohlc (for ALT composite) and
+        regime_price_data_ohlc (for BTC regime driver).
+        """
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(days=days)
+        
+        # Read from hyperliquid_price_data_ohlc
+        result = (
+            self.sb.table("hyperliquid_price_data_ohlc")
+            .select("*")
+            .eq("token", symbol)
+            .eq("timeframe", timeframe)
+            .gte("ts", start_time.isoformat())
+            .order("ts", desc=False)
+            .execute()
+        )
+        
+        if not result.data:
+            return
+        
+        # Transform to majors_price_data_ohlc format (for all majors)
+        if symbol in MAJORS:
+            majors_rows = []
+            for row in result.data:
+                majors_rows.append({
+                    "token_contract": symbol,
+                    "chain": "hyperliquid",
+                    "timeframe": timeframe,
+                    "timestamp": row["ts"],
+                    "open_usd": float(row["open"]),
+                    "high_usd": float(row["high"]),
+                    "low_usd": float(row["low"]),
+                    "close_usd": float(row["close"]),
+                    "open_native": 0.0,
+                    "high_native": 0.0,
+                    "low_native": 0.0,
+                    "close_native": 0.0,
+                    "volume": float(row["volume"]),
+                    "source": "hyperliquid",
+                })
+            
+            # Batch upsert to majors_price_data_ohlc
+            batch_size = 500
+            for i in range(0, len(majors_rows), batch_size):
+                batch = majors_rows[i:i + batch_size]
+                try:
+                    self.sb.table("majors_price_data_ohlc").upsert(
+                        batch,
+                        on_conflict="token_contract,chain,timeframe,timestamp"
+                    ).execute()
+                except Exception as e:
+                    logger.error(f"Failed to sync {symbol} to majors_price_data_ohlc: {e}")
+        
+        # Transform to regime_price_data_ohlc format (for BTC only)
+        if symbol in REGIME_DRIVERS:
+            regime_rows = []
+            for row in result.data:
+                regime_rows.append({
+                    "driver": symbol,
+                    "timeframe": timeframe,
+                    "timestamp": row["ts"],
+                    "book_id": self.book_id,
+                    "open_usd": float(row["open"]),
+                    "high_usd": float(row["high"]),
+                    "low_usd": float(row["low"]),
+                    "close_usd": float(row["close"]),
+                    "volume": float(row["volume"]),
+                    "source": "hyperliquid",
+                })
+            
+            # Batch upsert to regime_price_data_ohlc
+            batch_size = 500
+            for i in range(0, len(regime_rows), batch_size):
+                batch = regime_rows[i:i + batch_size]
+                try:
+                    self.sb.table("regime_price_data_ohlc").upsert(
+                        batch,
+                        on_conflict="driver,book_id,timeframe,timestamp"
+                    ).execute()
+                except Exception as e:
+                    logger.error(f"Failed to sync {symbol} to regime_price_data_ohlc: {e}")
+    
+    # Keep old method name for backward compatibility (deprecated)
+    def backfill_majors_from_binance(
+        self, 
+        days: int = 90,
+        timeframes: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Deprecated: Use backfill_majors_from_hyperliquid instead.
+        
+        This method is kept for backward compatibility but now calls
+        the Hyperliquid backfill method.
+        """
+        logger.warning("backfill_majors_from_binance is deprecated, using Hyperliquid backfill instead")
+        return self.backfill_majors_from_hyperliquid(days, timeframes)
     
     def collect_current_dominance(self) -> Tuple[float, float]:
         """
@@ -768,13 +896,15 @@ class RegimePriceCollector:
         bucket_start: datetime
     ) -> Optional[Dict]:
         """Get OHLC bar for a token"""
+        # Add 5-minute lookback to account for data latency (1-2 min behind)
+        lookback_start = bucket_start - timedelta(minutes=5)
         result = (
             self.sb.table("lowcap_price_data_ohlc")
             .select("*")
             .eq("token_contract", token_contract)
             .eq("chain", chain)
             .eq("timeframe", timeframe)
-            .gte("timestamp", bucket_start.isoformat())
+            .gte("timestamp", lookback_start.isoformat())
             .order("timestamp", desc=True)
             .limit(1)
             .execute()

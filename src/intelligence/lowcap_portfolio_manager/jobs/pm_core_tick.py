@@ -29,7 +29,8 @@ from src.intelligence.lowcap_portfolio_manager.pm.exposure import ExposureLookup
 from src.intelligence.lowcap_portfolio_manager.regime.bucket_context import fetch_bucket_phase_snapshot
 from src.intelligence.lowcap_portfolio_manager.pm.pattern_keys_v5 import (
     generate_canonical_pattern_key,
-    extract_scope_from_context,
+    build_unified_scope,
+    map_action_type_to_category,
     extract_controls_from_action
 )
 from src.intelligence.lowcap_portfolio_manager.jobs.uptrend_engine_v4 import Constants
@@ -38,6 +39,7 @@ from src.intelligence.lowcap_portfolio_manager.pm.bucketing_helpers import (
     classify_outcome, classify_hold_time
 )
 from src.intelligence.lowcap_portfolio_manager.jobs.regime_ae_calculator import BUCKET_DRIVERS
+from src.intelligence.lowcap_portfolio_manager.learning.trajectory_classifier import record_position_trajectory
 from src.intelligence.lowcap_portfolio_manager.pm.episode_blocking import (
     record_attempt_failure,
     record_episode_success,
@@ -1125,15 +1127,29 @@ class PMCoreTick:
             action_category = None
 
         bucket_rank = (regime_context or {}).get("bucket_rank", [])
+        
+        # Build entry_context for scope with available data
+        # Merge position.entry_context with explicit overrides
+        pos_entry_ctx = position.get("entry_context") or {}
+        scope_entry_context = {
+            "mcap_bucket": token_bucket or pos_entry_ctx.get("mcap_bucket"),
+            "vol_bucket": pos_entry_ctx.get("vol_bucket"),
+            "age_bucket": pos_entry_ctx.get("age_bucket"),
+            "curator": pos_entry_ctx.get("curator"),
+            "intent": pos_entry_ctx.get("intent"),
+            "book_id": position.get("book_id") or pos_entry_ctx.get("book_id"),
+            # Meso bins from position's entry_context
+            "opp_meso_bin": pos_entry_ctx.get("opp_meso_bin"),
+            "conf_meso_bin": pos_entry_ctx.get("conf_meso_bin"),
+            "riskoff_meso_bin": pos_entry_ctx.get("riskoff_meso_bin"),
+            "bucket_rank_meso_bin": pos_entry_ctx.get("bucket_rank_meso_bin"),
+        }
+        
         try:
-            scope = extract_scope_from_context(
-                action_context=action_context,
+            scope = build_unified_scope(
+                position=position,
+                entry_context=scope_entry_context,
                 regime_context=regime_context or {},
-                position_bucket=token_bucket,
-                bucket_rank=bucket_rank,
-                regime_states=regime_states,
-                chain=position.get("token_chain"),
-                book_id=position.get("book_id") or (position.get("entry_context") or {}).get("book_id"),
             )
         except Exception:
             scope = {}
@@ -2324,33 +2340,64 @@ class PMCoreTick:
         # Formula: (total_allocation_pct * wallet_balance) - (total_allocation_usd - total_extracted_usd)
         # NOTE: Always use Solana USDC balance (home chain) - all capital is centralized there
         total_allocation_pct = float(position.get("total_allocation_pct") or 0.0)
+        
+        # Note: Hyperliquid positions now have allocation set at discovery time
+        # (in hyperliquid_market_discovery.py), so no fallback is needed here.
+        
         if total_allocation_pct > 0:
-            # Get Solana USDC balance (home chain - all capital is here)
+            # Get wallet balance based on position chain
+            # Hyperliquid positions use Hyperliquid margin balance
+            # Solana positions use Solana USDC balance
+            token_chain = position.get("token_chain", "").lower()
             home_chain = os.getenv("HOME_CHAIN", "solana").lower()
-            try:
-                wallet_result = (
-                    self.sb.table("wallet_balances")
-                    .select("usdc_balance,balance_usd")
-                    .eq("chain", home_chain)
-                    .limit(1)
-                    .execute()
-                )
-                if wallet_result.data:
-                    row = wallet_result.data[0]
-                    wallet_balance = float(row.get("usdc_balance") or row.get("balance_usd") or 0.0)
-                else:
+            
+            if token_chain == "hyperliquid":
+                # Get Hyperliquid margin balance (collateral for perpetuals)
+                try:
+                    wallet_result = (
+                        self.sb.table("wallet_balances")
+                        .select("usdc_balance,balance_usd")
+                        .eq("chain", "hyperliquid")
+                        .limit(1)
+                        .execute()
+                    )
+                    if wallet_result.data:
+                        row = wallet_result.data[0]
+                        wallet_balance = float(row.get("usdc_balance") or row.get("balance_usd") or 0.0)
+                    else:
+                        wallet_balance = 0.0
+                        logger.warning("No wallet_balances row found for hyperliquid, using 0.0")
+                except Exception as e:
                     wallet_balance = 0.0
-                    logger.warning(f"No wallet_balances row found for home chain={home_chain}, using 0.0")
-            except Exception as e:
-                wallet_balance = 0.0
-                logger.warning(f"Error getting wallet balance for home chain {home_chain}: {e}")
+                    logger.warning(f"Error getting Hyperliquid balance: {e}")
+                balance_chain = "hyperliquid"
+            else:
+                # Get Solana USDC balance (home chain - all capital is here)
+                try:
+                    wallet_result = (
+                        self.sb.table("wallet_balances")
+                        .select("usdc_balance,balance_usd")
+                        .eq("chain", home_chain)
+                        .limit(1)
+                        .execute()
+                    )
+                    if wallet_result.data:
+                        row = wallet_result.data[0]
+                        wallet_balance = float(row.get("usdc_balance") or row.get("balance_usd") or 0.0)
+                    else:
+                        wallet_balance = 0.0
+                        logger.warning(f"No wallet_balances row found for home chain={home_chain}, using 0.0")
+                except Exception as e:
+                    wallet_balance = 0.0
+                    logger.warning(f"Error getting wallet balance for home chain {home_chain}: {e}")
+                balance_chain = home_chain
             
             # Calculate max allocation and net deployed
             max_allocation_usd = wallet_balance * (total_allocation_pct / 100.0)
             net_deployed_usd = total_allocation_usd - total_extracted_usd
             usd_alloc_remaining = max_allocation_usd - net_deployed_usd
             
-            logger.debug(f"usd_alloc_remaining calc (home_chain={home_chain}): wallet_balance=${wallet_balance:.2f}, total_allocation_pct={total_allocation_pct}%, max_allocation_usd=${max_allocation_usd:.2f}, net_deployed_usd=${net_deployed_usd:.2f}, usd_alloc_remaining=${usd_alloc_remaining:.2f}")
+            logger.debug(f"usd_alloc_remaining calc (chain={balance_chain}): wallet_balance=${wallet_balance:.2f}, total_allocation_pct={total_allocation_pct}%, max_allocation_usd=${max_allocation_usd:.2f}, net_deployed_usd=${net_deployed_usd:.2f}, usd_alloc_remaining=${usd_alloc_remaining:.2f}")
             
             updates["usd_alloc_remaining"] = max(0.0, usd_alloc_remaining)  # Can't be negative
         else:
@@ -2914,7 +2961,30 @@ class PMCoreTick:
         if current_pos.get("status") == "watchlist":
             return False
         
-        # If no trade_id, nothing to close
+        # Learning System v2: Handle shadow position closure
+        if current_pos.get("status") == "shadow":
+            # Shadow position reached S0 - record trajectory and reset to watchlist
+            try:
+                # Record trajectory for learning (Phase 2)
+                record_position_trajectory(
+                    sb_client=self.sb,
+                    position=position,
+                    is_shadow=True,
+                )
+                
+                # Reset to watchlist
+                self.sb.table("lowcap_positions").update({
+                    "status": "watchlist",
+                }).eq("id", position_id).execute()
+                logger.info(
+                    "SHADOW CLOSURE: Trajectory recorded and reset to watchlist | position_id=%s",
+                    position_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to close shadow position: {e}")
+            return True  # Considered "closed" for lifecycle purposes
+        
+        # If no trade_id, nothing to close (active positions have trade_id)
         if not current_pos.get("current_trade_id"):
             return False
         
@@ -3250,6 +3320,17 @@ class PMCoreTick:
             
             # Update position: save completed_trades, wipe trade data and PnL fields (ready for next trade)
             # This happens AFTER buyback (buyback needs PnL data)
+            
+            # Learning System v2: Record trajectory before wiping PnL data
+            try:
+                record_position_trajectory(
+                    sb_client=self.sb,
+                    position=pos_details,  # Use pos_details which has full position data
+                    is_shadow=False,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record active position trajectory: {e}")
+            
             self.sb.table("lowcap_positions").update({
                 "completed_trades": completed_trades,
                 "status": "watchlist",
@@ -3379,6 +3460,144 @@ class PMCoreTick:
                 logging_meta["last_no_position_trim_ts"] = now.isoformat()
                 logging_meta_updated = True
             
+            # Learning System v2: Handle shadow_entry action
+            if decision_type == "shadow_entry":
+                reasons = act.get("reasons") or {}
+                entry_event = reasons.get("entry_event", "S2.entry")
+                blocked_by = reasons.get("blocked_by", [])
+                gate_margins = reasons.get("gate_margins", {})
+                
+                # Update position to shadow status
+                shadow_updates = {
+                    "status": "shadow",
+                    "entry_event": entry_event,
+                }
+                # Store gate margins and blocked_by in features for learning (backup)
+                features = position.get("features") or {}
+                features["shadow_entry_data"] = {
+                    "blocked_by": blocked_by,
+                    "gate_margins": gate_margins,
+                    "entry_event": entry_event,
+                    "decision_time": now.isoformat(),
+                }
+                shadow_updates["features"] = features
+                
+                try:
+                    self.sb.table("lowcap_positions").update(shadow_updates).eq("id", position_id).execute()
+                    logger.info(
+                        "SHADOW POSITION: Set status='shadow' | %s/%s tf=%s | entry_event=%s blocked_by=%s",
+                        position.get("token_ticker"), position.get("token_chain"), 
+                        position.get("timeframe"), entry_event, blocked_by
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update shadow position: {e}")
+                
+                # Build unified scope for shadow position
+                pos_entry_ctx = position.get("entry_context") or {}
+                shadow_entry_context = {
+                    "mcap_bucket": pos_entry_ctx.get("mcap_bucket"),
+                    "vol_bucket": pos_entry_ctx.get("vol_bucket"),
+                    "age_bucket": pos_entry_ctx.get("age_bucket"),
+                    "curator": pos_entry_ctx.get("curator"),
+                    "intent": pos_entry_ctx.get("intent"),
+                    "book_id": position.get("book_id") or pos_entry_ctx.get("book_id"),
+                    "opp_meso_bin": pos_entry_ctx.get("opp_meso_bin"),
+                    "conf_meso_bin": pos_entry_ctx.get("conf_meso_bin"),
+                    "riskoff_meso_bin": pos_entry_ctx.get("riskoff_meso_bin"),
+                    "bucket_rank_meso_bin": pos_entry_ctx.get("bucket_rank_meso_bin"),
+                }
+                try:
+                    shadow_scope = build_unified_scope(
+                        position=position,
+                        entry_context=shadow_entry_context,
+                        regime_context=regime_context or {}
+                    )
+                except Exception:
+                    shadow_scope = {}
+
+                # Build shadow entry strand (same structure as active entries for symmetry)
+                shadow_content = {
+                    "decision_type": "shadow_entry",
+                    "entry_event": entry_event,
+                    "blocked_by": blocked_by,
+                    "gate_margins": gate_margins,
+                    "token_contract": position.get("token_contract"),
+                    "token_chain": position.get("token_chain"),
+                    "token_ticker": position.get("token_ticker"),
+                    "scope": shadow_scope,
+                    "a_value": act.get("a_value", 0.5),
+                    "e_value": act.get("e_value", 0.5),
+                }
+                
+                shadow_strand = {
+                    "id": f"pm_action_{position_id}_shadow_entry_{int(now.timestamp() * 1000)}",
+                    "module": "pm",
+                    "kind": "pm_action",
+                    "symbol": position.get("token_ticker"),
+                    "timeframe": position.get("timeframe"),
+                    "position_id": position_id,
+                    "trade_id": None,  # No trade for shadow
+                    "content": shadow_content,
+                    "regime_context": regime_context or {},
+                    "tags": ["pm_action", "shadow_entry", "learning"],
+                    "target_agent": "learning_system",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }
+                rows.append(shadow_strand)
+                
+                # Continue to next action (no execution needed for shadow)
+                continue
+            
+            # Learning System v2: Shadow→Active conversion
+            # If executing an entry action and a shadow exists for this token/tf, close the shadow
+            if decision_type in ("entry", "add"):
+                # Learning System v2: Store near_miss_gates/gate_margins for ACTIVE entries
+                if decision_type == "entry":
+                    reasons = act.get("reasons") or {}
+                    if "gate_margins" in reasons:
+                        features = position.get("features") or {}
+                        features["gate_margins"] = reasons.get("gate_margins")
+                        features["near_miss_gates"] = reasons.get("near_miss_gates")
+                        # Force update of features at end of loop by setting flag
+                        # We use exec_history_updated logic or just rely on it being True for entry?
+                        # Let's ensure it's saved by setting a flag if we have one, or just dirtying the dict
+                        # The save happens at: if logging_meta_updated or exec_history_updated: ... update(features)
+                        # We'll set logging_meta_updated = True to force save if not already set
+                        logging_meta_updated = True 
+
+                try:
+                    token_contract = position.get("token_contract")
+                    token_chain = position.get("token_chain")
+                    timeframe_pos = position.get("timeframe")
+                    
+                    # Check for existing shadow position
+                    shadow_check = self.sb.table("lowcap_positions")\
+                        .select("id")\
+                        .eq("token_contract", token_contract)\
+                        .eq("token_chain", token_chain)\
+                        .eq("timeframe", timeframe_pos)\
+                        .eq("status", "shadow")\
+                        .limit(1)\
+                        .execute()
+                    
+                    if shadow_check.data and len(shadow_check.data) > 0:
+                        shadow_id = shadow_check.data[0]["id"]
+                        # Close shadow without recording trajectory (active will track real outcome)
+                        self.sb.table("lowcap_positions").update({
+                            "status": "watchlist",
+                            "entry_event": None,
+                        }).eq("id", shadow_id).execute()
+                        
+                        logger.info(
+                            "SHADOW→ACTIVE: Closed shadow position (gates passed) | "
+                            "shadow_id=%s token=%s/%s tf=%s",
+                            str(shadow_id)[:8], position.get("token_ticker"),
+                            token_chain, timeframe_pos
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed shadow→active conversion check: {e}")
+            
             # Merge lever diagnostics into reasons for audit
             lever_diag = {}
             try:
@@ -3430,6 +3649,7 @@ class PMCoreTick:
                     "first_dip_buy_flag": uptrend_signals.get("first_dip_buy_flag", False),
                     "reclaimed_ema333": uptrend_signals.get("reclaimed_ema333", False),
                     "at_support": (features.get("geometry") or {}).get("at_support", False),
+                    "is_dx_buy": "dx_buy_number" in reasons,
                     "market_family": "lowcaps",  # PM only trades lowcaps
                 }
                 
@@ -3441,13 +3661,10 @@ class PMCoreTick:
                     uptrend_signals=uptrend_signals
                 )
                 
-                # Extract scope
-                bucket_rank = regime_context.get("bucket_rank", []) if regime_context else []
-                scope = extract_scope_from_context(
-                    action_context=action_context,
-                    regime_context=regime_context or {},
-                    position_bucket=token_bucket,
-                    bucket_rank=bucket_rank
+                # Extract unified scope
+                scope = build_unified_scope(
+                    position=position,
+                    regime_context=regime_context or {}
                 )
                 
                 # Extract controls (signals + applied knobs)
@@ -3506,6 +3723,15 @@ class PMCoreTick:
                 content_data["controls"] = controls
             if trade_id:
                 content_data["trade_id"] = trade_id
+            
+            # Add gate_margins and near_miss_gates for entry actions (learning system uses these)
+            if decision_type == "entry":
+                if reasons.get("gate_margins"):
+                    content_data["gate_margins"] = reasons.get("gate_margins")
+                if reasons.get("near_miss_gates"):
+                    content_data["near_miss_gates"] = reasons.get("near_miss_gates")
+                if reasons.get("entry_event"):
+                    content_data["entry_event"] = reasons.get("entry_event")
             
             # Add execution result if available
             if execution_results:

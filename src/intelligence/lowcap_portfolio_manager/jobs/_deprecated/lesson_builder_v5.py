@@ -1,4 +1,11 @@
 """
+DEPRECATED: Learning System v2 replaces this with TrajectoryMiner.
+
+This module reads from pattern_trade_events which is deprecated.
+Use learning/trajectory_miner.py (TrajectoryMiner) instead, which reads
+from position_trajectories table.
+
+Legacy Documentation:
 Lesson Builder v5 - Mining from Fact Table
 Replaces legacy stat-reading with raw event mining.
 

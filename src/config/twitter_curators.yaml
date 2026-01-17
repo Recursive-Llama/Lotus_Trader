@@ -418,16 +418,6 @@ curators:
     tags: ["alpha", "calls", "multi_platform"]
     notes: "Multi-platform curator; Twitter @Crypt0WhaleX and Telegram channel 'Whale Calls' (channel ID: -1001850979374)"
 
-  - id: "wb_degens"
-    name: "WB DEGENS"
-    platforms:
-      telegram:
-        handle: "@wbdegens"
-        channel_id: -1002662701406
-        active: true
-        priority: "medium"
-    tags: ["degen", "calls"]
-    notes: "Telegram-only curator; channel title 'WB DEGENS'; requested as second TG for WhaleX"
 
   - id: "money_man"
     name: "Money Man"

@@ -18,7 +18,7 @@ from supabase import create_client, Client
 
 from src.intelligence.lowcap_portfolio_manager.pm.pattern_keys_v5 import (
     generate_canonical_pattern_key,
-    extract_scope_from_context
+    # Note: scope is read from strand content, not rebuilt here
 )
 
 logger = logging.getLogger(__name__)

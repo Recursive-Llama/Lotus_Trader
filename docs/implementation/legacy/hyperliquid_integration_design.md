@@ -209,24 +209,33 @@ See: `docs/investigations/execution_intent_interface_spec.md`
 3. Create `BaseExecutor` interface with `prepare()` / `execute()`
 4. Update PM Core Tick to use new interface
 
-### Phase 2: Data Infrastructure
+### Phase 2: Data Infrastructure ✅
 1. ✅ Create `hyperliquid_price_data_ohlc` table (see `src/database/hyperliquid_price_data_ohlc_schema.sql`)
-2. Create `PriceDataReader` abstraction
-3. Update TA Tracker, Geometry Builder, Uptrend Engine to use `PriceDataReader`
-4. Test data routing
+2. ✅ Create `PriceDataReader` abstraction (see `src/intelligence/lowcap_portfolio_manager/data/price_data_reader.py`)
+3. ✅ Update TA Tracker, Geometry Builder, Uptrend Engine to use `PriceDataReader`
+4. Pending: Test data routing with live data
 
-### Phase 3: Hyperliquid Executor
-1. Create `HyperliquidExecutor` (dry-run mode)
-2. Implement `prepare()` (constraints, market hours, etc.)
-3. Implement `execute()` (Hyperliquid API calls)
-4. Test executor routing
+### Phase 3: Hyperliquid Executor ✅
+1. ✅ Create `HyperliquidExecutor` (see `src/intelligence/lowcap_portfolio_manager/pm/hyperliquid_executor.py`)
+2. ✅ Implement constraint guards (min notional, tick size, reduce-only)
+3. ✅ Implement `execute_market_order()` and `execute_limit_order()` methods
+4. ✅ Dry-run mode support
 
-### Phase 4: WebSocket Infrastructure
-1. Create `HyperliquidTradingWSIngester` (separate from majors)
-2. Add backpressure (bounded queues)
-3. Add reconnection logic (exponential backoff)
-4. Add subscription diffing
-5. Test with 10-20 tokens
+### Phase 4: WebSocket Infrastructure ✅
+1. ✅ Create `HyperliquidCandleWSIngester` (see `src/intelligence/lowcap_portfolio_manager/ingest/hyperliquid_candle_ws.py`)
+2. ✅ Partial update filtering (timestamp change detection)
+3. ✅ Reconnection logic (exponential backoff)
+4. ✅ Backfill function (see `src/intelligence/lowcap_portfolio_manager/ingest/hyperliquid_backfill.py`)
+5. ✅ Dynamic symbol discovery from positions table
+6. ✅ WebSocket tested (up to 300 subscriptions verified)
+7. Pending: Full scale test (260 symbols = 780 subscriptions)
+
+### Phase 5: Market Discovery ✅
+1. ✅ Create `HyperliquidMarketDiscovery` (see `src/intelligence/lowcap_portfolio_manager/ingest/hyperliquid_market_discovery.py`)
+2. ✅ Discovers all markets (main DEX + HIP-3)
+3. ✅ Creates watchlist positions for discovered markets
+4. ✅ Filters by requirements (min leverage, exclude delisted, etc.)
+5. ✅ Creates positions for all timeframes (1m, 15m, 1h, 4h)
 
 ### Phase 5: End-to-End Testing
 1. Create test positions (`token_chain='hyperliquid'`, `book_id='perps'`)

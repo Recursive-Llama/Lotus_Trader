@@ -25,6 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from supabase import Client, create_client  # type: ignore
 
+from src.intelligence.lowcap_portfolio_manager.ingest.hyperliquid_market_discovery import (
+    HyperliquidMarketDiscovery,
+)
+from src.intelligence.lowcap_portfolio_manager.ingest.hyperliquid_backfill import (
+    backfill_for_position,
+)
+
 logger = logging.getLogger(__name__)
 
 # Glyph stream for progress indicators (using full glyphic system)
@@ -69,12 +76,16 @@ class BootstrapSystem:
     Missing historical data is logged but not fatal.
     """
     
-    def __init__(self, book_id: str = "onchain_crypto") -> None:
-        url = os.getenv("SUPABASE_URL", "")
-        key = os.getenv("SUPABASE_KEY", "")
-        if not url or not key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY required")
-        self.sb: Client = create_client(url, key)
+    def __init__(self, book_id: str = "onchain_crypto", supabase: Optional[Client] = None) -> None:
+        if supabase:
+            self.sb = supabase
+        else:
+            url = os.getenv("SUPABASE_URL", "")
+            key = os.getenv("SUPABASE_KEY", "")
+            if not url or not key:
+                raise RuntimeError("SUPABASE_URL and SUPABASE_KEY required")
+            self.sb: Client = create_client(url, key)
+            
         self.book_id = book_id
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -189,13 +200,40 @@ class BootstrapSystem:
             results["steps"]["price_collection"] = {"error": str(e)}
             print("∅ (see logs/system.log)")
         
-        # Step 3: Start Hyperliquid WS early so we can verify it's working
+        # Step 3: Bootstrap Hyperliquid markets (Discovery & Backfill)
+        # This MUST happen before WS/Regime steps to ensure positions exist
+        print("   ⨳ Bootstrapping Hyperliquid markets...", end=" ", flush=True)
+        try:
+            hl_market_status = self._bootstrap_hyperliquid_markets()
+            results["steps"]["hyperliquid_markets"] = hl_market_status
+            
+            created = hl_market_status.get("created", 0)
+            backfilled = hl_market_status.get("backfilled_total", 0)
+            
+            if hl_market_status.get("error"):
+                self.warnings.append(f"HL Markets: {hl_market_status['error']}")
+                print("⚠")
+            elif created > 0:
+                print(f"⌖ ({created} new, {backfilled} bars backfilled)")
+                self.info.append(f"HL Markets: {created} new positions, {backfilled} bars backfilled")
+            else:
+                print("⌖")
+                self.info.append("HL Markets: No new positions")
+                
+        except Exception as e:
+            error_msg = f"HL Market bootstrap failed: {e}"
+            logger.error(error_msg, exc_info=True)
+            self.warnings.append(error_msg)
+            results["steps"]["hyperliquid_markets"] = {"error": str(e)}
+            print("⚠")
+
+        # Step 4: Start Hyperliquid WS early so we can verify it's working
         # Note: The actual async task will be started in run_trade.py, but we create the ingester here
         # and return it so it can be started properly in the async context
         if os.getenv("HL_INGEST_ENABLED", "0") == "1":
             print("   ⨳ Preparing Hyperliquid WS...", end=" ", flush=True)
             try:
-                from intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import (
+                from src.intelligence.lowcap_portfolio_manager.ingest.hyperliquid_ws import (
                     HyperliquidWSIngester,
                 )
                 
@@ -560,23 +598,32 @@ class BootstrapSystem:
         
         print("   ├─────────────────────────────────────────────────────────────┤")
         
-        # Get wallet balance
+        # Get wallet balances
         try:
             wallet_result = (
                 self.sb.table("wallet_balances")
                 .select("chain, balance, usdc_balance")
-                .eq("chain", "solana")
-                .limit(1)
+                .in_("chain", ["solana", "hyperliquid"])
                 .execute()
             )
-            if wallet_result.data:
-                sol_bal = float(wallet_result.data[0].get("balance", 0))
-                usdc_bal = float(wallet_result.data[0].get("usdc_balance", 0) or 0)
-                print(f"   │  Wallet: {sol_bal:.4f} SOL, ${usdc_bal:,.2f} USDC              │")
+            
+            sol_row = next((r for r in (wallet_result.data or []) if r["chain"] == "solana"), None)
+            hl_row = next((r for r in (wallet_result.data or []) if r["chain"] == "hyperliquid"), None)
+
+            if sol_row:
+                sol_bal = float(sol_row.get("balance", 0))
+                usdc_bal = float(sol_row.get("usdc_balance", 0) or 0)
+                print(f"   │  Solana: {sol_bal:.4f} SOL, ${usdc_bal:,.2f} USDC              │")
             else:
-                print("   │  Wallet: No data                                           │")
-        except Exception:
-            print("   │  Wallet: N/A                                               │")
+                print("   │  Solana: No data                                           │")
+
+            if hl_row:
+                hl_bal = float(hl_row.get("usdc_balance", 0) or 0)
+                # Pad to align right border
+                hl_str = f"Hyperliquid: ${hl_bal:,.2f} USDC"
+                print(f"   │  {hl_str:<58}│")
+        except Exception as e:
+            print(f"   │  Wallet Error: {str(e)[:30]:<44}│")
         
         print("   └─────────────────────────────────────────────────────────────┘")
         print("")
@@ -634,12 +681,42 @@ class BootstrapSystem:
         happens via scheduled_price_collector which runs after bootstrap completes.
         """
         try:
+            # ATTEMPT TO FETCH HYPERLIQUID BALANCE ACTIVELY
+            # This ensures the display table has data even on first run
+            if os.getenv("HL_INGEST_ENABLED", "0") == "1":
+                try:
+                    from src.intelligence.lowcap_portfolio_manager.pm.hyperliquid_executor import HyperliquidExecutor
+                    executor = HyperliquidExecutor()
+                    margin_balance = executor.get_margin_balance()
+                    
+                    if margin_balance is not None:
+                        account_address = os.getenv("HL_ACCOUNT_ADDRESS", "")
+                        updates = {
+                            'chain': 'hyperliquid',
+                            'usdc_balance': float(margin_balance),
+                            'balance_usd': float(margin_balance),
+                            'balance': float(margin_balance), # Required for schema compliance
+                            'wallet_address': account_address,
+                            'last_updated': datetime.now(timezone.utc).isoformat()
+                        }
+                        self.sb.table('wallet_balances').upsert(updates).execute()
+                        
+                        # VERIFICATION: Read it back immediately to prove persistence
+                        verify = self.sb.table('wallet_balances').select('balance').eq('chain', 'hyperliquid').execute()
+                        if verify.data:
+                            logger.info(f"Bootstrap: Updated Hyperliquid margin balance: ${margin_balance:.2f} (DB Verified: ${verify.data[0].get('balance')})")
+                        else:
+                            logger.warning(f"Bootstrap: Written to DB but could not verify read-back!")
+                except Exception as hl_e:
+                    logger.warning(f"Bootstrap: Failed to fetch Hyperliquid balance: {hl_e}")
+
             # Check if there's existing wallet data
             result = self.sb.table('wallet_balances').select('chain, balance, usdc_balance, last_updated').limit(10).execute()
             
             if result.data:
                 # Check if data is recent (within last hour)
-                from datetime import datetime, timedelta, timezone
+                # Check if data is recent (within last hour)
+                # datetime already imported at top level
                 now = datetime.now(timezone.utc)
                 recent_count = 0
                 for row in result.data:
@@ -1318,6 +1395,233 @@ class BootstrapSystem:
             "updated": updated,
             "errors": errors,
         }
+    
+    def _update_hyperliquid_bars_count(self) -> Dict[str, Any]:
+        """
+        Update bars_count for all Hyperliquid positions based on hyperliquid_price_data_ohlc.
+        Also promotes positions from dormant → watchlist when bars_count >= threshold.
+        """
+        updated = 0
+        promoted = 0
+        errors = []
+        BARS_THRESHOLD = 333  # Matching Solana threshold
+        
+        try:
+            # Get all Hyperliquid positions (include status for promotion logic)
+            positions_result = (
+                self.sb.table("lowcap_positions")
+                .select("id, token_contract, timeframe, bars_count, status, bars_threshold")
+                .eq("token_chain", "hyperliquid")
+                .in_("book_id", ["perps", "stock_perps"])
+                .execute()
+            )
+            
+            if not positions_result.data:
+                return {"status": "no_positions", "updated": 0, "promoted": 0}
+            
+            # Group by token_contract to count bars once per token/timeframe combo
+            for pos in positions_result.data:
+                token = pos["token_contract"]
+                timeframe = pos["timeframe"]
+                position_id = pos["id"]
+                current_bars = pos.get("bars_count", 0) or 0
+                current_status = pos.get("status", "dormant")
+                threshold = pos.get("bars_threshold", BARS_THRESHOLD) or BARS_THRESHOLD
+                
+                try:
+                    # Count bars in hyperliquid_price_data_ohlc
+                    count_result = (
+                        self.sb.table("hyperliquid_price_data_ohlc")
+                        .select("ts", count="exact")
+                        .eq("token", token)
+                        .eq("timeframe", timeframe)
+                        .execute()
+                    )
+                    
+                    bars_count = count_result.count if hasattr(count_result, "count") else 0
+                    
+                    if bars_count == 0:
+                        logger.warning(f"OPS-CHECK: No bars found for HL token {token} in hyperliquid_price_data_ohlc (timeframe={timeframe})")
+                    else:
+                        logger.debug(f"Found {bars_count} bars for HL token {token} (timeframe={timeframe})")
+
+                    
+                    # Build update payload
+                    update_payload = {}
+                    
+                    # Update bars_count if different
+                    if bars_count > 0 and bars_count != current_bars:
+                        update_payload["bars_count"] = bars_count
+                    
+                    # Promote dormant → watchlist if bars >= threshold (matching Solana logic)
+                    if current_status == "dormant" and bars_count >= threshold:
+                        update_payload["status"] = "watchlist"
+                        promoted += 1
+                        logger.info(f"Promoted {token}/{timeframe} from dormant → watchlist ({bars_count} bars)")
+                    
+                    # Apply update if anything changed
+                    if update_payload:
+                        self.sb.table("lowcap_positions").update(update_payload).eq("id", position_id).execute()
+                        if "bars_count" in update_payload:
+                            updated += 1
+                            logger.debug(f"Updated HL bars_count for {token}/{timeframe}: {current_bars} → {bars_count}")
+                        
+                except Exception as e:
+                    error_msg = f"{token}/{timeframe}: {str(e)[:50]}"
+                    logger.debug(f"Failed to update HL bars_count: {error_msg}")
+                    errors.append(error_msg)
+            
+        except Exception as e:
+            logger.error(f"Hyperliquid bars_count update failed: {e}", exc_info=True)
+            return {"status": "error", "error": str(e), "updated": 0, "promoted": 0}
+        
+        return {
+            "status": f"updated:{updated},promoted:{promoted}" if updated > 0 or promoted > 0 else "ok",
+            "updated": updated,
+            "promoted": promoted,
+            "errors": errors if errors else None,
+        }
+
+    def _bootstrap_hyperliquid_markets(self) -> Dict[str, Any]:
+        """
+        Discover Hyperliquid markets and backfill data for positions.
+        
+        This ensures that when the system turns on for the first time,
+        all available markets are discovered and have initial history.
+        
+        Uses parallel backfill with 6 workers for efficiency (~1.5 min for 240 tokens).
+        """
+        import os
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        # Check if HL ingestion is enabled
+        if os.getenv("HL_INGEST_ENABLED", "0") != "1":
+            return {"status": "disabled", "info": "HL Ingest disabled"}
+            
+        status = {
+            "discovered_total": 0,
+            "created": 0,
+            "updated": 0,
+            "backfilled_total": 0,
+            "backfilled_tokens": 0,
+            "error": None
+        }
+        
+        try:
+            # 1. Run Discovery
+            discovery = HyperliquidMarketDiscovery(self.sb)
+            discovery_results = discovery.run_discovery()
+            
+            sync_stats = discovery_results.get("sync_stats", {})
+            status["discovered_total"] = discovery_results.get("markets_discovered", {}).get("total", 0)
+            status["created"] = sync_stats.get("created", 0)
+            status["updated"] = sync_stats.get("updated", 0)
+            
+            # 2. Backfill ALL positions with bars_count=0 (not just newly created)
+            # This ensures all positions get data on first startup
+            positions_needing_backfill = (
+                self.sb.table("lowcap_positions")
+                .select("token_contract")
+                .eq("token_chain", "hyperliquid")
+                .eq("bars_count", 0)
+                .in_("book_id", ["perps", "stock_perps"])
+                .execute()
+            )
+            
+            if positions_needing_backfill.data:
+                # Get unique tokens (each token has 3 timeframe positions)
+                tokens_needed = sorted(set(pos["token_contract"] for pos in positions_needing_backfill.data))
+                
+                logger.info("Backfilling %d Hyperliquid tokens (parallel, 3 workers)...", len(tokens_needed))
+                
+                # Parallel backfill with 3 workers (reduced from 6 to avoid rate limiting)
+                # The backfill_from_hyperliquid function now has retry logic for 429 errors
+                total_candles = 0
+                failed_tokens = []
+                successful_tokens = 0
+                
+                def backfill_token(token: str) -> tuple:
+                    """Backfill a single token, return (token, candle_count, error)."""
+                    import time
+                    try:
+                        # Small delay to spread out requests
+                        time.sleep(0.1)
+                        bf_res = backfill_for_position(self.sb, token, days=15)
+                        return (token, sum(bf_res.values()), None)
+                    except Exception as e:
+                        return (token, 0, str(e))
+                
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    futures = {executor.submit(backfill_token, token): token for token in tokens_needed}
+                    
+                    for future in as_completed(futures):
+                        token, candles, error = future.result()
+                        if error:
+                            failed_tokens.append(token)
+                            logger.warning("Backfill failed for %s: %s", token, error)
+                        else:
+                            total_candles += candles
+                            successful_tokens += 1
+                            if candles > 0:
+                                logger.debug("Backfilled %s: %d candles", token, candles)
+                
+                status["backfilled_tokens"] = successful_tokens
+                status["backfilled_total"] = total_candles
+                
+                # Retry failed tokens sequentially with longer delays
+                if failed_tokens:
+                    logger.info("Retrying %d failed tokens sequentially...", len(failed_tokens))
+                    import time
+                    for token in failed_tokens:
+                        try:
+                            time.sleep(0.5)  # Longer delay for retry
+                            bf_res = backfill_for_position(self.sb, token, days=15)
+                            candles = sum(bf_res.values())
+                            if candles > 0:
+                                total_candles += candles
+                                successful_tokens += 1
+                                failed_tokens.remove(token)
+                                logger.info("Retry succeeded for %s: %d candles", token, candles)
+                        except Exception as e:
+                            logger.warning("Retry failed for %s: %s", token, e)
+                    
+                    status["backfilled_tokens"] = successful_tokens
+                    status["backfilled_total"] = total_candles
+                
+                if failed_tokens:
+                    logger.warning("Failed to backfill %d tokens after retry: %s", len(failed_tokens), failed_tokens[:5])
+                
+                logger.info(
+                    "Hyperliquid backfill complete: %d/%d tokens, %d total candles",
+                    successful_tokens, len(tokens_needed), total_candles
+                )
+            
+            # 3. Update bars_count for ALL Hyperliquid positions
+            # This syncs the position's bars_count with actual data in hyperliquid_price_data_ohlc
+            bars_update_result = self._update_hyperliquid_bars_count()
+            status["bars_updated"] = bars_update_result.get("updated", 0)
+            
+            # 4. Fetch market caps from CoinGecko for bucket tagging
+            # This allows PM Core to use bucket-based regime states for HL positions
+            try:
+                from src.intelligence.lowcap_portfolio_manager.ingest.hl_marketcap_fetcher import fetch_hl_market_caps
+                logger.info("Fetching Hyperliquid market caps from CoinGecko...")
+                mcap_result = fetch_hl_market_caps(self.sb)
+                status["marketcap_updated"] = mcap_result.get("updated", 0)
+                if mcap_result.get("status") == "ok":
+                    logger.info("HL market caps updated: %d tokens", mcap_result.get("updated", 0))
+                else:
+                    logger.warning("HL market cap fetch: %s", mcap_result.get("error", "unknown"))
+            except Exception as e:
+                logger.warning("Failed to fetch HL market caps: %s", e)
+                status["marketcap_updated"] = 0
+            
+            return status
+            
+        except Exception as e:
+            logger.error("Hyperliquid bootstrap failed: %s", e, exc_info=True)
+            status["error"] = str(e)
+            return status
 
 
 def main() -> None:

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from .coefficient_updater import CoefficientUpdater
 from llm_integration.prompt_manager import PromptManager
 from llm_integration.openrouter_client import OpenRouterClient
-from intelligence.lowcap_portfolio_manager.jobs.pattern_scope_aggregator import process_position_closed_strand
+# Note: pattern_scope_aggregator removed (deprecated - moved to _deprecated/)
 from intelligence.lowcap_portfolio_manager.pm.llm_research_layer import LLMResearchLayer
 
 logger = logging.getLogger(__name__)
@@ -234,22 +234,24 @@ class UniversalLearningSystem:
             # Get the most recent completed trade (last one in array)
             completed_trade = completed_trades[-1] if isinstance(completed_trades, list) else completed_trades
             
-            # Extract R/R metrics - handle both flat structure and nested structure (summary.rr)
+            # Learning System v2: Extract ROI (rpnl_pct) instead of R/R
             if isinstance(completed_trade, dict):
-                # Check if rr is directly in completed_trade or in summary
-                rr = completed_trade.get('rr')
-                if rr is None and 'summary' in completed_trade:
+                # Prefer rpnl_pct (Learning System v2), fallback to rr for legacy
+                roi = completed_trade.get('rpnl_pct')
+                if roi is None:
+                    roi = completed_trade.get('total_pnl_pct')  # Alternative key
+                if roi is None and 'summary' in completed_trade:
                     summary = completed_trade.get('summary', {})
-                    rr = summary.get('rr')
+                    roi = summary.get('rpnl_pct') or summary.get('rr')  # Legacy fallback
                 # Also check trade_summary in content as fallback
-                if rr is None:
+                if roi is None:
                     trade_summary = content.get('trade_summary', {})
-                    rr = trade_summary.get('rr')
+                    roi = trade_summary.get('rpnl_pct') or trade_summary.get('rr')
             else:
-                rr = None
+                roi = None
             
-            if rr is None:
-                self.logger.warning(f"No R/R metric found in completed_trade, skipping coefficient update")
+            if roi is None:
+                self.logger.warning(f"No ROI metric found in completed_trade, skipping coefficient update")
                 return
             
             # Update coefficients from this closed trade
@@ -259,19 +261,8 @@ class UniversalLearningSystem:
                 timeframe=timeframe
             )
             
-            # Process pattern scope aggregation (real-time learning)
-            try:
-                rows_updated = await process_position_closed_strand(
-                    sb_client=self.supabase_manager.client,
-                    strand=strand
-                )
-                self.logger.info(
-                    "Successfully processed position_closed strand for pattern scope "
-                    f"aggregation ({rows_updated} rows updated)"
-                )
-            except Exception as e:
-                self.logger.error(f"Error processing pattern scope aggregation: {e}")
-                # Don't fail the whole process if aggregation fails
+            # Note: Pattern scope aggregation removed (deprecated)
+            # The old pattern_trade_events table is no longer used
             
             # Process LLM Learning Layer (semantic and structural intelligence)
             try:
@@ -307,23 +298,24 @@ class UniversalLearningSystem:
         
         This method:
         1. Updates timeframe weight using EWMA with temporal decay (stored in learning_configs)
-        2. Updates global R/R baseline (needed for timeframe weight normalization)
+        2. Updates global ROI baseline (needed for timeframe weight normalization)
         
+        Learning System v2: Uses ROI (rpnl_pct) instead of R/R.
         Only timeframe weights are updated - these control DM allocation split across timeframes.
         
         Args:
             entry_context: Lever values at entry (not used for updates, but kept for compatibility)
-            completed_trade: Trade summary with R/R metrics
-            timeframe: Timeframe for this trade (1m, 15m, 1h, 4h)
+            completed_trade: Trade summary with ROI metrics
+            timeframe: Timeframe for this trade (15m, 1h, 4h) - 1m removed in v2
         """
         try:
-            # Handle both flat structure and nested structure (summary.rr)
-            rr = completed_trade.get('rr')
-            if rr is None and isinstance(completed_trade, dict) and 'summary' in completed_trade:
+            # Learning System v2: Use ROI instead of R/R
+            roi = completed_trade.get('rpnl_pct') or completed_trade.get('total_pnl_pct')
+            if roi is None and isinstance(completed_trade, dict) and 'summary' in completed_trade:
                 summary = completed_trade.get('summary', {})
-                rr = summary.get('rr')
+                roi = summary.get('rpnl_pct') or summary.get('rr')  # Legacy fallback
             
-            if rr is None:
+            if roi is None:
                 return
             
             # Get trade timestamp - check both locations
@@ -339,7 +331,12 @@ class UniversalLearningSystem:
             else:
                 trade_timestamp = datetime.now(timezone.utc)
             
-            self.logger.info(f"Updating timeframe weight for R/R={rr:.3f}, timeframe={timeframe}, trade_timestamp={trade_timestamp.isoformat()}")
+            self.logger.info(f"Updating timeframe weight for ROI={roi:.3f}%, timeframe={timeframe}, trade_timestamp={trade_timestamp.isoformat()}")
+            
+            # Learning System v2: Skip 1m timeframe (removed from allocation)
+            if timeframe == '1m':
+                self.logger.debug(f"Skipping 1m timeframe (removed in v2)")
+                return
             
             # Update timeframe weight (only coefficient we actually use - stored in learning_configs)
             if timeframe:
@@ -348,36 +345,36 @@ class UniversalLearningSystem:
                     scope='lever',
                     name='timeframe',
                     key=timeframe,
-                    rr_value=rr,
+                    rr_value=roi,  # Still using rr_value param name for backward compat
                     trade_timestamp=trade_timestamp
                 )
-                self.logger.info(f"Updated timeframe weight for {timeframe} (R/R={rr:.3f})")
+                self.logger.info(f"Updated timeframe weight for {timeframe} (ROI={roi:.3f}%)")
             else:
                 self.logger.warning(f"No timeframe provided for coefficient update")
                     
-            # Update global R/R baseline using EWMA (needed for timeframe weight normalization)
-            await self._update_global_rr_baseline_ewma(rr, trade_timestamp)
+            # Update global ROI baseline using EWMA (needed for timeframe weight normalization)
+            await self._update_global_roi_baseline_ewma(roi, trade_timestamp)
             
-            self.logger.info(f"Updated timeframe coefficient and global R/R baseline from closed trade")
+            self.logger.info(f"Updated timeframe coefficient and global ROI baseline from closed trade")
             
         except Exception as e:
             self.logger.error(f"Error updating coefficients from closed trade: {e}")
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
     
-    async def _update_global_rr_baseline_ewma(self, rr_value: float, trade_timestamp: datetime) -> None:
+    async def _update_global_roi_baseline_ewma(self, roi_value: float, trade_timestamp: datetime) -> None:
         """
-        Update global R/R baseline in learning_configs table using EWMA.
+        Learning System v2: Update global ROI baseline in learning_configs table using EWMA.
         
         Args:
-            rr_value: R/R value from closed trade
+            roi_value: ROI value (rpnl_pct) from closed trade
             trade_timestamp: Timestamp of the closed trade
         """
         try:
             sb = self.supabase_manager.client
             current_timestamp = datetime.now(timezone.utc)
             
-            # Get existing global R/R config
+            # Get existing global ROI config
             existing = (
                 sb.table("learning_configs")
                 .select("config_data")
@@ -389,11 +386,11 @@ class UniversalLearningSystem:
             if existing and len(existing) > 0:
                 # Update existing config using EWMA
                 config_data = existing[0].get('config_data', {})
-                global_rr = config_data.get('global_rr', {})
+                global_roi = config_data.get('global_roi', config_data.get('global_rr', {}))  # Migrate from rr
                 
-                current_rr_short = global_rr.get('rr_short', 1.0)
-                current_rr_long = global_rr.get('rr_long', 1.0)
-                current_n = global_rr.get('n', 0)
+                current_roi_short = global_roi.get('roi_short', global_roi.get('rr_short', 0.0))
+                current_roi_long = global_roi.get('roi_long', global_roi.get('rr_long', 0.0))
+                current_n = global_roi.get('n', 0)
                 
                 # Calculate decay weights
                 w_short = self.coefficient_updater.calculate_decay_weight(trade_timestamp, current_timestamp, self.coefficient_updater.TAU_SHORT)
@@ -403,14 +400,14 @@ class UniversalLearningSystem:
                 alpha_short = w_short / (w_short + 1.0)
                 alpha_long = w_long / (w_long + 1.0)
                 
-                new_rr_short = (1 - alpha_short) * current_rr_short + alpha_short * rr_value
-                new_rr_long = (1 - alpha_long) * current_rr_long + alpha_long * rr_value
+                new_roi_short = (1 - alpha_short) * current_roi_short + alpha_short * roi_value
+                new_roi_long = (1 - alpha_long) * current_roi_long + alpha_long * roi_value
                 new_n = current_n + 1
                 
-                # Update config
-                config_data['global_rr'] = {
-                    'rr_short': new_rr_short,
-                    'rr_long': new_rr_long,
+                # Update config with new global_roi key (v2)
+                config_data['global_roi'] = {
+                    'roi_short': new_roi_short,
+                    'roi_long': new_roi_long,
                     'n': new_n,
                     'updated_at': current_timestamp.isoformat()
                 }
@@ -418,16 +415,16 @@ class UniversalLearningSystem:
                 sb.table("learning_configs").update({
                     "config_data": config_data,
                     "updated_at": current_timestamp.isoformat(),
-                    "updated_by": "learning_system"
+                    "updated_by": "learning_system_v2"
                 }).eq("module_id", "decision_maker").execute()
                 
-                self.logger.debug(f"Updated global R/R baseline (EWMA): rr_short={new_rr_short:.3f}, rr_long={new_rr_long:.3f}, n={new_n}")
+                self.logger.debug(f"Updated global ROI baseline (EWMA): roi_short={new_roi_short:.3f}%, roi_long={new_roi_long:.3f}%, n={new_n}")
             else:
                 # Create new config
                 config_data = {
-                    'global_rr': {
-                        'rr_short': rr_value,
-                        'rr_long': rr_value,
+                    'global_roi': {
+                        'roi_short': roi_value,
+                        'roi_long': roi_value,
                         'n': 1,
                         'updated_at': current_timestamp.isoformat()
                     }
@@ -437,20 +434,20 @@ class UniversalLearningSystem:
                     "module_id": "decision_maker",
                     "config_data": config_data,
                     "updated_at": current_timestamp.isoformat(),
-                    "updated_by": "learning_system"
+                    "updated_by": "learning_system_v2"
                 }).execute()
                 
-                self.logger.debug(f"Created new global R/R baseline: rr_short={rr_value:.3f}, n=1")
+                self.logger.debug(f"Created new global ROI baseline: roi_short={roi_value:.3f}%, n=1")
                 
         except Exception as e:
-            self.logger.error(f"Error updating global R/R baseline: {e}")
+            self.logger.error(f"Error updating global ROI baseline: {e}")
     
-    async def _get_global_rr_short(self) -> Optional[float]:
+    async def _get_global_roi_short(self) -> Optional[float]:
         """
-        Get global R/R short-term baseline from learning_configs.
+        Learning System v2: Get global ROI short-term baseline from learning_configs.
         
         Returns:
-            Global R/R short-term value, or None if not found
+            Global ROI short-term value (%), or None if not found
         """
         try:
             sb = self.supabase_manager.client
@@ -465,13 +462,14 @@ class UniversalLearningSystem:
             
             if result and len(result) > 0:
                 config_data = result[0].get('config_data', {})
-                global_rr = config_data.get('global_rr', {})
-                return global_rr.get('rr_short')
+                # Try new key first, fallback to legacy
+                global_roi = config_data.get('global_roi', config_data.get('global_rr', {}))
+                return global_roi.get('roi_short', global_roi.get('rr_short'))
             
             return None
             
         except Exception as e:
-            self.logger.error(f"Error getting global R/R baseline: {e}")
+            self.logger.error(f"Error getting global ROI baseline: {e}")
             return None
     
     # Legacy braid candidate methods removed - not used by lowcap system

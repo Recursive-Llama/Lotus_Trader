@@ -1,11 +1,13 @@
 """
 v5 Learning System Scheduler
 
-Orchestrates all v5 learning jobs:
-- Pattern scope aggregator (every 1-4 hours)
-- Lesson builder (periodic, e.g., every 6 hours)
-- Override materializer (periodic, e.g., every 2 hours)
-- Meta-learning jobs (v5.1 daily, v5.2/v5.3 weekly)
+Orchestrates Learning System v2 jobs:
+- TrajectoryMiner: Mines trajectories → generates overrides (every 2 hours)
+
+Legacy pipeline (DEPRECATED):
+- Pattern scope aggregator
+- Lesson builder
+- Override materializer
 
 Can be run standalone or integrated into main scheduler.
 """
@@ -18,31 +20,35 @@ from datetime import datetime, timezone, timedelta
 
 from supabase import create_client, Client
 
-from .pattern_scope_aggregator import run_pattern_scope_aggregator
-from .lesson_builder_v5 import build_lessons_from_pattern_scope_stats
-from .override_materializer import run_override_materializer
-# Removed redundant meta-learning jobs (regime_weight_learner, half_life_estimator, latent_factor_clusterer)
-# - Regime weights: Not integrated into runtime
-# - Half-life: Now computed directly in lesson builder
-# - Latent factors: Not integrated into runtime
+# v2 Learning System
+from src.intelligence.lowcap_portfolio_manager.learning.trajectory_miner import TrajectoryMiner
+
+# Legacy imports - kept for backwards compatibility but deprecated
+# from .pattern_scope_aggregator import run_pattern_scope_aggregator
+# from .lesson_builder_v5 import build_lessons_from_pattern_scope_stats
+# from .override_materializer import run_override_materializer
 
 logger = logging.getLogger(__name__)
 
 
-def run_lesson_builder(sb_client: Client) -> None:
+def run_trajectory_miner(sb_client: Client = None) -> None:
     """
-    Wrapper for lesson builder that processes both PM and DM modules.
-    Synchronous wrapper for async function to match scheduler signature.
+    Run TrajectoryMiner (Learning System v2).
+    Mines trajectories and writes overrides to pm_overrides.
     """
-    import asyncio
     try:
-        # Process PM lessons
-        asyncio.run(build_lessons_from_pattern_scope_stats(sb_client, module='pm'))
-        # Process DM lessons  
-        asyncio.run(build_lessons_from_pattern_scope_stats(sb_client, module='dm'))
+        miner = TrajectoryMiner()
+        miner.run()
     except Exception as e:
-        logger.error(f"Lesson builder error: {e}", exc_info=True)
+        logger.error(f"TrajectoryMiner error: {e}", exc_info=True)
         raise
+
+
+# Legacy - kept for backwards compatibility
+def run_lesson_builder(sb_client: Client) -> None:
+    """DEPRECATED: Use run_trajectory_miner instead."""
+    logger.warning("run_lesson_builder is DEPRECATED. Use run_trajectory_miner.")
+    run_trajectory_miner(sb_client)
 
 
 def get_feature_flags(sb_client: Client) -> dict:
@@ -173,67 +179,41 @@ async def schedule_v5_learning_jobs(sb_client: Optional[Client] = None):
             await asyncio.sleep(interval_hours * 3600)
     
     # Start all jobs
-    logger.info("Starting v5 learning system scheduler")
+    logger.info("Starting Learning System v2 scheduler")
     
-    # Pattern scope aggregator: Every 2 hours
-    asyncio.create_task(schedule_interval(2, run_pattern_scope_aggregator, "Pattern Scope Aggregator"))
+    # TrajectoryMiner: Every 2 hours (replaces legacy aggregator → builder → materializer)
+    asyncio.create_task(schedule_interval(2, run_trajectory_miner, "TrajectoryMiner"))
     
-    # Lesson builder: Every 6 hours
-    asyncio.create_task(schedule_interval(6, run_lesson_builder, "Lesson Builder"))
+    # Legacy jobs REMOVED:
+    # - Pattern scope aggregator: Replaced by trajectory_classifier
+    # - Lesson builder: Replaced by TrajectoryMiner._mine_strength_lessons / _mine_tuning_lessons
+    # - Override materializer: Replaced by TrajectoryMiner._write_overrides
     
-    # Override materializer: Every 2 hours
-    asyncio.create_task(schedule_interval(2, run_override_materializer, "Override Materializer"))
-    
-    # Meta-learning jobs removed (see analysis in docs/investigations/meta_learning_redundancy_analysis.md):
-    # - Regime weight learner: Not integrated into runtime
-    # - Half-life estimator: Now computed directly in lesson builder (exponential decay)
-    # - Latent factor clusterer: Not integrated into runtime
-    
-    logger.info("All v5 learning jobs scheduled")
+    logger.info("Learning System v2 scheduler started")
 
 
 async def run_all_jobs_once(sb_client: Optional[Client] = None):
     """
-    Run all v5 learning jobs once (for testing or manual execution).
+    Run Learning System v2 jobs once (for testing or manual execution).
     """
     if sb_client is None:
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
         if not supabase_url or not supabase_key:
             logger.error("Missing SUPABASE_URL or SUPABASE_KEY")
-            return
+            return {'error': 'Missing credentials'}
         sb_client = create_client(supabase_url, supabase_key)
-    
-    flags = get_feature_flags(sb_client)
     
     results = {}
     
-    if flags.get('v5_aggregation_enabled', True):
-        logger.info("Running Pattern Scope Aggregator...")
-        try:
-            results['aggregator'] = await asyncio.to_thread(run_pattern_scope_aggregator, sb_client)
-        except Exception as e:
-            logger.error(f"Aggregator error: {e}", exc_info=True)
-            results['aggregator'] = {'error': str(e)}
-    
-    if flags.get('v5_lesson_builder_enabled', True):
-        logger.info("Running Lesson Builder...")
-        try:
-            results['lesson_builder'] = await asyncio.to_thread(run_lesson_builder, sb_client)
-        except Exception as e:
-            logger.error(f"Lesson Builder error: {e}", exc_info=True)
-            results['lesson_builder'] = {'error': str(e)}
-    
-    if flags.get('v5_override_materializer_enabled', True):
-        logger.info("Running Override Materializer...")
-        try:
-            results['override_materializer'] = await asyncio.to_thread(run_override_materializer, sb_client)
-        except Exception as e:
-            logger.error(f"Override Materializer error: {e}", exc_info=True)
-            results['override_materializer'] = {'error': str(e)}
-    
-    # Meta-learning jobs removed - see docs/investigations/meta_learning_redundancy_analysis.md
-    # Half-life is now computed directly in lesson builder
+    # Run TrajectoryMiner (v2 - replaces legacy pipeline)
+    logger.info("Running TrajectoryMiner...")
+    try:
+        await asyncio.to_thread(run_trajectory_miner, sb_client)
+        results['trajectory_miner'] = {'status': 'completed'}
+    except Exception as e:
+        logger.error(f"TrajectoryMiner error: {e}", exc_info=True)
+        results['trajectory_miner'] = {'error': str(e)}
     
     return results
 

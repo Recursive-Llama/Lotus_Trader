@@ -4,7 +4,7 @@ GeckoTerminal OHLCV backfill job - Clean, Simple Version
 
 - Uses canonical pool from lowcap_positions.features if present
 - Otherwise searches pools by mint+chain, prefers native-quoted highest-liquidity
-- Supports all timeframes (1m, 15m, 1h, 4h) - writes to lowcap_price_data_ohlc
+- Supports timeframes (15m, 1h, 4h) - writes to lowcap_price_data_ohlc
 - Fetches 666 bars per timeframe (target), minimum 333 bars (single API call per timeframe)
 - Uses USD prices only (native prices set to 0.0, convert on-demand when needed)
 - Idempotent: skips existing timestamps
@@ -221,8 +221,8 @@ def _update_canonical_pool_features(supabase: SupabaseManager, token_contract: s
     """
     Update position features with canonical pool info for ALL timeframes.
     
-    Since we have 4 positions per token (one per timeframe), we need to update all of them
-    so they all share the same canonical pool and avoid redundant pool discovery calls.
+    Since we have 3 positions per Solana token (one per timeframe: 15m, 1h, 4h),
+    we need to update all of them so they share the same canonical pool.
     
     Args:
         supabase: Supabase manager
@@ -314,9 +314,12 @@ def _build_rows_for_insert(
     """
     Build database rows for OHLCV data using USD prices.
     Native prices are set to 0.0 (convert on-demand when needed).
+    
+    Interpolates missing candles when < 3 consecutive bad candles are found
+    between valid candles (linear interpolation).
     """
-    rows = []
-    skipped_count = 0
+    # First pass: Process all entries and mark as valid/invalid
+    processed_entries = []
     
     for entry in ohlcv_list:
         try:
@@ -329,58 +332,203 @@ def _build_rows_for_insert(
             volume_usd = float(entry[5])  # Volume is already in USD from GeckoTerminal
             ts_dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
             ts_iso = ts_dt.isoformat()
+            
+            is_valid = True
+            skip_reason = None
 
             # Safeguards: reject invalid prices
             if open_usd <= 0 or high_usd <= 0 or low_usd <= 0 or close_usd <= 0:
-                skipped_count += 1
-                logger.debug(f"Skip entry {ts_iso}: non-positive USD prices")
-                continue
+                is_valid = False
+                skip_reason = "non-positive USD prices"
             
             # Check OHLC logic: high >= max(open,close) and low <= min(open,close)
-            if high_usd < max(open_usd, close_usd) or low_usd > min(open_usd, close_usd):
-                skipped_count += 1
-                logger.warning(f"Skip entry {ts_iso}: invalid OHLC relationship (high={high_usd}, low={low_usd}, open={open_usd}, close={close_usd})")
-                continue
+            elif high_usd < max(open_usd, close_usd) or low_usd > min(open_usd, close_usd):
+                is_valid = False
+                skip_reason = f"invalid OHLC relationship (high={high_usd}, low={low_usd}, open={open_usd}, close={close_usd})"
 
             # Check for extreme jumps (>100x change) - likely bad data
-            # Compare close to open as a sanity check
-            if close_usd > 0 and open_usd > 0:
+            elif close_usd > 0 and open_usd > 0:
                 price_change_ratio = max(close_usd / open_usd, open_usd / close_usd)
                 if price_change_ratio > 100.0:
-                    skipped_count += 1
-                    logger.warning(f"Skip entry {ts_iso}: extreme price jump (ratio={price_change_ratio:.2f})")
-                    continue
-
-            # Native prices: Set to 0.0 (convert on-demand when needed for display/reporting)
-            open_native = 0.0
-            high_native = 0.0
-            low_native = 0.0
-            close_native = 0.0
-
-            rows.append({
-                'token_contract': token_contract,
-                'chain': chain,
-                'timeframe': timeframe,
-                'timestamp': ts_iso,
-                'open_native': open_native,
-                'high_native': high_native,
-                'low_native': low_native,
-                'close_native': close_native,
+                    is_valid = False
+                    skip_reason = f"extreme price jump (ratio={price_change_ratio:.2f})"
+            
+            processed_entries.append({
+                'ts_sec': ts_sec,
+                'ts_dt': ts_dt,
+                'ts_iso': ts_iso,
                 'open_usd': open_usd,
                 'high_usd': high_usd,
                 'low_usd': low_usd,
                 'close_usd': close_usd,
-                'volume': max(0.0, volume_usd),  # Ensure non-negative volume
-                'source': 'geckoterminal'
+                'volume_usd': volume_usd,
+                'is_valid': is_valid,
+                'skip_reason': skip_reason
             })
         except Exception as e:
-            skipped_count += 1
-            logger.debug(f"Skip malformed OHLCV entry: {e}")
+            # Malformed entry - mark as invalid
+            try:
+                ts_sec = int(entry[0])
+                ts_dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+                ts_iso = ts_dt.isoformat()
+            except:
+                ts_sec = 0
+                ts_dt = datetime.now(timezone.utc)
+                ts_iso = ts_dt.isoformat()
+            
+            processed_entries.append({
+                'ts_sec': ts_sec,
+                'ts_dt': ts_dt,
+                'ts_iso': ts_iso,
+                'open_usd': 0.0,
+                'high_usd': 0.0,
+                'low_usd': 0.0,
+                'close_usd': 0.0,
+                'volume_usd': 0.0,
+                'is_valid': False,
+                'skip_reason': f"malformed entry: {e}"
+            })
+    
+    # Second pass: Build rows with interpolation for < 3 consecutive bad candles
+    rows = []
+    skipped_count = 0
+    interpolated_count = 0
+    i = 0
+    
+    while i < len(processed_entries):
+        entry = processed_entries[i]
+        
+        if entry['is_valid']:
+            # Valid entry - add directly
+            rows.append(_build_row_dict(
+                token_contract, chain, timeframe,
+                entry['ts_iso'],
+                entry['open_usd'], entry['high_usd'], entry['low_usd'], entry['close_usd'],
+                entry['volume_usd']
+            ))
+            i += 1
+        else:
+            # Invalid entry - check if we can interpolate
+            # Count consecutive invalid entries
+            invalid_start = i
+            invalid_count = 0
+            while i < len(processed_entries) and not processed_entries[i]['is_valid']:
+                invalid_count += 1
+                i += 1
+            
+            # Find next valid entry (look ahead from current position)
+            next_valid = None
+            next_valid_idx = i
+            while next_valid_idx < len(processed_entries) and not processed_entries[next_valid_idx]['is_valid']:
+                next_valid_idx += 1
+            if next_valid_idx < len(processed_entries):
+                next_valid = processed_entries[next_valid_idx]
+            
+            # Find previous valid entry (last row we added)
+            prev_valid = None
+            if rows:
+                # Get the last valid entry's close price
+                last_row = rows[-1]
+                prev_valid = {
+                    'ts_dt': datetime.fromisoformat(last_row['timestamp'].replace('Z', '+00:00')),
+                    'close_usd': last_row['close_usd']
+                }
+            
+            # Can we interpolate? Need valid before AND after, and < 3 consecutive bad
+            if prev_valid and next_valid and invalid_count < 3:
+                # Interpolate the missing candles
+                prev_ts = prev_valid['ts_dt'].timestamp()
+                next_ts = next_valid['ts_dt'].timestamp()
+                prev_close = prev_valid['close_usd']
+                next_open = next_valid['open_usd']
+                
+                # Interpolate each invalid entry
+                for j in range(invalid_start, invalid_start + invalid_count):
+                    invalid_entry = processed_entries[j]
+                    invalid_ts = invalid_entry['ts_dt'].timestamp()
+                    
+                    # Linear interpolation factor (0.0 at prev, 1.0 at next)
+                    if next_ts > prev_ts:
+                        t = (invalid_ts - prev_ts) / (next_ts - prev_ts)
+                    else:
+                        t = 0.5  # Fallback if timestamps are equal
+                    
+                    # Interpolate prices (linear between prev_close and next_open)
+                    interpolated_price = prev_close + (next_open - prev_close) * t
+                    
+                    # For OHLC, use interpolated price for open/close
+                    # High/Low should span the range between prev and next to maintain realistic OHLC logic
+                    price_range = abs(next_open - prev_close)
+                    price_spread = max(price_range * 0.01, interpolated_price * 0.001)  # 1% of range or 0.1% of price
+                    interpolated_open = interpolated_price
+                    interpolated_close = interpolated_price
+                    interpolated_high = interpolated_price + price_spread
+                    interpolated_low = max(0.0, interpolated_price - price_spread)
+                    
+                    # Ensure OHLC logic: high >= max(open,close) and low <= min(open,close)
+                    interpolated_high = max(interpolated_high, max(interpolated_open, interpolated_close))
+                    interpolated_low = min(interpolated_low, min(interpolated_open, interpolated_close))
+                    
+                    # Use average volume from prev/next (or 0 if not available)
+                    interpolated_volume = 0.0
+                    
+                    rows.append(_build_row_dict(
+                        token_contract, chain, timeframe,
+                        invalid_entry['ts_iso'],
+                        interpolated_open, interpolated_high, interpolated_low, interpolated_close,
+                        interpolated_volume
+                    ))
+                    interpolated_count += 1
+                
+                logger.info(
+                    f"Interpolated {invalid_count} missing candles between {prev_valid['ts_dt'].isoformat()} "
+                    f"and {next_valid['ts_dt'].isoformat()} (prev_close=${prev_close:.6f}, next_open=${next_open:.6f})"
+                )
+            else:
+                # Can't interpolate - skip these entries
+                for j in range(invalid_start, invalid_start + invalid_count):
+                    invalid_entry = processed_entries[j]
+                    skipped_count += 1
+                    if invalid_entry['skip_reason']:
+                        logger.debug(f"Skip entry {invalid_entry['ts_iso']}: {invalid_entry['skip_reason']}")
     
     if skipped_count > 0:
         logger.info(f"Skipped {skipped_count} invalid entries during row building")
+    if interpolated_count > 0:
+        logger.info(f"Interpolated {interpolated_count} missing candles")
     
     return rows
+
+
+def _build_row_dict(
+    token_contract: str,
+    chain: str,
+    timeframe: str,
+    ts_iso: str,
+    open_usd: float,
+    high_usd: float,
+    low_usd: float,
+    close_usd: float,
+    volume_usd: float
+) -> Dict[str, Any]:
+    """Build a single row dictionary for database insertion."""
+    # Native prices: Set to 0.0 (convert on-demand when needed for display/reporting)
+    return {
+        'token_contract': token_contract,
+        'chain': chain,
+        'timeframe': timeframe,
+        'timestamp': ts_iso,
+        'open_native': 0.0,
+        'high_native': 0.0,
+        'low_native': 0.0,
+        'close_native': 0.0,
+        'open_usd': open_usd,
+        'high_usd': high_usd,
+        'low_usd': low_usd,
+        'close_usd': close_usd,
+        'volume': max(0.0, volume_usd),  # Ensure non-negative volume
+        'source': 'geckoterminal'
+    }
 
 
 def _update_bars_count_after_backfill(supabase: SupabaseManager, token_contract: str, chain: str, timeframe: str, inserted_rows: int):

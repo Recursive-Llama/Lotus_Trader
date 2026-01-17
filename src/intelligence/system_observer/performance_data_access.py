@@ -317,19 +317,26 @@ class PerformanceDataAccess:
                     if cutoff and exit_ts < cutoff:
                         continue
                     
-                    # Extract entry state from first entry action
-                    entry_state = None
+                    # Extract ALL entry states from all entry actions
                     actions = trade.get("actions", [])
+                    entry_states = []
+                    first_entry_state = None
+                    
                     for action in actions:
-                        if action.get("action_category") == "entry" or action.get("decision_type") == "entry":
+                        if action.get("action_category") == "entry" or action.get("decision_type") in ["entry", "add"]:
                             pattern_key = action.get("pattern_key", "")
-                            entry_state = self._extract_entry_state_from_pattern_key(pattern_key)
-                            break
+                            state = self._extract_entry_state_from_pattern_key(pattern_key)
+                            if state:
+                                entry_states.append(state)
+                                if first_entry_state is None:
+                                    first_entry_state = state
                     
                     # Fallback to summary pattern_key if no action found
-                    if not entry_state:
+                    if not first_entry_state:
                         pattern_key = summary.get("pattern_key", "")
-                        entry_state = self._extract_entry_state_from_pattern_key(pattern_key)
+                        first_entry_state = self._extract_entry_state_from_pattern_key(pattern_key)
+                        if first_entry_state:
+                            entry_states = [first_entry_state]
                     
                     # Determine if first buy
                     is_first_buy = (
@@ -342,6 +349,9 @@ class PerformanceDataAccess:
                     scope = summary.get("scope", {})
                     timeframe = scope.get("timeframe") or pos.get("timeframe", "1h")
                     
+                    # Create entry sequence string (e.g., "S2→S1" or "S1" for single entry)
+                    entry_sequence = "→".join(entry_states) if entry_states else None
+                    
                     all_trades.append({
                         "position_id": pos["id"],
                         "token_ticker": pos.get("token_ticker"),
@@ -353,7 +363,9 @@ class PerformanceDataAccess:
                         "rpnl_usd": float(summary.get("rpnl_usd", 0) or 0),
                         "rpnl_pct": float(summary.get("rpnl_pct", 0) or 0),
                         "total_pnl_usd": float(summary.get("total_pnl_usd", 0) or 0),
-                        "entry_state": entry_state,  # "S1", "S2", "S3", or None
+                        "entry_state": first_entry_state,  # First entry state (for backward compatibility)
+                        "entry_states": entry_states,  # All entry states in order
+                        "entry_sequence": entry_sequence,  # String like "S2→S1"
                         "is_first_buy": is_first_buy
                     })
             
@@ -393,20 +405,105 @@ class PerformanceDataAccess:
                     "total_pnl_usd": sum([t["rpnl_usd"] for t in tf_trades])
                 }
             
-            # By entry state (first buys only)
+            # By entry state - FIRST BUYS ONLY (original metric)
             first_buys = [t for t in trades if t["is_first_buy"]]
-            by_entry_state = {}
+            by_entry_state_first = {}
             for state in ["S1", "S2", "S3"]:
                 state_trades = [t for t in first_buys if t["entry_state"] == state]
-                by_entry_state[state] = {
+                by_entry_state_first[state] = {
                     "count": len(state_trades),
                     "avg_return_pct": sum([t["rpnl_pct"] for t in state_trades]) / len(state_trades) if state_trades else 0,
                     "total_pnl_usd": sum([t["rpnl_usd"] for t in state_trades])
                 }
             
+            # By entry state - ALL ENTRIES (new metric)
+            # Count each entry state that appears in any trade
+            by_entry_state_all = {}
+            for state in ["S1", "S2", "S3"]:
+                state_trades = []
+                for t in trades:
+                    # Check if this state appears in any entry for this trade
+                    entry_states = t.get("entry_states", [])
+                    if entry_states and state in entry_states:
+                        state_trades.append(t)
+                
+                by_entry_state_all[state] = {
+                    "count": len(state_trades),
+                    "avg_return_pct": sum([t["rpnl_pct"] for t in state_trades]) / len(state_trades) if state_trades else 0,
+                    "total_pnl_usd": sum([t["rpnl_usd"] for t in state_trades])
+                }
+            
+            # By entry sequence (e.g., "S2→S1", "S1", "S1→S2→S3")
+            by_entry_sequence = {}
+            for t in trades:
+                seq = t.get("entry_sequence")
+                if seq:
+                    if seq not in by_entry_sequence:
+                        by_entry_sequence[seq] = {
+                            "count": 0,
+                            "total_pnl_usd": 0.0,
+                            "trades": []
+                        }
+                    by_entry_sequence[seq]["count"] += 1
+                    by_entry_sequence[seq]["total_pnl_usd"] += t["rpnl_usd"]
+                    by_entry_sequence[seq]["trades"].append(t)
+            
+            # Calculate averages for sequences
+            for seq in by_entry_sequence:
+                seq_data = by_entry_sequence[seq]
+                seq_data["avg_return_pct"] = sum([t["rpnl_pct"] for t in seq_data["trades"]]) / len(seq_data["trades"]) if seq_data["trades"] else 0
+                wins = [t for t in seq_data["trades"] if t["rpnl_usd"] > 0]
+                seq_data["win_rate"] = len(wins) / len(seq_data["trades"]) if seq_data["trades"] else 0
+                del seq_data["trades"]  # Remove detailed trades list
+            
+            # Combined: By Timeframe AND Entry State (first buy)
+            by_tf_entry_first = {}
+            for tf in ["1m", "15m", "1h", "4h"]:
+                by_tf_entry_first[tf] = {}
+                for state in ["S1", "S2", "S3"]:
+                    tf_state_trades = [t for t in first_buys if t["timeframe"] == tf and t["entry_state"] == state]
+                    if tf_state_trades:
+                        wins = [t for t in tf_state_trades if t["rpnl_usd"] > 0]
+                        by_tf_entry_first[tf][state] = {
+                            "count": len(tf_state_trades),
+                            "win_rate": len(wins) / len(tf_state_trades) if tf_state_trades else 0,
+                            "avg_roi_pct": sum([t["rpnl_pct"] for t in tf_state_trades]) / len(tf_state_trades) if tf_state_trades else 0,
+                            "total_pnl_usd": sum([t["rpnl_usd"] for t in tf_state_trades])
+                        }
+            
+            # Combined: By Timeframe AND Entry Sequence
+            by_tf_sequence = {}
+            for tf in ["1m", "15m", "1h", "4h"]:
+                by_tf_sequence[tf] = {}
+                tf_trades = [t for t in trades if t["timeframe"] == tf]
+                for t in tf_trades:
+                    seq = t.get("entry_sequence")
+                    if seq:
+                        if seq not in by_tf_sequence[tf]:
+                            by_tf_sequence[tf][seq] = {
+                                "count": 0,
+                                "total_pnl_usd": 0.0,
+                                "trades": []
+                            }
+                        by_tf_sequence[tf][seq]["count"] += 1
+                        by_tf_sequence[tf][seq]["total_pnl_usd"] += t["rpnl_usd"]
+                        by_tf_sequence[tf][seq]["trades"].append(t)
+                
+                # Calculate averages for each sequence in this timeframe
+                for seq in by_tf_sequence[tf]:
+                    seq_data = by_tf_sequence[tf][seq]
+                    seq_data["avg_return_pct"] = sum([t["rpnl_pct"] for t in seq_data["trades"]]) / len(seq_data["trades"]) if seq_data["trades"] else 0
+                    wins = [t for t in seq_data["trades"] if t["rpnl_usd"] > 0]
+                    seq_data["win_rate"] = len(wins) / len(seq_data["trades"]) if seq_data["trades"] else 0
+                    del seq_data["trades"]  # Remove detailed trades list
+            
             return {
                 "by_timeframe": by_timeframe,
-                "by_entry_state": by_entry_state,
+                "by_entry_state_first": by_entry_state_first,  # First buys only (original)
+                "by_entry_state_all": by_entry_state_all,  # All entries (new)
+                "by_entry_sequence": by_entry_sequence,  # Entry sequences (new)
+                "by_tf_entry_first": by_tf_entry_first,  # Combined: TF + Entry State (first buy)
+                "by_tf_sequence": by_tf_sequence,  # Combined: TF + Entry Sequence
                 "total_trades": len(trades),
                 "total_pnl_usd": sum([t["rpnl_usd"] for t in trades])
             }

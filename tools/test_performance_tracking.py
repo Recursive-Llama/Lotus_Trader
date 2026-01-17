@@ -108,29 +108,101 @@ def main():
     else:
         print("  No closed trades in last 24h")
     
-    # Performance breakdown
-    print("\n📊 Performance Breakdown (Last 24h):")
+    # Performance breakdown by multiple time periods
+    print("\n📊 Performance Breakdown by Timeframe & Entry State:")
     print("=" * 60)
-    breakdown = perf.get_performance_breakdown(24)
-    if "error" in breakdown:
-        print(f"  ❌ Error: {breakdown['error']}")
-    else:
-        print(f"  Total trades: {breakdown.get('total_trades', 0)}")
-        print(f"  Total PnL: ${breakdown.get('total_pnl_usd', 0):.2f}")
+    
+    for hours in [24, 168, 720]:  # 24h, 7d, 30d
+        period_name = f"{hours//24}d" if hours >= 24 else f"{hours}h"
+        print(f"\n  📅 Period: Last {period_name}")
+        print("  " + "-" * 58)
         
-        print("\n  By Timeframe:")
+        breakdown = perf.get_performance_breakdown(hours)
+    if "error" in breakdown:
+            print(f"    ❌ Error: {breakdown['error']}")
+            continue
+        
+        total_trades = breakdown.get('total_trades', 0)
+        total_pnl = breakdown.get('total_pnl_usd', 0)
+        
+        if total_trades == 0:
+            print(f"    No closed trades in this period")
+            continue
+        
+        print(f"    Total: {total_trades} trades, PnL: ${total_pnl:.2f}")
+        
+        # By Timeframe
+        print(f"\n    By Timeframe:")
         by_tf = breakdown.get('by_timeframe', {})
         for tf in ['1m', '15m', '1h', '4h']:
             data = by_tf.get(tf, {})
             if data.get('count', 0) > 0:
-                print(f"    {tf}: {data['count']} trades, {data['win_rate']*100:.1f}% win rate, avg ROI {data['avg_roi_pct']:.1f}%, PnL ${data['total_pnl_usd']:.2f}")
+                win_rate_pct = data['win_rate'] * 100
+                print(f"      {tf:>4s}: {data['count']:>3d} trades | {win_rate_pct:>5.1f}% win | {data['avg_roi_pct']:>6.1f}% avg ROI | ${data['total_pnl_usd']:>7.2f} PnL")
         
-        print("\n  By Entry State (first buys only):")
-        by_state = breakdown.get('by_entry_state', {})
+        # By Entry State - First Buys Only
+        print(f"\n    By Entry State (first buys only):")
+        by_state_first = breakdown.get('by_entry_state_first', {})
+        has_state_data = False
         for state in ['S1', 'S2', 'S3']:
-            data = by_state.get(state, {})
+            data = by_state_first.get(state, {})
             if data.get('count', 0) > 0:
-                print(f"    {state}: {data['count']} trades, avg return {data['avg_return_pct']:.1f}%, PnL ${data['total_pnl_usd']:.2f}")
+                has_state_data = True
+                print(f"      {state}: {data['count']:>3d} trades | {data['avg_return_pct']:>6.1f}% avg return | ${data['total_pnl_usd']:>7.2f} PnL")
+        
+        if not has_state_data:
+            print(f"      (No first buy entry state data)")
+        
+        # By Entry State - ALL Entries (new)
+        print(f"\n    By Entry State (ALL entries - includes adds):")
+        by_state_all = breakdown.get('by_entry_state_all', {})
+        has_state_data_all = False
+        for state in ['S1', 'S2', 'S3']:
+            data = by_state_all.get(state, {})
+            if data.get('count', 0) > 0:
+                has_state_data_all = True
+                print(f"      {state}: {data['count']:>3d} trades | {data['avg_return_pct']:>6.1f}% avg return | ${data['total_pnl_usd']:>7.2f} PnL")
+        
+        if not has_state_data_all:
+            print(f"      (No entry state data for all entries)")
+        
+        # By Entry Sequence (new)
+        by_sequence = breakdown.get('by_entry_sequence', {})
+        if by_sequence:
+            print(f"\n    By Entry Sequence (e.g., S2→S1):")
+            # Sort by count descending
+            sorted_sequences = sorted(by_sequence.items(), key=lambda x: x[1].get('count', 0), reverse=True)
+            for seq, data in sorted_sequences[:10]:  # Show top 10 sequences
+                win_rate_pct = data.get('win_rate', 0) * 100
+                print(f"      {seq:>10s}: {data['count']:>3d} trades | {win_rate_pct:>5.1f}% win | {data.get('avg_return_pct', 0):>6.1f}% avg return | ${data['total_pnl_usd']:>7.2f} PnL")
+        
+        # Combined: By Timeframe AND Entry State (first buy)
+        by_tf_entry = breakdown.get('by_tf_entry_first', {})
+        if any(by_tf_entry.values()):
+            print(f"\n    By Timeframe + Entry State (first buy):")
+            for tf in ['1m', '15m', '1h', '4h']:
+                tf_data = by_tf_entry.get(tf, {})
+                if tf_data:
+                    print(f"      {tf}:")
+                    for state in ['S1', 'S2', 'S3']:
+                        state_data = tf_data.get(state, {})
+                        if state_data.get('count', 0) > 0:
+                            win_rate_pct = state_data.get('win_rate', 0) * 100
+                            print(f"        {state}: {state_data['count']:>3d} trades | {win_rate_pct:>5.1f}% win | {state_data.get('avg_roi_pct', 0):>6.1f}% avg ROI | ${state_data['total_pnl_usd']:>7.2f} PnL")
+        
+        # Combined: By Timeframe AND Entry Sequence
+        by_tf_seq = breakdown.get('by_tf_sequence', {})
+        if any(by_tf_seq.values()):
+            print(f"\n    By Timeframe + Entry Sequence:")
+            for tf in ['1m', '15m', '1h', '4h']:
+                tf_data = by_tf_seq.get(tf, {})
+                if tf_data:
+                    print(f"      {tf}:")
+                    # Sort sequences by count descending
+                    sorted_seqs = sorted(tf_data.items(), key=lambda x: x[1].get('count', 0), reverse=True)
+                    for seq, data in sorted_seqs:
+                        win_rate_pct = data.get('win_rate', 0) * 100
+                        print(f"        {seq:>10s}: {data['count']:>3d} trades | {win_rate_pct:>5.1f}% win | {data.get('avg_return_pct', 0):>6.1f}% avg return | ${data['total_pnl_usd']:>7.2f} PnL")
     
     # Historical PnL
     print("\n📉 Historical PnL:")

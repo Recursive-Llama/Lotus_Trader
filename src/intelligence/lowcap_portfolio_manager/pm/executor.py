@@ -14,6 +14,8 @@ from supabase import Client  # type: ignore
 
 # Local event bus
 from src.intelligence.lowcap_portfolio_manager.events.bus import subscribe
+from src.intelligence.lowcap_portfolio_manager.data.price_data_reader import PriceDataReader
+from src.intelligence.lowcap_portfolio_manager.pm.hyperliquid_executor import HyperliquidExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -85,35 +87,55 @@ def _latest_price(sb: Client, token_contract: str, chain: str) -> Tuple[Optional
 
 def _latest_price_ohlc(sb: Client, token_contract: str, chain: str, timeframe: str) -> Tuple[Optional[float], Optional[float]]:
     """
-    Return (price_usd, price_native) from latest OHLC bar for specific timeframe.
+    Return (price_usd, price_native) from latest OHLC bar for specific timeframe via PriceDataReader.
     
     Args:
         sb: Supabase client
-        token_contract: Token contract address
-        chain: Chain (solana, ethereum, base, bsc)
+        token_contract: Token contract address or symbol (e.g., "BTC" for Hyperliquid)
+        chain: Chain/venue (solana, ethereum, hyperliquid, etc.)
         timeframe: Timeframe (1m, 15m, 1h, 4h)
     
     Returns:
         Tuple of (price_usd, price_native) or (None, None) if not found
-        Note: price_native is the token price in native currency (e.g., token price in SOL, BNB, ETH)
+        Note: For Hyperliquid, price_native = price_usd (everything is USD-denominated)
+        For other chains, price_native is the token price in native currency (e.g., SOL, BNB, ETH)
     """
     try:
-        row = (
-            sb.table("lowcap_price_data_ohlc")
-            .select("close_usd, close_native")
-            .eq("token_contract", token_contract)
-            .eq("chain", chain)
-            .eq("timeframe", timeframe)
-            .order("timestamp", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-        if not row:
+        data_reader = PriceDataReader(sb)
+        result = data_reader.latest_close(token_contract, chain, timeframe)
+        
+        if not result:
             return None, None
-        r = row[0]
-        return (float(r.get("close_usd") or 0.0) or None, float(r.get("close_native") or 0.0) or None)
+        
+        price_usd = float(result.get("close") or 0.0) or None
+        
+        # For Hyperliquid, everything is USD, so native = USD
+        # For other chains, we need to get native price from lowcap_price_data_ohlc
+        if chain.lower() == "hyperliquid":
+            price_native = price_usd
+        else:
+            # For non-Hyperliquid, try to get native price from lowcap table
+            try:
+                row = (
+                    sb.table("lowcap_price_data_ohlc")
+                    .select("close_native")
+                    .eq("token_contract", token_contract)
+                    .eq("chain", chain)
+                    .eq("timeframe", timeframe)
+                    .order("timestamp", desc=True)
+                    .limit(1)
+                    .execute()
+                    .data
+                    or []
+                )
+                if row:
+                    price_native = float(row[0].get("close_native") or 0.0) or None
+                else:
+                    price_native = price_usd  # Fallback to USD if native not available
+            except Exception:
+                price_native = price_usd  # Fallback to USD on error
+        
+        return price_usd, price_native
     except Exception as e:
         logger.warning(f"Error fetching OHLC price for {token_contract} {timeframe}: {e}")
         return None, None
@@ -284,6 +306,11 @@ class PMExecutor:
         self.trader = trader
         self.sb = sb_client
         
+        # Initialize Hyperliquid Executor (reads config from env)
+        self.hyperliquid_executor = HyperliquidExecutor()
+        
+
+        
         # Path to Li.Fi executor script (kept for non-Solana chains, but we'll disable those)
         script_dir = Path(__file__).parent.parent.parent.parent.parent / "scripts" / "lifi_sandbox" / "src"
         self.lifi_executor_path = script_dir / "lifi_executor.mjs"
@@ -304,8 +331,8 @@ class PMExecutor:
         # Token decimals cache (to avoid repeated lookups)
         self._decimals_cache: Dict[Tuple[str, str], int] = {}
         
-        # SOLANA ONLY - Reject non-Solana chains
-        self.allowed_chains = ['solana']
+        # Allowed chains
+        self.allowed_chains = ['solana', 'hyperliquid']
         
         # Cached wallet address for transaction parsing (derived from private key)
         self.solana_wallet_address: Optional[str] = None
@@ -1606,6 +1633,86 @@ parseTransaction().then(result => {{
             "error": "Li.Fi executor failed after all retries"
         }
     
+    def _execute_hyperliquid(self, decision: Dict[str, Any], position: Dict[str, Any]) -> Dict[str, Any]:
+        """Helper to execute Hyperliquid orders."""
+        decision_type = decision.get("decision_type", "").lower()
+        token_contract = position.get("token_contract", "") # Symbol e.g. BTC
+        size_frac = float(decision.get("size_frac", 0.0))
+        
+        # Determine side and reduce_only
+        side = "buy"
+        reduce_only = False
+        
+        if decision_type in ["trim", "exit", "emergency_exit"]:
+            side = "sell"
+            reduce_only = True # Trims/Exits should reduce
+        
+        # Calculate Notional USD
+        # Get latest price for estimation
+        price_usd, _ = _latest_price(self.sb, token_contract, "hyperliquid")
+        if not price_usd:
+             return {"status": "error", "error": "Could not fetch price for sizing"}
+
+        notional_usd = 0.0
+        if side == "buy":
+             # Adds are % of remaining allocation (same as Solana executor)
+             # Use usd_alloc_remaining which is calculated by PM before decisions
+             usd_alloc_remaining = float(position.get("usd_alloc_remaining") or 0.0)
+             if usd_alloc_remaining <= 0:
+                 return {
+                     "status": "error",
+                     "error": "No remaining allocation available for this position"
+                 }
+             # size_frac is a percentage of usd_alloc_remaining (e.g., 0.30 = 30% of remaining)
+             notional_usd = usd_alloc_remaining * size_frac
+             if notional_usd <= 0:
+                 return {
+                     "status": "error",
+                     "error": "Invalid size_frac or allocation"
+                 }
+        else:
+             # Sells are % of position quantity
+             # HL API takes contract size, but execute_market_order takes USD
+             # We estimate USD value: qty * price
+             qty = float(position.get("total_quantity") or 0.0)
+             qty_to_sell = qty * size_frac
+             notional_usd = qty_to_sell * price_usd
+             
+        # Execute
+        res = self.hyperliquid_executor.execute_market_order(
+            symbol=token_contract,
+            side=side,
+            notional_usd=notional_usd,
+            reduce_only=reduce_only
+        )
+        
+        status = "success" if res.success else "error"
+        if res.skipped: status = "skipped"
+        
+        # Calculate actual USD values from filled size and price
+        filled_size = res.filled_size
+        filled_price = res.filled_price or price_usd
+        
+        if side == "buy":
+            notional_usd = filled_size * filled_price if filled_size > 0 else notional_usd  # Use calculated notional if no fill
+            actual_usd = 0.0
+        else:
+            notional_usd = 0.0
+            actual_usd = filled_size * filled_price if filled_size > 0 else 0.0
+        
+        return {
+            "status": status,
+            "tx_hash": res.order_id,
+            "tokens_bought": filled_size if side == "buy" else 0.0,
+            "tokens_sold": filled_size if side == "sell" else 0.0,
+            "price": filled_price,
+            "price_native": filled_price,  # For Hyperliquid, native is USD
+            "notional_usd": notional_usd,  # USD invested (for buys)
+            "actual_usd": actual_usd,      # USD received (for sells)
+            "slippage": 0.0,  # TODO: Calculate actual slippage from order book
+            "error": res.error or res.skip_reason
+        }
+
     def execute(self, decision: Dict[str, Any], position: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute a trading decision directly using Li.Fi SDK.
@@ -1660,22 +1767,27 @@ parseTransaction().then(result => {{
             method, chain
         )
         
-        # SOLANA ONLY - Reject non-Solana chains
+        # SOLANA & HYPERLIQUID Support
         if chain not in self.allowed_chains:
             result = {
                 "status": "error",
-                "error": f"Chain '{chain}' not allowed. Only Solana is supported."
+                "error": f"Chain '{chain}' not allowed. Supported: {self.allowed_chains}"
             }
             logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
             return result
         
-        if not token_contract or not decision_type or decision_type == "hold":
+        if not token_contract or not decision_type or decision_type in ["", "hold"]:
             result = {
                 "status": "error",
                 "error": "Invalid decision or missing token contract"
             }
             logger.warning("EXEC SKIP: %s %s/%s (%s)", decision_type, token_label, chain, result["error"])
             return result
+            
+
+        # Dispatch to Hyperliquid Executor
+        if chain == "hyperliquid":
+            return self._execute_hyperliquid(decision, position)
         
         # Get latest price from OHLC table (timeframe-specific)
         price_usd, price_native = _latest_price_ohlc(self.sb, token_contract, chain, timeframe)

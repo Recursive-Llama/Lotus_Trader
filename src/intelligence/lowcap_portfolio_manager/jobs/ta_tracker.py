@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
-from supabase import create_client, Client  # type: ignore
+from supabase import create_client, Client
+from src.intelligence.lowcap_portfolio_manager.data.price_data_reader import PriceDataReader  # type: ignore
 
 from src.intelligence.lowcap_portfolio_manager.jobs.ta_utils import (
     ema_series,
@@ -164,6 +165,8 @@ class TATracker:
         self.timeframe = timeframe
         # Map timeframe to suffix (e.g., "1m" -> "_1m", "1h" -> "_1h")
         self.ta_suffix = f"_{timeframe}"
+        # PriceDataReader for universal data access
+        self.data_reader = PriceDataReader(self.sb)
 
     def _active_positions_chunked(self, chunk_size: int = DEFAULT_CHUNK_SIZE) -> Generator[Dict[str, Any], None, None]:
         """Yield positions in chunks to prevent timeout on large datasets.
@@ -299,25 +302,16 @@ class TATracker:
             chain = p.get("token_chain")
             
             try:
-                # Timeframe-specific OHLC
-                # IMPORTANT: Supabase has a default row limit of 1000 rows.
-                # We order DESC to get the NEWEST rows first, then reverse in Python.
-                # This ensures we always have the most recent data for EMA calculation.
-                rows_tf = (
-                    self.sb.table("lowcap_price_data_ohlc")
-                    .select("timestamp, open_usd, high_usd, low_usd, close_usd, volume")
-                    .eq("token_contract", contract)
-                    .eq("chain", chain)
-                    .eq("timeframe", self.timeframe)
-                    .lte("timestamp", now.isoformat())
-                    .order("timestamp", desc=True)  # DESC to get newest first
-                    .limit(1000)  # Supabase caps at 1000 anyway
-                    .execute()
-                    .data
-                    or []
+                # Timeframe-specific OHLC via PriceDataReader (venue-agnostic)
+                # PriceDataReader handles table routing and schema normalization
+                rows_tf = self.data_reader.fetch_recent_ohlc(
+                    contract=contract,
+                    chain=chain,
+                    timeframe=self.timeframe,
+                    limit=1000,  # Supabase caps at 1000 anyway
+                    until_iso=now.isoformat()
                 )
-                # Reverse to chronological order (oldest first) for EMA calculation
-                rows_tf = list(reversed(rows_tf))
+                # fetch_recent_ohlc already returns chronological order (oldest first)
                 # Minimum bars required varies by timeframe
                 # 1m: 333 bars minimum (matches backfill minimum, ~5.5 hours)
                 # 15m: 288 bars (~3 days)

@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 class TuningMiner:
     """
+    DEPRECATED: Learning System v2 replaces this with TrajectoryMiner.
+    
+    This class reads from pattern_episode_events which is deprecated.
+    Use learning/trajectory_miner.py (TrajectoryMiner) instead, which reads
+    from position_trajectories table.
+    
+    Legacy Documentation:
     Phase 2 of Tuning System: The Miner.
     
     Reads raw 'pattern_episode_events'.
